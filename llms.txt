@@ -1,0 +1,23 @@
+# AI Butler
+> Personal AI agent runtime with multi-channel support, long-term memory, and swarm intelligence.
+
+## Key Features
+- Multi-channel: Telegram, Slack, Discord, WhatsApp, Web, Terminal, LINE, IRC
+- Long-term memory: Knowledge graph + FTS5 + vector search
+- Swarm orchestration: Multi-agent task decomposition
+- Agent ecosystem: A2A v2, MCP server, subprocess bridges
+- Plugin system: WASM sandbox + marketplace
+- Scheduled automation: Cron-based tasks
+- Voice: STT + TTS pipeline
+
+## Documentation
+- Quick Start: docs/getting-started/QUICK-START.md
+- Setup: docs/getting-started/SETUP.md
+- Choose an AI provider: docs/getting-started/CHOOSE-YOUR-AI.md
+- Contributing: CONTRIBUTING.md
+- Changelog: CHANGELOG.md
+- Full docs site: https://docs.aibutler.dev
+
+## Optional
+- Repository: https://github.com/LumabyteCo/aibutler
+- License: Apache 2.0

@@ -1,0 +1,14 @@
+version: "3.8"
+services:
+  aibutler:
+    build: .
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - aibutler-data:/data
+    environment:
+      - AIBUTLER_DATA=/data
+    restart: unless-stopped
+volumes:
+  aibutler-data:

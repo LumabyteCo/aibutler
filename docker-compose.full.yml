@@ -1,0 +1,31 @@
+version: "3.8"
+services:
+  aibutler:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - aibutler-data:/data
+    environment:
+      - AIBUTLER_DATA=/data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    ports:
+      - "8123:8123"
+    volumes:
+      - ha-config:/config
+    restart: unless-stopped
+volumes:
+  aibutler-data:
+  ollama-data:
+  ha-config:

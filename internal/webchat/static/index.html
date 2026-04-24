@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title data-i18n="title">AI Butler</title>
+<link rel="stylesheet" href="/static/style.css">
+
+<!-- PWA: make the web chat installable on phone/desktop home screens -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#16213e">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png">
+<!-- iOS-specific: Safari uses this for the home-screen icon and doesn't read manifest icons -->
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Butler">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ Sidebar ============ -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <span class="brand-mark">🎩</span>
+      <span class="brand-name">AI Butler</span>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-panel="chat" type="button">
+        <span class="nav-icon">💬</span><span class="nav-label">Chat</span>
+      </button>
+      <button class="nav-item" data-panel="home" type="button">
+        <span class="nav-icon">🏠</span><span class="nav-label">Home</span>
+      </button>
+      <button class="nav-item" data-panel="memories" type="button">
+        <span class="nav-icon">🧠</span><span class="nav-label">Memories</span>
+      </button>
+      <button class="nav-item" data-panel="apps" type="button">
+        <span class="nav-icon">🔗</span><span class="nav-label">Connected Apps</span>
+      </button>
+      <button class="nav-item" data-panel="spending" type="button">
+        <span class="nav-icon">💰</span><span class="nav-label">Spending</span>
+      </button>
+      <button class="nav-item" data-panel="settings" type="button">
+        <span class="nav-icon">⚙️</span><span class="nav-label">Settings</span>
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="muted">v0.1.0</span>
+      <a href="https://docs.aibutler.dev" target="_blank" rel="noopener">Docs</a>
+    </div>
+  </aside>
+
+  <!-- Backdrop for mobile drawer -->
+  <div id="sidebar-backdrop" hidden></div>
+
+  <!-- ============ Main ============ -->
+  <main id="main">
+    <header>
+      <div class="header-left">
+        <button id="sidebar-toggle" type="button" title="Menu" aria-label="Menu">☰</button>
+        <h1 id="panel-title" data-i18n="heading">AI Butler</h1>
+      </div>
+      <div class="header-actions">
+        <span id="agent-pill" class="pill pill-agent" title="Active persona">Butler</span>
+        <span id="budget-pill" class="pill pill-budget" title="Cost this period" hidden>—</span>
+        <span id="conn-pill" class="pill pill-conn conn-connecting" title="Connecting…">
+          <span class="dot"></span><span class="conn-label">connecting</span>
+        </span>
+        <button id="new-chat" type="button" title="New chat" aria-label="New chat" class="icon-btn">
+          <span class="plus">+</span>
+        </button>
+        <button id="dark-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode" class="icon-btn">&#9789;</button>
+      </div>
+    </header>
+
+    <!-- ============ Chat panel (default) ============ -->
+    <section class="panel panel-chat active" data-panel="chat">
+      <div id="welcome">
+        <div class="welcome-logo" aria-hidden="true">🎩</div>
+        <h2>What can I help you with?</h2>
+        <p class="welcome-sub">Your personal assistant that remembers, schedules, and connects everything.</p>
+        <div class="starter-grid">
+          <button class="starter" type="button" data-prompt="Give me a morning briefing — weather, today's calendar, overnight highlights, and anything I should know.">
+            <span class="starter-icon">☀️</span>
+            <span class="starter-title">Morning briefing</span>
+            <span class="starter-desc">Weather · calendar · news</span>
+          </button>
+          <button class="starter" type="button" data-prompt="Remember that my current project is called Nimbus and I'm building it in Rust. Store this in your memory.">
+            <span class="starter-icon">🧠</span>
+            <span class="starter-title">Remember something</span>
+            <span class="starter-desc">Long-term memory that sticks</span>
+          </button>
+          <button class="starter" type="button" data-prompt="Every weekday at 8:30am, send me a brief status update here.">
+            <span class="starter-icon">⏰</span>
+            <span class="starter-title">Schedule a task</span>
+            <span class="starter-desc">Just describe when</span>
+          </button>
+          <button class="starter" type="button" data-prompt="What files are in my current workspace? List the top-level entries.">
+            <span class="starter-icon">📁</span>
+            <span class="starter-title">Explore files</span>
+            <span class="starter-desc">File and code work</span>
+          </button>
+          <button class="starter" type="button" data-prompt="Search your memory and summarize what you know about me.">
+            <span class="starter-icon">🔍</span>
+            <span class="starter-title">What do you know?</span>
+            <span class="starter-desc">About me and my work</span>
+          </button>
+          <button class="starter" type="button" data-prompt="Show me what you can do — list your skills and connected apps.">
+            <span class="starter-icon">✨</span>
+            <span class="starter-title">What can you do?</span>
+            <span class="starter-desc">Skills and capabilities</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="messages"></div>
+
+      <form id="input-form">
+        <label id="file-label" for="file-input" title="Attach file" aria-label="Attach file">&#128206;</label>
+        <input type="file" id="file-input" hidden>
+        <textarea id="input" data-i18n-placeholder="placeholder" placeholder="Type a message…" rows="1"></textarea>
+        <button type="submit" data-i18n="send">Send</button>
+      </form>
+      <div id="file-preview" hidden></div>
+    </section>
+
+    <!-- ============ Home panel ============ -->
+    <section class="panel panel-home" data-panel="home">
+      <div class="panel-inner">
+        <h2 class="panel-heading">Welcome back 👋</h2>
+        <p class="panel-sub">Here's a quick look at what's happening.</p>
+
+        <div class="tile-grid">
+          <div class="tile" data-target="memories">
+            <div class="tile-icon">🧠</div>
+            <div class="tile-label">Memories saved</div>
+            <div class="tile-value" id="tile-memories">—</div>
+            <div class="tile-footer">What I've learned about you</div>
+          </div>
+          <div class="tile">
+            <div class="tile-icon">💬</div>
+            <div class="tile-label">Conversations</div>
+            <div class="tile-value" id="tile-sessions">—</div>
+            <div class="tile-footer">Your chat history</div>
+          </div>
+          <div class="tile" data-target="spending">
+            <div class="tile-icon">💰</div>
+            <div class="tile-label">Spent this period</div>
+            <div class="tile-value" id="tile-cost">—</div>
+            <div class="tile-footer">Across all models</div>
+          </div>
+          <div class="tile" data-target="apps">
+            <div class="tile-icon">🔗</div>
+            <div class="tile-label">Connected apps</div>
+            <div class="tile-value" id="tile-apps">—</div>
+            <div class="tile-footer">Where you can chat with me</div>
+          </div>
+        </div>
+
+        <h3 class="section-heading">Quick actions</h3>
+        <div class="quickaction-grid">
+          <button class="quickaction" type="button" data-prompt="Give me a briefing: weather today, my calendar, important news, and anything I should know.">
+            <span>☀️</span> Morning briefing
+          </button>
+          <button class="quickaction" type="button" data-prompt="Every weekday at 8:30am, send me a brief status update here.">
+            <span>⏰</span> Set a daily reminder
+          </button>
+          <button class="quickaction" type="button" data-prompt="Summarize what you know about me and my current projects.">
+            <span>📝</span> Summary about me
+          </button>
+          <button class="quickaction" type="button" data-prompt="What can you do? List your skills and how I can use you.">
+            <span>✨</span> Show skills
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Memories panel ============ -->
+    <section class="panel panel-memories" data-panel="memories">
+      <div class="panel-inner">
+        <h2 class="panel-heading">Memories</h2>
+        <p class="panel-sub">Everything I've learned about you and your world.</p>
+
+        <div class="stats-row">
+          <div class="ministat"><span class="ministat-value" id="mem-count-thoughts">—</span><span class="ministat-label">Notes</span></div>
+          <div class="ministat"><span class="ministat-value" id="mem-count-entities">—</span><span class="ministat-label">People & things</span></div>
+          <div class="ministat"><span class="ministat-value" id="mem-count-facts">—</span><span class="ministat-label">Key facts</span></div>
+        </div>
+
+        <h3 class="section-heading">Recent notes</h3>
+        <div id="memory-list" class="memory-list">
+          <div class="empty-state">
+            <div class="empty-icon">🧠</div>
+            <p>Loading your memories…</p>
+          </div>
+        </div>
+
+        <div class="panel-hint">
+          💡 <strong>Tip:</strong> just tell me anything like <em>"remember that my sister's birthday is June 4"</em> — I'll save it.
+          <button type="button" class="linklike" data-prompt="Remember this: ">Try it</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Connected Apps panel ============ -->
+    <section class="panel panel-apps" data-panel="apps">
+      <div class="panel-inner">
+        <h2 class="panel-heading">Connected Apps</h2>
+        <p class="panel-sub">Chat with me wherever you are. Same memory, same assistant, everywhere.</p>
+
+        <h3 class="section-heading">Active right now</h3>
+        <div id="apps-active" class="apps-grid"></div>
+
+        <h3 class="section-heading">Add another</h3>
+        <div class="apps-grid">
+          <a class="app-card" href="https://docs.aibutler.dev/channels/telegram/" target="_blank" rel="noopener">
+            <span class="app-icon">📱</span>
+            <span class="app-name">Telegram</span>
+            <span class="app-desc">Chat from your phone</span>
+          </a>
+          <a class="app-card" href="https://docs.aibutler.dev/channels/whatsapp/" target="_blank" rel="noopener">
+            <span class="app-icon">💚</span>
+            <span class="app-name">WhatsApp</span>
+            <span class="app-desc">Via Meta Cloud API</span>
+          </a>
+          <a class="app-card" href="https://docs.aibutler.dev/channels/slack/" target="_blank" rel="noopener">
+            <span class="app-icon">💼</span>
+            <span class="app-name">Slack</span>
+            <span class="app-desc">Team workspace</span>
+          </a>
+          <a class="app-card" href="https://docs.aibutler.dev/channels/discord/" target="_blank" rel="noopener">
+            <span class="app-icon">🎮</span>
+            <span class="app-name">Discord</span>
+            <span class="app-desc">Community servers</span>
+          </a>
+          <a class="app-card" href="https://docs.aibutler.dev/channels/teams/" target="_blank" rel="noopener">
+            <span class="app-icon">🏢</span>
+            <span class="app-name">Microsoft Teams</span>
+            <span class="app-desc">Work chat</span>
+          </a>
+          <a class="app-card" href="https://docs.aibutler.dev/channels/webhook/" target="_blank" rel="noopener">
+            <span class="app-icon">🔌</span>
+            <span class="app-name">Custom</span>
+            <span class="app-desc">Any app with a webhook</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Spending panel ============ -->
+    <section class="panel panel-spending" data-panel="spending">
+      <div class="panel-inner">
+        <h2 class="panel-heading">Spending</h2>
+        <p class="panel-sub">What you've spent on AI this period.</p>
+
+        <div class="big-number">
+          <span class="big-number-value" id="spending-total">$0.00</span>
+          <span class="big-number-label">spent this period</span>
+        </div>
+
+        <h3 class="section-heading">Breakdown</h3>
+        <div id="spending-breakdown" class="spending-list">
+          <div class="empty-state muted">Loading…</div>
+        </div>
+
+        <div class="panel-hint">
+          💡 Budget alerts and monthly caps can be set in <strong>Settings</strong>. I'll let you know before you go over.
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Settings panel ============ -->
+    <section class="panel panel-settings" data-panel="settings">
+      <div class="panel-inner">
+        <h2 class="panel-heading">Settings</h2>
+        <p class="panel-sub">Customize how AI Butler looks and behaves.</p>
+
+        <div class="settings-group">
+          <h3 class="section-heading">Appearance</h3>
+          <div class="settings-row">
+            <label>Theme</label>
+            <div class="theme-buttons">
+              <button type="button" data-theme="auto">Auto</button>
+              <button type="button" data-theme="light">Light</button>
+              <button type="button" data-theme="dark">Dark</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label>Language</label>
+            <select id="lang-select">
+              <option value="en">English</option>
+              <option value="ar">العربية</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <h3 class="section-heading">Welcome screen</h3>
+          <div class="settings-row">
+            <label>Show on new chats</label>
+            <div class="toggle-row">
+              <button type="button" id="welcome-reset" class="btn-secondary">Show again</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <h3 class="section-heading">About</h3>
+          <div class="settings-row">
+            <label>Activity</label>
+            <div class="settings-info" id="settings-activity">—</div>
+          </div>
+          <div class="settings-row">
+            <label>Version</label>
+            <div class="settings-info">v0.1.0</div>
+          </div>
+          <div class="settings-row">
+            <label>Learn more</label>
+            <div class="settings-info">
+              <a href="https://docs.aibutler.dev" target="_blank" rel="noopener">Docs</a>
+              · <a href="https://github.com/LumabyteCo/aibutler" target="_blank" rel="noopener">GitHub</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+<script src="/static/chat.js"></script>
+</body>
+</html>

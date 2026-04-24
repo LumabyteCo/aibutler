@@ -1,0 +1,100 @@
+name: Beta feature report
+description: Tested a beta feature with real credentials? Tell us what happened.
+title: "[beta-report] "
+labels: ["beta-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Beta reports are how AI Butler gets from `beta` → `ready`. Thank you
+        for actually trying a feature with a real account, server, or device.
+        Good reports (working **or** broken) are equally valuable.
+
+        See [what's beta in v0.1](https://github.com/LumabyteCo/aibutler#beta-in-v01)
+        for the current list.
+
+  - type: dropdown
+    id: feature
+    attributes:
+      label: Which beta feature
+      options:
+        - Messaging — Telegram
+        - Messaging — Slack
+        - Messaging — Discord
+        - Messaging — WhatsApp
+        - Messaging — Teams
+        - Messaging — Google Chat
+        - Messaging — LINE
+        - Messaging — IRC
+        - Messaging — custom webhook
+        - Messaging — Nostr
+        - AI provider — OpenAI
+        - AI provider — Gemini
+        - AI provider — Grok
+        - AI provider — LM Studio / local
+        - AI provider — Groq
+        - AI provider — DeepSeek
+        - Auth — OIDC (Keycloak / Auth0 / Authelia / ZITADEL / other)
+        - Auth — FIDO2 / WebAuthn
+        - Auth — TOTP
+        - Swarm / multi-agent delegation
+        - A2A v2 protocol interop
+        - MCP server mode
+        - WASM plugins
+        - Home Assistant / smart home
+        - Subprocess bridges (Aider / Continue / etc.)
+        - Whisper STT
+        - Piper TTS
+        - Other (explain below)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Result
+      options:
+        - ✅ Worked end-to-end
+        - ⚠️ Mostly worked, some issues (describe below)
+        - ❌ Didn't work (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-you-did
+    attributes:
+      label: What you tested
+      description: Setup, commands, messages sent — enough for someone else to reproduce.
+      placeholder: |
+        - Set up a Telegram bot via BotFather
+        - Added bot token to vault, enabled telegram channel in config
+        - Sent 5 messages, including one with a photo attachment
+        - Tried voice message (30 seconds)
+        - Used `/cost` slash command
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The outcome, including error messages, weird behavior, or "everything worked as advertised".
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, AI Butler version, and the external service version if relevant.
+      placeholder: "aibutler v0.1.0 on Linux (Ubuntu 24.04), Telegram Bot API, Claude as the model"
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestions
+    attributes:
+      label: Anything that would have made this easier?
+      description: Missing docs, confusing error messages, setup wizard gaps.
+    validations:
+      required: false

@@ -1,0 +1,121 @@
+name: Bug report
+description: Something broke — help us reproduce and fix it.
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A good bug report has:
+        1. Exact reproduction steps
+        2. What you expected vs. what happened
+        3. The version you're on (`aibutler version` or commit hash)
+        4. Relevant logs or error messages
+
+        **Security issue?** Please don't file here — see
+        [SECURITY.md](https://github.com/LumabyteCo/aibutler/blob/main/SECURITY.md)
+        for private reporting.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you see instead?
+      placeholder: |
+        Expected: `aibutler status` to print the running version.
+        Actual: it printed an empty line and exited 0.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands, config, messages you sent, etc. Minimal is best.
+      placeholder: |
+        1. `aibutler setup` with Claude provider
+        2. Send "hello" in the web chat
+        3. Observe …
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `aibutler version`, or the commit hash you built from.
+      placeholder: "v0.1.0 or commit abc1234"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux (x86_64)
+        - Linux (ARM64 / Raspberry Pi)
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Docker / container
+        - Other (describe in "what happened")
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - Core / agent loop
+        - Memory (FTS5 / graph / vectors)
+        - Web chat UI
+        - Terminal REPL
+        - Scheduler
+        - Capability engine / auth
+        - MCP client / server
+        - Channel adapter (which one? add to "what happened")
+        - AI provider adapter (which one? add to "what happened")
+        - Plugin runtime (WASM)
+        - A2A v2
+        - Voice / STT / TTS
+        - Smart home / IoT
+        - Deployment (Docker / Helm / systemd)
+        - Docs
+        - CI / build
+        - Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / errors
+      description: Paste relevant log lines, stack traces, or error messages. Redact API keys.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Config snippet (optional, redact secrets)
+      description: Relevant sections of your `config.yaml`. **Remove any API keys, tokens, or credentials** before pasting.
+      render: yaml
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and this isn't a duplicate
+          required: true
+        - label: I'm running a recent release or current `main` (or I've said otherwise above)
+          required: true
+        - label: If this touches security, I've read [SECURITY.md](https://github.com/LumabyteCo/aibutler/blob/main/SECURITY.md) and confirmed it's safe to discuss publicly
+          required: true

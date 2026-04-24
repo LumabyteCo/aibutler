@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aibutler.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "aibutler.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.service.a2aPort }}
+      targetPort: a2a
+      protocol: TCP
+      name: a2a
+  selector:
+    app.kubernetes.io/name: {{ include "aibutler.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}

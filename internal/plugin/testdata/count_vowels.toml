@@ -1,0 +1,11 @@
+name = "count-vowels"
+version = "1.0.0"
+description = "Counts vowels in input text"
+wasm_path = "count_vowels.wasm"
+capabilities = ["tool.call"]
+
+[[tools]]
+name = "count"
+description = "Count vowels in text"
+schema = '{"type":"object","properties":{"input":{"type":"string"}}}'
+function = "count_vowels"

@@ -1,0 +1,441 @@
+(function(){
+  // ============ Elements ============
+  const sidebar=document.getElementById("sidebar");
+  const sidebarBackdrop=document.getElementById("sidebar-backdrop");
+  const sidebarToggle=document.getElementById("sidebar-toggle");
+  const navItems=document.querySelectorAll(".nav-item");
+  const panels=document.querySelectorAll(".panel");
+  const panelTitle=document.getElementById("panel-title");
+
+  const messages=document.getElementById("messages");
+  const welcome=document.getElementById("welcome");
+  const form=document.getElementById("input-form");
+  const input=document.getElementById("input");
+  const darkToggle=document.getElementById("dark-toggle");
+  const newChatBtn=document.getElementById("new-chat");
+  const connPill=document.getElementById("conn-pill");
+  const budgetPill=document.getElementById("budget-pill");
+  const agentPill=document.getElementById("agent-pill");
+  const fileInput=document.getElementById("file-input");
+  const fileLabel=document.getElementById("file-label");
+  const filePreview=document.getElementById("file-preview");
+  const langSelect=document.getElementById("lang-select");
+  const welcomeReset=document.getElementById("welcome-reset");
+
+  let ws=null;
+  let typingEl=null;
+  let pendingFile=null;
+  let hasMessages=false;
+
+  // ============ i18n ============
+  const i18nStrings={
+    en:{title:"AI Butler",heading:"AI Butler",placeholder:"Type a message…",send:"Send"},
+    ar:{title:"بتلر الذكي",heading:"بتلر الذكي",placeholder:"اكتب رسالة…",send:"إرسال"}
+  };
+  function applyI18n(lang){
+    const strings=i18nStrings[lang]||i18nStrings.en;
+    document.querySelectorAll("[data-i18n]").forEach(el=>{
+      const key=el.getAttribute("data-i18n");
+      if(strings[key])el.textContent=strings[key];
+    });
+    document.querySelectorAll("[data-i18n-placeholder]").forEach(el=>{
+      const key=el.getAttribute("data-i18n-placeholder");
+      if(strings[key])el.placeholder=strings[key];
+    });
+    document.documentElement.dir=(lang==="ar")?"rtl":"ltr";
+    document.documentElement.lang=lang;
+    localStorage.setItem("lang",lang);
+  }
+
+  // ============ Theme ============
+  function applyTheme(theme){
+    document.body.classList.remove("dark","light");
+    if(theme==="dark"){document.body.classList.add("dark");darkToggle.textContent="\u2600"}
+    else if(theme==="light"){document.body.classList.add("light");darkToggle.textContent="\u263D"}
+    else{
+      const sysDark=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;
+      darkToggle.textContent=sysDark?"\u2600":"\u263D";
+    }
+    localStorage.setItem("theme",theme);
+    document.querySelectorAll(".theme-buttons button").forEach(b=>{
+      b.classList.toggle("active",b.getAttribute("data-theme")===theme);
+    });
+  }
+  darkToggle.addEventListener("click",()=>{
+    const cur=localStorage.getItem("theme")||"auto";
+    const next=cur==="dark"?"light":"dark";
+    applyTheme(next);
+  });
+  document.querySelectorAll(".theme-buttons button").forEach(b=>{
+    b.addEventListener("click",()=>applyTheme(b.getAttribute("data-theme")));
+  });
+
+  // ============ Sidebar + panels ============
+  const PANEL_TITLES={chat:"AI Butler",home:"Home",memories:"Memories",apps:"Connected Apps",spending:"Spending",settings:"Settings"};
+  function switchPanel(name){
+    panels.forEach(p=>{
+      p.classList.toggle("active",p.getAttribute("data-panel")===name);
+    });
+    navItems.forEach(n=>{
+      n.classList.toggle("active",n.getAttribute("data-panel")===name);
+    });
+    panelTitle.textContent=PANEL_TITLES[name]||"AI Butler";
+    // Close mobile sidebar after selection
+    if(window.innerWidth<=900){closeSidebar()}
+    // Lazy-load panel data
+    if(name==="home")loadHomeData();
+    if(name==="memories")loadMemoriesData();
+    if(name==="apps")loadAppsData();
+    if(name==="spending")loadSpendingData();
+    if(name==="settings")loadSettingsData();
+  }
+  navItems.forEach(item=>{
+    item.addEventListener("click",()=>switchPanel(item.getAttribute("data-panel")));
+  });
+
+  function openSidebar(){sidebar.classList.add("open");sidebarBackdrop.classList.add("open");sidebarBackdrop.hidden=false}
+  function closeSidebar(){sidebar.classList.remove("open");sidebarBackdrop.classList.remove("open");setTimeout(()=>{sidebarBackdrop.hidden=true},200)}
+  sidebarToggle.addEventListener("click",()=>{
+    if(sidebar.classList.contains("open"))closeSidebar();
+    else openSidebar();
+  });
+  sidebarBackdrop.addEventListener("click",closeSidebar);
+
+  // Tile click → jump to panel
+  document.querySelectorAll(".tile[data-target]").forEach(t=>{
+    t.addEventListener("click",()=>switchPanel(t.getAttribute("data-target")));
+  });
+
+  // ============ Welcome screen + starter prompts ============
+  function showWelcome(){
+    if(localStorage.getItem("welcomeDismissed")==="true"){
+      welcome.classList.add("hidden");
+      return;
+    }
+    if(!hasMessages){welcome.classList.remove("hidden")}
+  }
+  function hideWelcome(){welcome.classList.add("hidden")}
+  // Starter + quickaction + linklike prompt clicks — any element with data-prompt
+  function bindPromptClicks(){
+    document.querySelectorAll("[data-prompt]").forEach(el=>{
+      if(el.__bound)return;
+      el.__bound=true;
+      el.addEventListener("click",(e)=>{
+        e.preventDefault();
+        const prompt=el.getAttribute("data-prompt");
+        // Switch to chat panel first
+        switchPanel("chat");
+        input.value=prompt;
+        input.focus();
+        input.style.height="auto";
+        input.style.height=Math.min(input.scrollHeight,120)+"px";
+      });
+    });
+  }
+
+  welcomeReset.addEventListener("click",()=>{
+    localStorage.removeItem("welcomeDismissed");
+    hasMessages=false;
+    messages.innerHTML="";
+    showWelcome();
+    switchPanel("chat");
+  });
+
+  // ============ New chat ============
+  newChatBtn.addEventListener("click",()=>{
+    if(messages.children.length>0&&!confirm("Start a new chat? The current conversation will be cleared from view (your memories are preserved)."))return;
+    messages.innerHTML="";
+    hasMessages=false;
+    removeTyping();
+    showWelcome();
+    switchPanel("chat");
+    input.value="";
+    input.focus();
+  });
+
+  // ============ Connection pill ============
+  function setConn(state){
+    connPill.classList.remove("conn-connected","conn-connecting","conn-disconnected");
+    connPill.classList.add("conn-"+state);
+    const label=connPill.querySelector(".conn-label");
+    const map={connected:"connected",connecting:"connecting",disconnected:"offline"};
+    if(label)label.textContent=map[state]||state;
+    connPill.title={connected:"Connected",connecting:"Connecting…",disconnected:"Offline — retrying…"}[state]||state;
+  }
+  // Budget pill click → jump to spending panel
+  budgetPill.addEventListener("click",()=>switchPanel("spending"));
+
+  // ============ File upload ============
+  fileInput.addEventListener("change",()=>{
+    if(fileInput.files.length>0){
+      pendingFile=fileInput.files[0];
+      filePreview.textContent="Attached: "+pendingFile.name+" ("+Math.round(pendingFile.size/1024)+" KB)";
+      filePreview.hidden=false;
+    }
+  });
+  function uploadFile(file){
+    const fd=new FormData();
+    fd.append("file",file);
+    return fetch("/upload",{method:"POST",body:fd}).then(r=>r.json());
+  }
+
+  // ============ WebSocket ============
+  function connect(){
+    setConn("connecting");
+    const proto=location.protocol==="https:"?"wss:":"ws:";
+    ws=new WebSocket(proto+"//"+location.host+"/ws");
+    ws.onopen=()=>{setConn("connected");removeTyping()};
+    ws.onmessage=(e)=>{
+      const data=JSON.parse(e.data);
+      if(data.type==="typing"){showTyping();return}
+      if(data.type==="message"){
+        removeTyping();
+        addMessage("assistant",data.text);
+        refreshBudget();
+        // If the user has the Memories/Home panel open, refresh it
+        const activePanel=document.querySelector(".panel.active");
+        if(activePanel){
+          const name=activePanel.getAttribute("data-panel");
+          if(name==="home")loadHomeData();
+          if(name==="memories")loadMemoriesData();
+        }
+      }
+    };
+    ws.onclose=()=>{setConn("disconnected");setTimeout(connect,2000)};
+    ws.onerror=()=>{ws.close()};
+  }
+
+  function addMessage(role,text){
+    if(!hasMessages){hasMessages=true;hideWelcome()}
+    const div=document.createElement("div");
+    div.className="msg "+role;
+    div.textContent=text;
+    messages.appendChild(div);
+    messages.scrollTop=messages.scrollHeight;
+  }
+  function showTyping(){
+    if(typingEl)return;
+    if(!hasMessages){hasMessages=true;hideWelcome()}
+    typingEl=document.createElement("div");
+    typingEl.className="msg typing";
+    typingEl.textContent="Thinking…";
+    messages.appendChild(typingEl);
+    messages.scrollTop=messages.scrollHeight;
+  }
+  function removeTyping(){
+    if(typingEl){typingEl.remove();typingEl=null}
+  }
+
+  // ============ Form submit ============
+  form.addEventListener("submit",(e)=>{
+    e.preventDefault();
+    const text=input.value.trim();
+    if(!ws||ws.readyState!==1){addMessage("assistant","(not connected — retrying…)");return}
+    if(pendingFile){
+      const file=pendingFile;
+      pendingFile=null;
+      filePreview.hidden=true;
+      fileInput.value="";
+      addMessage("user",(text||"")+" [file: "+file.name+"]");
+      uploadFile(file).then(result=>{
+        const msg=text?text+" [attached: "+file.name+"]":"[file uploaded: "+file.name+"]";
+        ws.send(JSON.stringify({type:"message",text:msg,file_id:result.file_id}));
+      }).catch(()=>{addMessage("assistant","File upload failed.")});
+      input.value="";
+      input.style.height="auto";
+      return;
+    }
+    if(!text)return;
+    addMessage("user",text);
+    ws.send(JSON.stringify({type:"message",text:text}));
+    input.value="";
+    input.style.height="auto";
+  });
+  input.addEventListener("keydown",(e)=>{
+    if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();form.dispatchEvent(new Event("submit"))}
+  });
+  input.addEventListener("input",()=>{
+    input.style.height="auto";
+    input.style.height=Math.min(input.scrollHeight,120)+"px";
+  });
+
+  // ============ Data fetchers ============
+  function fmtUSD(n){
+    if(n===0)return "$0.00";
+    if(n<10)return "$"+n.toFixed(2);
+    if(n<100)return "$"+n.toFixed(1);
+    return "$"+Math.round(n);
+  }
+  function fmtRelative(iso){
+    if(!iso)return "";
+    const d=new Date(iso);
+    if(isNaN(d))return "";
+    const s=Math.round((Date.now()-d.getTime())/1000);
+    if(s<60)return "just now";
+    if(s<3600)return Math.floor(s/60)+"m ago";
+    if(s<86400)return Math.floor(s/3600)+"h ago";
+    if(s<2592000)return Math.floor(s/86400)+"d ago";
+    return d.toLocaleDateString();
+  }
+  function escapeHtml(s){
+    const d=document.createElement("div");
+    d.textContent=s;
+    return d.innerHTML;
+  }
+
+  function refreshBudget(){
+    fetch("/api/dashboard/costs").then(r=>r.ok?r.json():null).then(data=>{
+      if(!data||!data.costs||data.costs.length===0){budgetPill.hidden=true;return}
+      let total=0;
+      data.costs.forEach(c=>{total+=(c.cost_usd||0)});
+      budgetPill.hidden=false;
+      budgetPill.textContent=fmtUSD(total)+" used";
+    }).catch(()=>{budgetPill.hidden=true});
+  }
+
+  // Home panel — populate all tiles from stats + costs
+  function loadHomeData(){
+    fetch("/api/dashboard/stats").then(r=>r.ok?r.json():null).then(data=>{
+      if(!data)return;
+      const tileMem=document.getElementById("tile-memories");
+      const tileSess=document.getElementById("tile-sessions");
+      if(tileMem)tileMem.textContent=((data.thoughts||0)+(data.entities||0)+(data.key_facts||0)).toString();
+      if(tileSess)tileSess.textContent=(data.sessions||0).toString();
+    }).catch(()=>{});
+    fetch("/api/dashboard/costs").then(r=>r.ok?r.json():null).then(data=>{
+      const tileCost=document.getElementById("tile-cost");
+      if(!tileCost)return;
+      if(!data||!data.costs){tileCost.textContent="$0.00";return}
+      let total=0;data.costs.forEach(c=>{total+=(c.cost_usd||0)});
+      tileCost.textContent=fmtUSD(total);
+    }).catch(()=>{});
+    const tileApps=document.getElementById("tile-apps");
+    if(tileApps)tileApps.textContent="1"; // webchat is always active — we're in it
+  }
+
+  // Memories panel — show mini-stats + notes list
+  function loadMemoriesData(){
+    fetch("/api/dashboard/stats").then(r=>r.ok?r.json():null).then(data=>{
+      if(!data)return;
+      const t=document.getElementById("mem-count-thoughts");
+      const e=document.getElementById("mem-count-entities");
+      const f=document.getElementById("mem-count-facts");
+      if(t)t.textContent=(data.thoughts||0).toString();
+      if(e)e.textContent=(data.entities||0).toString();
+      if(f)f.textContent=(data.key_facts||0).toString();
+    }).catch(()=>{});
+
+    fetch("/api/dashboard/memory").then(r=>r.ok?r.json():null).then(data=>{
+      const list=document.getElementById("memory-list");
+      if(!list)return;
+      if(!data||!data.thoughts||data.thoughts.length===0){
+        list.innerHTML='<div class="empty-state"><div class="empty-icon">🧠</div><p>No notes saved yet.<br>Tell me anything you want me to remember.</p></div>';
+        return;
+      }
+      list.innerHTML="";
+      data.thoughts.forEach(t=>{
+        const item=document.createElement("div");
+        item.className="memory-item";
+        item.innerHTML=
+          '<div class="memory-item-header">'+
+            '<span class="memory-item-source">'+escapeHtml(t.source||"note")+'</span>'+
+            '<span class="memory-item-date">'+escapeHtml(fmtRelative(t.created_at))+'</span>'+
+          '</div>'+
+          '<div class="memory-item-content">'+escapeHtml(t.content||"")+'</div>';
+        list.appendChild(item);
+      });
+    }).catch(()=>{
+      const list=document.getElementById("memory-list");
+      if(list)list.innerHTML='<div class="empty-state muted">Couldn\'t load memories.</div>';
+    });
+  }
+
+  // Connected apps panel — show webchat as active
+  function loadAppsData(){
+    const active=document.getElementById("apps-active");
+    if(!active)return;
+    active.innerHTML=
+      '<div class="app-card active">'+
+        '<span class="app-icon">🌐</span>'+
+        '<span class="app-name">Web Chat</span>'+
+        '<span class="app-desc">You\'re using it right now</span>'+
+        '<span class="app-badge">Connected</span>'+
+      '</div>';
+  }
+
+  // Spending panel — breakdown per model
+  function loadSpendingData(){
+    fetch("/api/dashboard/costs").then(r=>r.ok?r.json():null).then(data=>{
+      const total=document.getElementById("spending-total");
+      const bd=document.getElementById("spending-breakdown");
+      if(!total||!bd)return;
+      if(!data||!data.costs||data.costs.length===0){
+        total.textContent="$0.00";
+        bd.innerHTML='<div class="empty-state muted">No spending to report yet.</div>';
+        return;
+      }
+      let totalUSD=0;
+      data.costs.forEach(c=>{totalUSD+=(c.cost_usd||0)});
+      total.textContent=fmtUSD(totalUSD);
+      bd.innerHTML="";
+      data.costs.forEach(c=>{
+        const item=document.createElement("div");
+        item.className="spending-item";
+        const tokens=(c.input_tokens||0)+(c.output_tokens||0);
+        const niceTokens=tokens>1000?(tokens/1000).toFixed(1)+"k":tokens.toString();
+        item.innerHTML=
+          '<div>'+
+            '<div class="spending-item-name">'+escapeHtml(c.model||"Unknown model")+'</div>'+
+            '<div class="spending-item-detail">'+niceTokens+' tokens</div>'+
+          '</div>'+
+          '<div class="spending-item-cost">'+fmtUSD(c.cost_usd||0)+'</div>';
+        bd.appendChild(item);
+      });
+    }).catch(()=>{
+      const bd=document.getElementById("spending-breakdown");
+      if(bd)bd.innerHTML='<div class="empty-state muted">Couldn\'t load spending data.</div>';
+    });
+  }
+
+  // Settings panel — show activity summary
+  function loadSettingsData(){
+    fetch("/api/dashboard/stats").then(r=>r.ok?r.json():null).then(data=>{
+      if(!data)return;
+      const a=document.getElementById("settings-activity");
+      if(!a)return;
+      const parts=[];
+      if(data.sessions!==undefined)parts.push(data.sessions+" conversations");
+      if(data.entities!==undefined)parts.push(data.entities+" things saved");
+      if(data.thoughts!==undefined)parts.push(data.thoughts+" notes");
+      a.textContent=parts.length?parts.join(" · "):"nothing yet";
+    }).catch(()=>{});
+  }
+
+  // Language selector
+  if(langSelect){
+    langSelect.addEventListener("change",()=>applyI18n(langSelect.value));
+  }
+
+  // ============ Init ============
+  applyTheme(localStorage.getItem("theme")||"auto");
+  const savedLang=localStorage.getItem("lang")||document.documentElement.lang||"en";
+  applyI18n(savedLang);
+  if(langSelect)langSelect.value=savedLang;
+  bindPromptClicks();
+  showWelcome();
+  connect();
+  refreshBudget();
+  setInterval(refreshBudget,30000);
+
+  // PWA: register the service worker so users can install Butler on their
+  // home screen. Registration is best-effort — if it fails (e.g. served
+  // over plain HTTP on a non-localhost host, or in an insecure iframe) the
+  // app still works, it just isn't installable.
+  if("serviceWorker" in navigator){
+    window.addEventListener("load",function(){
+      navigator.serviceWorker.register("/sw.js",{scope:"/"}).catch(function(err){
+        console.warn("PWA service worker registration failed:",err);
+      });
+    });
+  }
+})();

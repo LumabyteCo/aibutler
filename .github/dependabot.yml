@@ -1,0 +1,80 @@
+# Dependabot configuration for AI Butler.
+#
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# We scan three ecosystems:
+#   1. Go modules     — the core binary
+#   2. GitHub Actions — our CI workflow dependencies
+#   3. Docker         — the production image base
+#
+# Weekly cadence keeps the PR volume manageable (AI Butler has ~10 direct
+# Go deps so daily is overkill). Security updates bypass the schedule
+# and open immediately as GitHub detects them.
+#
+# govulncheck runs on every CI invocation anyway, so Dependabot is the
+# "fix it" arm of the same "CVEs in deps" concern; this file is the
+# belt-and-suspenders for that pairing.
+version: 2
+updates:
+
+  # ── Go modules ────────────────────────────────────────────────────
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    # Group patch + minor updates into a single PR to reduce noise.
+    # Majors still get their own PR — they often need code review.
+    groups:
+      go-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ── GitHub Actions ───────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ── Docker base image ────────────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "docker"
+      include: "scope"

@@ -1,0 +1,58 @@
+{
+  "name": "ai-butler",
+  "displayName": "AI Butler",
+  "description": "VS Code extension for AI Butler - your personal AI assistant",
+  "version": "0.1.0",
+  "publisher": "aibutler",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:aibutler.ask",
+    "onCommand:aibutler.explain",
+    "onCommand:aibutler.fix",
+    "onCommand:aibutler.tests"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aibutler.ask",
+        "title": "Ask AI Butler"
+      },
+      {
+        "command": "aibutler.explain",
+        "title": "AI Butler: Explain Selection"
+      },
+      {
+        "command": "aibutler.fix",
+        "title": "AI Butler: Fix This"
+      },
+      {
+        "command": "aibutler.tests",
+        "title": "AI Butler: Write Tests"
+      }
+    ],
+    "configuration": {
+      "title": "AI Butler",
+      "properties": {
+        "aibutler.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3377",
+          "description": "URL of the AI Butler server"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

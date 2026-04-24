@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "💬 Questions & ideas"
+    url: https://github.com/LumabyteCo/aibutler/discussions
+    about: "Open-ended questions, brainstorming, show-and-tell — start in Discussions."
+  - name: "🔒 Security vulnerability"
+    url: https://github.com/LumabyteCo/aibutler/security/advisories/new
+    about: "Please report security issues privately via GitHub security advisories, not public issues. See SECURITY.md."
+  - name: "📚 Documentation"
+    url: https://docs.aibutler.dev
+    about: "Check the docs first — many common questions are answered there."

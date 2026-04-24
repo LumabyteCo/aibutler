@@ -1,0 +1,81 @@
+# ==============================================================================
+# AI Butler — .gitignore
+# ==============================================================================
+
+# ---- Binaries ----
+# NOTE: anchored to the repo root. Unanchored rules like `aibutler` would also
+# match `deploy/helm/aibutler/` — see https://git-scm.com/docs/gitignore for
+# why leading slashes matter.
+/aibutler
+/aibutler.exe
+/integration.test
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+
+# ---- Build output ----
+/dist/
+/tmp/
+/build/
+*.out
+
+# ---- Go tooling ----
+vendor/
+coverage.out
+*.coverprofile
+__debug_bin*
+
+# ---- Secrets — NEVER commit ----
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ---- AI Butler runtime data ----
+# NOTE: these are runtime data paths, NOT the Go source packages.
+# Do NOT use unanchored rules like `vault/` which would match internal/vault/
+# (the Go package for credential storage).
+.aibutler/
+/data/
+/vault/
+/backups/
+/sessions/
+/tmp/
+*.backup
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.claude/
+
+# ---- OS junk ----
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---- Node.js (vscode-extension + other JS subprojects) ----
+node_modules/
+vscode-extension/out/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---- Website lives in a separate repo (LumabyteCo/aibutler-website) ----
+website/
+
+# ---- Astro build cache (stray) ----
+.astro/
+
+# ---- Temp / scratch ----
+*.tmp
+*.bak
+scratch/

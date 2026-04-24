@@ -1,0 +1,102 @@
+name: Feature request
+description: Suggest a new capability, integration, or improvement.
+title: "[feat] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: check the [roadmap](https://github.com/LumabyteCo/aibutler#on-the-roadmap-v02)
+        and [open issues](https://github.com/LumabyteCo/aibutler/issues?q=is%3Aissue+label%3Aenhancement)
+        to see if this is already planned or being discussed.
+
+        Not sure if it's a feature or a question? Use
+        [Discussions](https://github.com/LumabyteCo/aibutler/discussions) for
+        open-ended ideas and this form for concrete proposals.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: Start with the pain, not the solution. Who hits this, when, and why does it matter?
+      placeholder: |
+        When I'm deploying AI Butler on Raspberry Pi with 1GB RAM, the
+        default embedding model exceeds memory and OOMs. I have to dig
+        through docs to find how to disable embeddings or pick a smaller
+        model.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What do you want AI Butler to do? Be specific — commands, config keys, UI, API, whatever applies.
+      placeholder: |
+        Add a `low-memory` preset to `aibutler setup` that:
+        - picks a 64M embedding model by default
+        - disables the vector indexer
+        - caps the sliding window to 50 messages
+        - warns if total process RSS exceeds 700MB
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else could solve this? Why isn't that better?
+      placeholder: |
+        - A config flag per knob (too much to discover for new users)
+        - Auto-detect RAM and scale (too magic; users should pick)
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: How blocking is this for you
+      options:
+        - Nice to have — no blocker, just would be cool
+        - Workaround-able — I can get by with existing features
+        - Blocking me — I can't use AI Butler for my use case without it
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Primary area
+      options:
+        - Core / agent loop
+        - Memory system
+        - New channel (which one?)
+        - New AI provider (which one?)
+        - Web chat UI
+        - Terminal / CLI
+        - Scheduler
+        - Plugins
+        - Smart home / IoT
+        - Deployment / ops
+        - Docs / onboarding
+        - Other / cross-cutting
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Would you like to contribute?
+      description: No obligation — "no" is a valid answer and the issue is still welcome.
+      options:
+        - label: I'd like to implement this myself (we'll help you scope it)
+        - label: I can help with design / review / testing
+        - label: I'm just proposing — someone else would need to build it
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and discussions and this isn't a duplicate
+          required: true

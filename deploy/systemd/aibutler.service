@@ -1,0 +1,24 @@
+[Unit]
+Description=AI Butler — Personal AI Agent Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aibutler
+Group=aibutler
+ExecStart=/usr/local/bin/aibutler run
+Restart=on-failure
+RestartSec=5
+Environment=AIBUTLER_DATA=/var/lib/aibutler
+WorkingDirectory=/var/lib/aibutler
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/aibutler
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,79 @@
+version: 2
+project_name: aibutler
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: aibutler
+    main: ./main.go
+    binary: aibutler
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+      - riscv64
+    goarm:
+      - "7"
+    ignore:
+      - goos: windows
+        goarch: arm
+      - goos: windows
+        goarch: riscv64
+    ldflags:
+      - -s -w -X github.com/LumabyteCo/aibutler/internal/cli.Version={{.Version}}
+
+archives:
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+    documents:
+      - "{{ .ProjectName }}_{{ .Version }}_sbom.cdx.json"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: LumabyteCo
+    name: aibutler
+  draft: true
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+  header: |
+    ## AI Butler {{ .Tag }}
+
+    The open-source AI agent that connects everything. Self-hosted personal
+    assistant with exceptional memory, any AI model, built-in web UI.
+
+    **See [CHANGELOG.md](https://github.com/LumabyteCo/aibutler/blob/main/CHANGELOG.md)
+    for the full release notes.**
+  footer: |
+    ---
+
+    Full docs: https://docs.aibutler.dev
+    Landing page: https://aibutler.dev
+    Apache 2.0 licensed. Built with care by [LumaByte Co](https://lumabyte.co).

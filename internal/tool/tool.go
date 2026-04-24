@@ -1,0 +1,432 @@
+package tool
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/LumabyteCo/aibutler/internal/agent"
+	"github.com/LumabyteCo/aibutler/internal/capability"
+)
+
+// Tool is the interface every tool must implement.
+type Tool interface {
+	Name() string
+	Description() string
+	Schema() string // JSON Schema for input
+	Execute(ctx context.Context, input string) (string, error)
+	Capability() string // Required capability resource (empty = always available)
+}
+
+// Registry holds all registered tools.
+type Registry struct {
+	mu    sync.RWMutex
+	tools map[string]Tool
+}
+
+// NewRegistry creates an empty tool registry.
+func NewRegistry() *Registry {
+	return &Registry{tools: make(map[string]Tool)}
+}
+
+// Register adds a tool to the registry.
+func (r *Registry) Register(t Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tools[t.Name()] = t
+}
+
+// Unregister removes a tool by name.
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+}
+
+// UnregisterPrefix removes all tools whose names start with prefix.
+func (r *Registry) UnregisterPrefix(prefix string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+		}
+	}
+}
+
+// Get returns a tool by name.
+func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.tools[name]
+	return t, ok
+}
+
+// All returns all registered tools.
+func (r *Registry) All() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tools := make([]Tool, 0, len(r.tools))
+	for _, t := range r.tools {
+		tools = append(tools, t)
+	}
+	return tools
+}
+
+// Available returns tool definitions filtered by mode and capabilities.
+func (r *Registry) Available(mode agent.Mode, caps *capability.CapabilitySet, engine *capability.Engine) []agent.ToolDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var defs []agent.ToolDef
+	for _, t := range r.tools {
+		// In single mode, hide delegation tools.
+		if mode == agent.ModeSingle {
+			if t.Name() == "agent.delegate" || t.Name() == "agent.spawn" {
+				continue
+			}
+		}
+
+		// Check capability if required. This is a filter check (Probe=true)
+		// so it doesn't consume the rate-limit budget — we're just deciding
+		// whether to advertise the tool, not actually using it.
+		cap := t.Capability()
+		if cap != "" && caps != nil && engine != nil {
+			result := engine.Check(context.Background(), caps, capability.CheckRequest{Resource: cap, Probe: true})
+			if !result.Allowed {
+				continue
+			}
+		}
+
+		defs = append(defs, agent.ToolDef{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Schema:      t.Schema(),
+		})
+	}
+	return defs
+}
+
+// Dispatcher implements agent.ToolExecutor via capability-gated dispatch.
+// TelemetryRecorder records tool call metrics.
+type TelemetryRecorder interface {
+	RecordToolCall()
+	RecordError()
+}
+
+// HookRunner is a narrow interface for the hook engine (avoids import cycles).
+type HookRunner interface {
+	RunPreToolUse(ctx context.Context, toolName, toolInput string) (denied bool, messages []string, err error)
+	RunPostToolUse(ctx context.Context, toolName, toolInput, toolOutput string, isError bool) (denied bool, messages []string, err error)
+}
+
+// ComplianceLogger is a narrow interface for compliance audit logging.
+type ComplianceLogger interface {
+	Log(ctx context.Context, userID, action, resource, details, ip, outcome string) error
+}
+
+// CacheProvider is a narrow interface for response caching.
+type CacheProvider interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+	Set(ctx context.Context, key, value string, ttl time.Duration) error
+	TTLForTool(toolName string) time.Duration
+}
+
+type Dispatcher struct {
+	registry   *Registry
+	engine     *capability.Engine
+	auditor    capability.Auditor
+	telemetry  TelemetryRecorder
+	hooks      HookRunner
+	compliance ComplianceLogger
+	cache      CacheProvider
+}
+
+// NewDispatcher creates a dispatcher.
+func NewDispatcher(registry *Registry, engine *capability.Engine, auditor capability.Auditor) *Dispatcher {
+	return &Dispatcher{
+		registry: registry,
+		engine:   engine,
+		auditor:  auditor,
+	}
+}
+
+// SetTelemetry attaches a telemetry recorder to the dispatcher.
+func (d *Dispatcher) SetTelemetry(t TelemetryRecorder) {
+	d.telemetry = t
+}
+
+// SetHookEngine attaches a hook runner to the dispatcher.
+func (d *Dispatcher) SetHookEngine(h HookRunner) {
+	d.hooks = h
+}
+
+// SetComplianceLogger attaches a compliance logger to the dispatcher.
+func (d *Dispatcher) SetComplianceLogger(cl ComplianceLogger) {
+	d.compliance = cl
+}
+
+// SetCache attaches a response cache to the dispatcher.
+func (d *Dispatcher) SetCache(c CacheProvider) {
+	d.cache = c
+}
+
+// Execute dispatches a tool call through capability gates.
+func (d *Dispatcher) Execute(ctx context.Context, call agent.ToolCall) (string, error) {
+	return d.ExecuteWithCaps(ctx, call, nil)
+}
+
+// ExecuteWithCaps dispatches a tool call with specific capabilities.
+// If caps is nil, falls back to caps from context (defense-in-depth).
+func (d *Dispatcher) ExecuteWithCaps(ctx context.Context, call agent.ToolCall, caps *capability.CapabilitySet) (string, error) {
+	// 1. Look up tool.
+	t, ok := d.registry.Get(call.Name)
+	if !ok {
+		return "", fmt.Errorf("unknown tool: %s", call.Name)
+	}
+
+	// 2. Capability check. Fall back to context caps if explicit caps not provided.
+	if caps == nil {
+		caps = capability.CapsFromContext(ctx)
+	}
+	cap := t.Capability()
+	if cap != "" && caps != nil {
+		result := d.engine.Check(ctx, caps, capability.CheckRequest{Resource: cap})
+		if !result.Allowed {
+			return "", fmt.Errorf("capability denied: %s (reason: %s)", cap, result.Reason)
+		}
+	}
+
+	// 3. Run pre-tool hooks — if denied, return denial message (skip execution).
+	if d.hooks != nil {
+		denied, msgs, hookErr := d.hooks.RunPreToolUse(ctx, call.Name, call.Input)
+		if hookErr != nil {
+			return "", fmt.Errorf("hook pre-tool error: %w", hookErr)
+		}
+		if denied {
+			reason := "tool call denied by hook"
+			if len(msgs) > 0 {
+				reason = strings.Join(msgs, "; ")
+			}
+			return "", fmt.Errorf("denied: %s", reason)
+		}
+		// Pre-hook feedback will be merged after execution.
+		_ = msgs
+	}
+
+	// 4. Inject capabilities into context for tools that need them (e.g. proxy).
+	if caps != nil {
+		ctx = capability.WithCaps(ctx, caps)
+	}
+
+	// E4: Check cache before executing (skip mutating tools).
+	if d.cache != nil && isCacheable(call.Name) {
+		ttl := d.cache.TTLForTool(call.Name)
+		if ttl > 0 {
+			cacheKey := call.Name + "\x00" + call.Input
+			if cached, found, cErr := d.cache.Get(ctx, cacheKey); cErr == nil && found {
+				return cached, nil
+			}
+		}
+	}
+
+	// 5. Execute.
+	output, err := t.Execute(ctx, call.Input)
+
+	// 5b. Telemetry.
+	if d.telemetry != nil {
+		d.telemetry.RecordToolCall()
+		if err != nil {
+			d.telemetry.RecordError()
+		}
+	}
+
+	// 6. Run post-tool hooks — merge feedback into output.
+	if d.hooks != nil {
+		isErr := err != nil
+		outStr := output
+		if isErr {
+			outStr = err.Error()
+		}
+		_, postMsgs, hookErr := d.hooks.RunPostToolUse(ctx, call.Name, call.Input, outStr, isErr)
+		if hookErr == nil && len(postMsgs) > 0 {
+			feedback := SanitizeHookFeedback(strings.Join(postMsgs, "\n"))
+			if output != "" {
+				output = output + "\n\n<hook_feedback untrusted=\"true\">\n" + feedback + "\n</hook_feedback>"
+			} else {
+				output = "<hook_feedback untrusted=\"true\">\n" + feedback + "\n</hook_feedback>"
+			}
+		}
+	}
+
+	// E4: Store result in cache on success (skip mutating tools).
+	if d.cache != nil && err == nil && isCacheable(call.Name) {
+		ttl := d.cache.TTLForTool(call.Name)
+		if ttl > 0 {
+			cacheKey := call.Name + "\x00" + call.Input
+			_ = d.cache.Set(ctx, cacheKey, output, ttl)
+		}
+	}
+
+	// E3: Compliance audit logging for tool executions.
+	if d.compliance != nil {
+		outcome := "success"
+		if err != nil {
+			outcome = "error"
+		}
+		_ = d.compliance.Log(ctx, "", call.Name, cap, call.Input, "", outcome)
+	}
+
+	// 7. Audit.
+	if d.auditor != nil {
+		status := "success"
+		errMsg := ""
+		if err != nil {
+			status = "error"
+			errMsg = err.Error()
+		}
+		_ = d.auditor.LogAccess(ctx, capability.AuditEntry{
+			Action:         call.Name,
+			CapabilityUsed: cap,
+			Status:         status,
+			Error:          errMsg,
+		})
+	}
+
+	return output, err
+}
+
+// AvailableTools returns tool definitions filtered by mode and capabilities.
+func (d *Dispatcher) AvailableTools(ctx context.Context, mode agent.Mode, caps *capability.CapabilitySet) []agent.ToolDef {
+	return d.registry.Available(mode, caps, d.engine)
+}
+
+// RegisterDataTools registers all built-in SQLite data tools.
+func RegisterDataTools(registry *Registry, db *sql.DB) {
+	// Tasks.
+	registry.Register(&taskAddTool{db: db})
+	registry.Register(&taskListTool{db: db})
+	registry.Register(&taskCompleteTool{db: db})
+	registry.Register(&taskRemoveTool{db: db})
+	registry.Register(&taskClearTool{db: db})
+	registry.Register(&taskPrioritizeTool{db: db})
+
+	// Expenses & budgets.
+	registry.Register(&expenseLogTool{db: db})
+	registry.Register(&expenseSummaryTool{db: db})
+	registry.Register(&expenseBudgetCheckTool{db: db})
+
+	// Contacts.
+	registry.Register(&contactAddTool{db: db})
+	registry.Register(&contactSearchTool{db: db})
+	registry.Register(&contactUpdateTool{db: db})
+	registry.Register(&contactBirthdaysTool{db: db})
+
+	// Journal.
+	registry.Register(&journalWriteTool{db: db})
+	registry.Register(&journalReadTool{db: db})
+	registry.Register(&journalMoodTrendTool{db: db})
+
+	// Health.
+	registry.Register(&healthLogTool{db: db})
+	registry.Register(&healthReadTool{db: db})
+
+	// Reminders.
+	registry.Register(&reminderSetTool{db: db})
+	registry.Register(&reminderListTool{db: db})
+	registry.Register(&reminderCancelTool{db: db})
+
+	// Habits.
+	registry.Register(&habitCreateTool{db: db})
+	registry.Register(&habitLogTool{db: db})
+	registry.Register(&habitStreakTool{db: db})
+
+	// Places.
+	registry.Register(&placeSaveTool{db: db})
+	registry.Register(&placeSearchTool{db: db})
+	registry.Register(&placeUpdateTool{db: db})
+	registry.Register(&placeDeleteTool{db: db})
+
+	// Cost.
+	registry.Register(&costStatusTool{db: db})
+}
+
+// FuncTool wraps a function as a Tool implementation.
+// Useful for packages that can't import the tool package directly (avoiding circular imports).
+type FuncTool struct {
+	ToolName   string
+	ToolDesc   string
+	ToolSchema string
+	ToolCap    string
+	Exec       func(ctx context.Context, input string) (string, error)
+}
+
+func (f *FuncTool) Name() string        { return f.ToolName }
+func (f *FuncTool) Description() string  { return f.ToolDesc }
+func (f *FuncTool) Schema() string       { return f.ToolSchema }
+func (f *FuncTool) Capability() string   { return f.ToolCap }
+func (f *FuncTool) Execute(ctx context.Context, input string) (string, error) {
+	return f.Exec(ctx, input)
+}
+
+// SanitizeHookFeedback truncates and cleans hook output to mitigate prompt injection.
+func SanitizeHookFeedback(feedback string) string {
+	// Truncate to prevent excessively long hook output.
+	const maxFeedback = 500
+	if len(feedback) > maxFeedback {
+		feedback = feedback[:maxFeedback] + "... [truncated]"
+	}
+	// Strip lines that look like prompt injection attempts.
+	var clean []string
+	for _, line := range strings.Split(feedback, "\n") {
+		trimmed := strings.TrimSpace(strings.ToLower(line))
+		if strings.HasPrefix(trimmed, "ignore") ||
+			strings.HasPrefix(trimmed, "system:") ||
+			strings.HasPrefix(trimmed, "you are") ||
+			strings.HasPrefix(trimmed, "assistant:") ||
+			strings.HasPrefix(trimmed, "forget") {
+			continue
+		}
+		clean = append(clean, line)
+	}
+	return strings.Join(clean, "\n")
+}
+
+// isCacheable returns false for tools that should never be cached (mutating tools).
+func isCacheable(toolName string) bool {
+	// Skip caching for shell, file writes, and other mutating tools.
+	uncacheable := []string{
+		"shell.", "file.write", "file.delete", "task.add", "task.complete",
+		"task.remove", "task.clear", "expense.log", "contact.add", "contact.update",
+		"journal.write", "health.log", "reminder.set", "reminder.cancel",
+		"habit.create", "habit.log", "place.save", "place.update", "place.delete",
+		"agent.delegate", "agent.spawn", "channel.send", "channel.relay",
+		"memory.capture", "instruction.save", "instruction.update", "instruction.remove",
+		"transaction.", "voice.", "plugin.marketplace.install",
+	}
+	for _, prefix := range uncacheable {
+		if strings.HasPrefix(toolName, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// WireHealthEncryptor sets the encryptor on health.log and health.read tools.
+func WireHealthEncryptor(registry *Registry, enc HealthEncryptor) {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	if t, ok := registry.tools["health.log"]; ok {
+		if ht, ok := t.(*healthLogTool); ok {
+			ht.enc = enc
+		}
+	}
+	if t, ok := registry.tools["health.read"]; ok {
+		if ht, ok := t.(*healthReadTool); ok {
+			ht.enc = enc
+		}
+	}
+}
