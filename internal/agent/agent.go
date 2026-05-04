@@ -15,8 +15,32 @@ import (
 type Message struct {
 	Role      string     // "system", "user", "assistant", "tool"
 	Content   string
+	Images    []Image    // Optional multimodal images attached to a user message
 	ToolID    string     // For tool results
 	ToolCalls []ToolCall // For assistant messages that invoke tools
+}
+
+// ImageSource describes how an Image's payload should be interpreted.
+type ImageSource string
+
+const (
+	// ImageSourceBase64 — Data is the base64-encoded body of the image.
+	// MimeType identifies the content type (e.g. "image/png").
+	ImageSourceBase64 ImageSource = "base64"
+	// ImageSourceURL — Data is an absolute URL the model can fetch.
+	ImageSourceURL ImageSource = "url"
+)
+
+// Image is one image attached to a Message. Adapters that support
+// multimodal input (OpenAI-compatible — Ollama vision, OpenAI GPT-4o,
+// LM Studio with vision LLMs, etc.) render Images alongside Content.
+//
+// Models without vision support silently ignore the Images field — the
+// text Content still flows through normally.
+type Image struct {
+	Source   ImageSource // "base64" or "url"
+	Data     string      // base64 body OR absolute URL, depending on Source
+	MimeType string      // "image/png" | "image/jpeg" | "image/webp" | "image/gif"
 }
 
 // Response is what the model returns.

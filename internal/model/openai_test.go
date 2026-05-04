@@ -287,3 +287,155 @@ func TestOpenAIRetry(t *testing.T) {
 		t.Errorf("attempts = %d, want 3", attempts)
 	}
 }
+
+// --- Multimodal / vision tests ---
+
+// TestOpenAI_Multimodal_BuildsContentArray verifies that when a Message
+// has Images, the outbound request renders Content as an array of typed
+// parts (text + image_url) instead of a plain string.
+func TestOpenAI_Multimodal_BuildsContentArray(t *testing.T) {
+	var captured map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+
+		resp := openaiResponse{
+			Choices: []openaiChoice{{Message: openaiMessage{Role: "assistant", Content: "saw it"}}},
+			Usage:   openaiUsage{PromptTokens: 5, CompletionTokens: 2},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	adapter := NewOpenAI("test-key", "gpt-4o", 5*time.Second, 0)
+	adapter.baseURL = server.URL
+
+	messages := []agent.Message{
+		{
+			Role:    "user",
+			Content: "What's in this image?",
+			Images: []agent.Image{
+				{Source: agent.ImageSourceBase64, Data: "iVBORw0KAAA=", MimeType: "image/png"},
+			},
+		},
+	}
+	if _, err := adapter.Complete(context.Background(), messages); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	rawMsgs, _ := captured["messages"].([]interface{})
+	if len(rawMsgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(rawMsgs))
+	}
+	msg, _ := rawMsgs[0].(map[string]interface{})
+	parts, ok := msg["content"].([]interface{})
+	if !ok {
+		t.Fatalf("multimodal message content should be an array, got %T: %v", msg["content"], msg["content"])
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts (text + image_url), got %d: %v", len(parts), parts)
+	}
+
+	// Text part.
+	textPart, _ := parts[0].(map[string]interface{})
+	if textPart["type"] != "text" {
+		t.Errorf("part[0].type = %v, want text", textPart["type"])
+	}
+	if textPart["text"] != "What's in this image?" {
+		t.Errorf("part[0].text = %v", textPart["text"])
+	}
+
+	// Image part.
+	imagePart, _ := parts[1].(map[string]interface{})
+	if imagePart["type"] != "image_url" {
+		t.Errorf("part[1].type = %v, want image_url", imagePart["type"])
+	}
+	urlObj, _ := imagePart["image_url"].(map[string]interface{})
+	wantPrefix := "data:image/png;base64,"
+	if !strings.HasPrefix(urlObj["url"].(string), wantPrefix) {
+		t.Errorf("image_url.url = %q, want prefix %q", urlObj["url"], wantPrefix)
+	}
+}
+
+// TestOpenAI_Multimodal_URLImage verifies URL-source images are passed
+// through verbatim without data: wrapping.
+func TestOpenAI_Multimodal_URLImage(t *testing.T) {
+	var captured map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		json.NewEncoder(w).Encode(openaiResponse{
+			Choices: []openaiChoice{{Message: openaiMessage{Role: "assistant", Content: "ok"}}},
+		})
+	}))
+	defer server.Close()
+
+	adapter := NewOpenAI("k", "m", 5*time.Second, 0)
+	adapter.baseURL = server.URL
+	_, _ = adapter.Complete(context.Background(), []agent.Message{
+		{Role: "user", Content: "describe", Images: []agent.Image{
+			{Source: agent.ImageSourceURL, Data: "https://example.com/cat.png"},
+		}},
+	})
+
+	rawMsgs, _ := captured["messages"].([]interface{})
+	parts := rawMsgs[0].(map[string]interface{})["content"].([]interface{})
+	imgPart := parts[1].(map[string]interface{})
+	urlObj := imgPart["image_url"].(map[string]interface{})
+	if urlObj["url"] != "https://example.com/cat.png" {
+		t.Errorf("URL image should pass through verbatim, got %v", urlObj["url"])
+	}
+}
+
+// TestOpenAI_TextOnly_UnchangedShape verifies that messages without Images
+// continue to render Content as a plain string (no regression for the
+// existing text-only path).
+func TestOpenAI_TextOnly_UnchangedShape(t *testing.T) {
+	var captured map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		json.NewEncoder(w).Encode(openaiResponse{
+			Choices: []openaiChoice{{Message: openaiMessage{Role: "assistant", Content: "ok"}}},
+		})
+	}))
+	defer server.Close()
+
+	adapter := NewOpenAI("k", "m", 5*time.Second, 0)
+	adapter.baseURL = server.URL
+	_, _ = adapter.Complete(context.Background(), []agent.Message{
+		{Role: "user", Content: "plain text only"},
+	})
+
+	rawMsgs, _ := captured["messages"].([]interface{})
+	msg := rawMsgs[0].(map[string]interface{})
+	if _, isString := msg["content"].(string); !isString {
+		t.Errorf("text-only message content should still be a string, got %T", msg["content"])
+	}
+}
+
+// TestImageToDataURL_DefaultMimeType verifies the helper handles missing
+// MimeType gracefully (defaults to image/png).
+func TestImageToDataURL_DefaultMimeType(t *testing.T) {
+	got := imageToDataURL(agent.Image{Source: agent.ImageSourceBase64, Data: "abc"})
+	want := "data:image/png;base64,abc"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestImageToDataURL_EmptyDataReturnsEmpty(t *testing.T) {
+	if got := imageToDataURL(agent.Image{Source: agent.ImageSourceBase64, Data: ""}); got != "" {
+		t.Errorf("empty Data should yield empty URL, got %q", got)
+	}
+}
+
+func TestImageToDataURL_BackwardCompatNoSource(t *testing.T) {
+	// Empty Source with non-empty Data falls back to base64 (helps callers
+	// that build Image structs without setting Source explicitly).
+	got := imageToDataURL(agent.Image{Data: "abc", MimeType: "image/jpeg"})
+	want := "data:image/jpeg;base64,abc"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
