@@ -1,0 +1,253 @@
+// Package dbus provides a Linux D-Bus method-call client.
+//
+// D-Bus is the standard IPC mechanism on modern Linux desktops. Most desktop
+// apps and system services expose interfaces over the session or system bus
+// (Spotify, GNOME Shell, KDE/Plasma, NetworkManager, systemd-logind, MPRIS
+// media players, etc.). Calling them is faster, cheaper, and more reliable
+// than driving the GUI.
+//
+// This package wraps github.com/godbus/dbus/v5 with the same security model
+// as the other native-script executors:
+//
+//   - Allowlist of `service:object_path:interface:method` patterns (with
+//     `*` wildcards). Empty allowlist denies everything.
+//   - Bounded call timeout.
+//   - Capability gating via tool.dbus.call at the dispatcher layer.
+//
+// Allowlist examples:
+//
+//	org.mpris.MediaPlayer2.spotify:/org/mpris/MediaPlayer2:org.mpris.MediaPlayer2.Player:Play
+//	org.mpris.MediaPlayer2.*:*:org.mpris.MediaPlayer2.Player:*
+//	org.freedesktop.Notifications:/org/freedesktop/Notifications:org.freedesktop.Notifications:Notify
+package dbus
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"runtime"
+	"strings"
+	"time"
+
+	dbus "github.com/godbus/dbus/v5"
+)
+
+const defaultTimeout = 10 * time.Second
+
+// toolRegistry is the narrow interface for registering tools (avoids import cycles).
+type toolRegistry interface {
+	Register(name, description, schema, capability string, exec func(ctx context.Context, input string) (string, error))
+}
+
+// BusKind identifies which D-Bus instance to use.
+type BusKind string
+
+const (
+	// BusSession — the per-user session bus (most desktop apps).
+	BusSession BusKind = "session"
+	// BusSystem — the system-wide bus (logind, NetworkManager, hostname1, etc.).
+	BusSystem BusKind = "system"
+)
+
+// busOpener allows tests to inject a fake connection. In production this is
+// the real godbus connector.
+type busOpener func(kind BusKind) (busConn, error)
+
+// busConn abstracts the parts of *dbus.Conn we use, so tests can mock.
+type busConn interface {
+	Object(dest string, path dbus.ObjectPath) dbus.BusObject
+	Close() error
+}
+
+// Client is an allowlisted D-Bus method-call client.
+type Client struct {
+	allowlist []string
+	timeout   time.Duration
+	opener    busOpener
+}
+
+// NewClient creates a D-Bus client with the given allowlist.
+// Empty allowlist denies everything.
+func NewClient(allowlist []string) *Client {
+	return &Client{
+		allowlist: allowlist,
+		timeout:   defaultTimeout,
+		opener:    defaultBusOpener,
+	}
+}
+
+// SetTimeout overrides the default call timeout.
+func (c *Client) SetTimeout(d time.Duration) { c.timeout = d }
+
+// Call invokes a D-Bus method on the given service+path+interface+method,
+// passing the args verbatim. Returns the response body marshalled to JSON.
+//
+// SECURITY: An empty allowlist denies everything. The match key is
+// "service:object_path:interface:method" with `*` wildcards supported.
+func (c *Client) Call(ctx context.Context, bus BusKind, service, objectPath, iface, method string, args []interface{}) (string, error) {
+	if runtime.GOOS != "linux" {
+		// D-Bus is also available on FreeBSD and (rarely) macOS, but this
+		// executor is Linux-targeted; FreeBSD is allowed through because the
+		// godbus client works there, while everything else returns a clear
+		// suggestion to use a sibling executor.
+		if runtime.GOOS != "freebsd" {
+			return "", fmt.Errorf(
+				"shell.dbus: Linux-targeted — you're on %s. "+
+					"Use shell.applescript for macOS native scripting, shell.powershell on Windows, "+
+					"or shell.script for cross-OS routing.", runtime.GOOS)
+		}
+	}
+	if service == "" || objectPath == "" || iface == "" || method == "" {
+		return "", fmt.Errorf("shell.dbus: service, object_path, interface, and method are all required")
+	}
+	if bus == "" {
+		bus = BusSession
+	}
+	key := fmt.Sprintf("%s:%s:%s:%s", service, objectPath, iface, method)
+	if !c.inAllowlist(service, objectPath, iface, method) {
+		return "", fmt.Errorf("shell.dbus: call not in allowlist: %q", key)
+	}
+
+	conn, err := c.opener(bus)
+	if err != nil {
+		return "", fmt.Errorf("shell.dbus: connect %s bus: %w", bus, err)
+	}
+	defer conn.Close()
+
+	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	obj := conn.Object(service, dbus.ObjectPath(objectPath))
+	call := obj.CallWithContext(callCtx, iface+"."+method, 0, args...)
+	if call.Err != nil {
+		return "", fmt.Errorf("shell.dbus: %w", call.Err)
+	}
+
+	body, err := json.Marshal(call.Body)
+	if err != nil {
+		return fmt.Sprintf("%v", call.Body), nil
+	}
+	return string(body), nil
+}
+
+func (c *Client) inAllowlist(service, objectPath, iface, method string) bool {
+	for _, allowed := range c.allowlist {
+		if matchAllowlistEntry(allowed, service, objectPath, iface, method) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchAllowlistEntry compares a 4-part allowlist entry (with `*` wildcards)
+// against the call's service:object_path:interface:method.
+func matchAllowlistEntry(entry, service, objectPath, iface, method string) bool {
+	parts := strings.SplitN(entry, ":", 4)
+	if len(parts) != 4 {
+		return false
+	}
+	return matchPart(parts[0], service) &&
+		matchPart(parts[1], objectPath) &&
+		matchPart(parts[2], iface) &&
+		matchPart(parts[3], method)
+}
+
+// matchPart supports exact match, full wildcard `*`, and trailing-`*` prefix wildcard.
+func matchPart(pattern, value string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(value, prefix)
+	}
+	return pattern == value
+}
+
+// defaultBusOpener is the production bus opener — uses real godbus connections.
+func defaultBusOpener(kind BusKind) (busConn, error) {
+	switch kind {
+	case BusSystem:
+		conn, err := dbus.SystemBus()
+		if err != nil {
+			return nil, err
+		}
+		return realConn{conn}, nil
+	case BusSession, "":
+		conn, err := dbus.SessionBus()
+		if err != nil {
+			return nil, err
+		}
+		return realConn{conn}, nil
+	default:
+		return nil, fmt.Errorf("unknown bus kind: %s", kind)
+	}
+}
+
+// realConn wraps *dbus.Conn to satisfy busConn. We do NOT close shared
+// session/system buses (godbus manages them as singletons) — Close is a no-op.
+type realConn struct{ *dbus.Conn }
+
+func (realConn) Close() error { return nil }
+
+// DefaultAllowlist returns a curated set of D-Bus call patterns that cover
+// the safest common operations on a Linux desktop: posting system
+// notifications via org.freedesktop.Notifications, and controlling MPRIS
+// media players (Spotify, VLC, mpv, Rhythmbox, etc.).
+//
+// All entries are read-or-control operations on user-facing surfaces — none
+// touch system services like logind, NetworkManager, or hostname1. Callers
+// who want to control system services must add those patterns explicitly.
+//
+// Defaults are NOT applied automatically. Callers must merge them into the
+// allowlist explicitly (typically gated by a config flag) so secure-by-default
+// (empty allowlist denies everything) still holds for fresh installs.
+func DefaultAllowlist() []string {
+	return []string{
+		// System notifications — post, query capabilities, dismiss.
+		"org.freedesktop.Notifications:/org/freedesktop/Notifications:org.freedesktop.Notifications:Notify",
+		"org.freedesktop.Notifications:/org/freedesktop/Notifications:org.freedesktop.Notifications:GetCapabilities",
+		"org.freedesktop.Notifications:/org/freedesktop/Notifications:org.freedesktop.Notifications:CloseNotification",
+
+		// MPRIS media players — play / pause / toggle / skip / back / read metadata.
+		"org.mpris.MediaPlayer2.*:/org/mpris/MediaPlayer2:org.mpris.MediaPlayer2.Player:Play",
+		"org.mpris.MediaPlayer2.*:/org/mpris/MediaPlayer2:org.mpris.MediaPlayer2.Player:Pause",
+		"org.mpris.MediaPlayer2.*:/org/mpris/MediaPlayer2:org.mpris.MediaPlayer2.Player:PlayPause",
+		"org.mpris.MediaPlayer2.*:/org/mpris/MediaPlayer2:org.mpris.MediaPlayer2.Player:Stop",
+		"org.mpris.MediaPlayer2.*:/org/mpris/MediaPlayer2:org.mpris.MediaPlayer2.Player:Next",
+		"org.mpris.MediaPlayer2.*:/org/mpris/MediaPlayer2:org.mpris.MediaPlayer2.Player:Previous",
+		"org.mpris.MediaPlayer2.*:/org/mpris/MediaPlayer2:org.freedesktop.DBus.Properties:Get",
+		"org.mpris.MediaPlayer2.*:/org/mpris/MediaPlayer2:org.freedesktop.DBus.Properties:GetAll",
+	}
+}
+
+// RegisterDBusTool registers the shell.dbus tool.
+func RegisterDBusTool(registry toolRegistry, client *Client) {
+	registry.Register(
+		"shell.dbus",
+		"Invoke a D-Bus method on the Linux session or system bus. Only allowed service:path:interface:method patterns (per allowlist) may be called.",
+		`{"type":"object","properties":{`+
+			`"bus":{"type":"string","enum":["session","system"],"description":"D-Bus instance — session (per-user) or system (host-wide). Defaults to session.","default":"session"},`+
+			`"service":{"type":"string","description":"D-Bus service name, e.g. org.mpris.MediaPlayer2.spotify"},`+
+			`"object_path":{"type":"string","description":"D-Bus object path, e.g. /org/mpris/MediaPlayer2"},`+
+			`"interface":{"type":"string","description":"D-Bus interface name, e.g. org.mpris.MediaPlayer2.Player"},`+
+			`"method":{"type":"string","description":"Method name, e.g. Play"},`+
+			`"args":{"type":"array","description":"Positional arguments passed to the method","items":{}}`+
+			`},"required":["service","object_path","interface","method"]}`,
+		"tool.dbus.call",
+		func(ctx context.Context, input string) (string, error) {
+			var args struct {
+				Bus        string        `json:"bus"`
+				Service    string        `json:"service"`
+				ObjectPath string        `json:"object_path"`
+				Interface  string        `json:"interface"`
+				Method     string        `json:"method"`
+				Args       []interface{} `json:"args"`
+			}
+			if err := json.Unmarshal([]byte(input), &args); err != nil {
+				return "", fmt.Errorf("shell.dbus: invalid input: %w", err)
+			}
+			return client.Call(ctx, BusKind(args.Bus), args.Service, args.ObjectPath, args.Interface, args.Method, args.Args)
+		},
+	)
+}

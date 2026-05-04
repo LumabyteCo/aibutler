@@ -79,3 +79,13 @@ website/
 *.tmp
 *.bak
 scratch/
+
+# ---- Local-only docs ----
+# Roadmap convention: CHANGELOG.md [Unreleased] is the canonical
+# version-pinned plan. Other roadmap files stay local until ready.
+/docs/ROADMAP.md
+
+# ---- Draft docs (not yet published) ----
+# Convention: write new docs as `*.draft.md` while iterating. Rename to
+# drop the `.draft` suffix when the file is ready for the repo.
+*.draft.md

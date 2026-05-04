@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	filippo.io/age v1.3.1
 	github.com/extism/go-sdk v1.7.1
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/ncruces/go-sqlite3 v0.34.0
 	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/zalando/go-keyring v0.2.8
@@ -20,7 +21,6 @@ require (
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240819160327-2d926c5d788a // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/ianlancetaylor/demangle v0.0.0-20240805132620-81f5be970eca // indirect
 	github.com/ncruces/go-sqlite3-wasm/v2 v2.1.35300 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect

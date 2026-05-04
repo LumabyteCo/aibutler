@@ -75,6 +75,11 @@ type CustomRoleSpec struct {
 type ShellConfig struct {
 	Mode    string   `yaml:"mode"`    // allowlist | denylist
 	Allowed []string `yaml:"allowed"`
+	// UseDefaultAllowlist, when true, prepends the curated DefaultAllowlist
+	// from each native-script executor (applescript, shortcuts, dbus) to the
+	// user-provided Allowed list. Defaults to false so a fresh install with
+	// an empty Allowed list still denies everything (secure-by-default).
+	UseDefaultAllowlist bool `yaml:"use_default_allowlist"`
 }
 
 // SecurityConfig holds security-related settings.

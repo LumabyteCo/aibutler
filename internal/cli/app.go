@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,7 +58,11 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/services"
 	"github.com/LumabyteCo/aibutler/internal/session"
 	"github.com/LumabyteCo/aibutler/internal/shell"
+	aspkg "github.com/LumabyteCo/aibutler/internal/shell/applescript"
+	dbuspkg "github.com/LumabyteCo/aibutler/internal/shell/dbus"
+	dispatchpkg "github.com/LumabyteCo/aibutler/internal/shell/dispatch"
 	pspkg "github.com/LumabyteCo/aibutler/internal/shell/powershell"
+	scutpkg "github.com/LumabyteCo/aibutler/internal/shell/shortcuts"
 	"github.com/LumabyteCo/aibutler/internal/slack"
 	"github.com/LumabyteCo/aibutler/internal/taskctx"
 	"github.com/LumabyteCo/aibutler/internal/telegram"
@@ -637,6 +642,87 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	psExec := pspkg.NewExecutor(psAllowlist)
 	pspkg.RegisterPowerShellTool(ftReg, psExec)
 
+	// Native OS scripting — AppleScript / Shortcuts (macOS) and D-Bus (Linux).
+	//
+	// All four executors read the user's `Configurations.Security.Shell.Allowed`
+	// list. Each executor only matches entries that fit its grammar (PowerShell
+	// first-words like "Get-Date", AppleScript first-words like "tell",
+	// Shortcuts names, D-Bus service:path:interface:method patterns). Empty
+	// allowlist denies everything per the secure-by-default posture.
+	//
+	// When `Configurations.Security.Shell.UseDefaultAllowlist=true`, each
+	// executor's curated DefaultAllowlist is prepended to the user list. This
+	// gives a sensible starter for users who don't want to assemble an
+	// allowlist from scratch, while leaving fresh installs deny-everything by
+	// default. PowerShell intentionally has no DefaultAllowlist — its surface
+	// shipped in v0.1 and the default policy there is "user explicitly lists
+	// every cmdlet."
+	//
+	// Registration is unconditional across OSes — the executors return clear
+	// errors at call time on mismatched OSes, so cross-platform agents see
+	// useful failures rather than silently missing tools.
+	useDefaults := cfg.Configurations.Security.Shell.UseDefaultAllowlist
+	asAllowlist := psAllowlist
+	scutAllowlist := psAllowlist
+	dbusAllowlist := psAllowlist
+	if useDefaults {
+		asAllowlist = mergeAllowlists(aspkg.DefaultAllowlist(), psAllowlist)
+		scutAllowlist = mergeAllowlists(scutpkg.DefaultAllowlist(), psAllowlist)
+		dbusAllowlist = mergeAllowlists(dbuspkg.DefaultAllowlist(), psAllowlist)
+	}
+	asExec := aspkg.NewExecutor(asAllowlist)
+	aspkg.RegisterAppleScriptTool(ftReg, asExec)
+	scutRunner := scutpkg.NewRunner(scutAllowlist)
+	scutpkg.RegisterShortcutsTool(ftReg, scutRunner)
+	dbusClient := dbuspkg.NewClient(dbusAllowlist)
+	dbuspkg.RegisterDBusTool(ftReg, dbusClient)
+
+	// Cross-OS dispatcher (shell.script). The agent supplies a per-OS
+	// payload; the dispatcher forwards the entry matching the running GOOS
+	// to the relevant executor. Each executor still applies its own
+	// allowlist — the dispatcher is purely a router.
+	osDispatch := dispatchpkg.New()
+	osDispatch.SetHandler("darwin", func(ctx context.Context, input string) (string, error) {
+		var args struct {
+			Script   string `json:"script"`
+			Language string `json:"language"`
+		}
+		if err := json.Unmarshal([]byte(input), &args); err != nil {
+			return "", fmt.Errorf("shell.script[darwin]: invalid input: %w", err)
+		}
+		if args.Script == "" {
+			return "", fmt.Errorf("shell.script[darwin]: script is required")
+		}
+		return asExec.Execute(ctx, args.Script, args.Language)
+	})
+	osDispatch.SetHandler("windows", func(ctx context.Context, input string) (string, error) {
+		var args struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal([]byte(input), &args); err != nil {
+			return "", fmt.Errorf("shell.script[windows]: invalid input: %w", err)
+		}
+		if args.Command == "" {
+			return "", fmt.Errorf("shell.script[windows]: command is required")
+		}
+		return psExec.Execute(ctx, args.Command)
+	})
+	osDispatch.SetHandler("linux", func(ctx context.Context, input string) (string, error) {
+		var args struct {
+			Bus        string        `json:"bus"`
+			Service    string        `json:"service"`
+			ObjectPath string        `json:"object_path"`
+			Interface  string        `json:"interface"`
+			Method     string        `json:"method"`
+			Args       []interface{} `json:"args"`
+		}
+		if err := json.Unmarshal([]byte(input), &args); err != nil {
+			return "", fmt.Errorf("shell.script[linux]: invalid input: %w", err)
+		}
+		return dbusClient.Call(ctx, dbuspkg.BusKind(args.Bus), args.Service, args.ObjectPath, args.Interface, args.Method, args.Args)
+	})
+	dispatchpkg.RegisterDispatchTool(ftReg, osDispatch)
+
 	// ElevenLabs TTS (only when API key is configured).
 	elKeyCred, _ := v.Get(ctx, "elevenlabs_api_key")
 	elVoiceCred, _ := v.Get(ctx, "elevenlabs_voice_id")
@@ -1189,6 +1275,17 @@ func (a *toolProviderAdapter) All() []mcpserver.ToolEntry {
 		}
 	}
 	return entries
+}
+
+// mergeAllowlists returns a new slice with `defaults` first, then `user` entries.
+// No deduplication — each executor's allowlist matcher walks the slice linearly
+// and treats duplicates as harmless. Returning a fresh slice protects callers
+// from accidentally mutating either input.
+func mergeAllowlists(defaults, user []string) []string {
+	merged := make([]string, 0, len(defaults)+len(user))
+	merged = append(merged, defaults...)
+	merged = append(merged, user...)
+	return merged
 }
 
 // funcToolRegistry adapts *tool.Registry to the narrow toolRegistry interface used by
