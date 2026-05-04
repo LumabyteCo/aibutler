@@ -758,6 +758,19 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// report. No capability — read-only diagnostic.
 	permpkg.RegisterTool(ftReg)
 
+	// vault.request — just-in-time credential broker. Agent calls with
+	// (key, purpose); broker checks the auto-approval / deny lists in
+	// Configurations.Vault.Request and either returns the secret or denies
+	// with actionable guidance. Every request — granted or denied — is
+	// audited with the agent ID and credential key.
+	// Capability: tool.vault.request. Default-deny posture: keys not in
+	// auto_approved_keys are not granted.
+	vaultBroker := vault.NewBroker(v, vault.BrokerRules{
+		AutoApprovedKeys: cfg.Configurations.Vault.Request.AutoApprovedKeys,
+		DeniedKeys:       cfg.Configurations.Vault.Request.DeniedKeys,
+	}, auditor)
+	vault.RegisterRequestTool(ftReg, vaultBroker, nil)
+
 	// ElevenLabs TTS (only when API key is configured).
 	elKeyCred, _ := v.Get(ctx, "elevenlabs_api_key")
 	elVoiceCred, _ := v.Get(ctx, "elevenlabs_voice_id")

@@ -87,6 +87,24 @@ type SecurityConfig struct {
 	Shell ShellConfig `yaml:"shell"`
 }
 
+// VaultRequestConfig controls the credential broker (vault.request tool).
+//
+// AutoApprovedKeys are credential keys that the broker grants to agents
+// without further interaction. DeniedKeys are never granted (deny wins
+// over auto-approval). Keys not in either list default to denied with a
+// guidance message — interactive user-confirmation is reserved for a
+// future release.
+type VaultRequestConfig struct {
+	AutoApprovedKeys []string `yaml:"auto_approved_keys"`
+	DeniedKeys       []string `yaml:"denied_keys"`
+}
+
+// VaultConfig holds vault-related settings beyond storage backend choice
+// (which lives in the higher-level Settings tier).
+type VaultConfig struct {
+	Request VaultRequestConfig `yaml:"request"`
+}
+
 // CostConfig holds advanced cost settings.
 type CostConfig struct {
 	Alerts          []int  `yaml:"alerts"`
@@ -268,6 +286,7 @@ type Configurations struct {
 	Channels  map[string]*ChannelConfig  `yaml:"channels"`
 	Agents    AgentConfig                `yaml:"agents"`
 	Security  SecurityConfig             `yaml:"security"`
+	Vault     VaultConfig                `yaml:"vault"`
 	Cost      CostConfig                 `yaml:"cost"`
 	Prompts   PromptConfig               `yaml:"prompts"`
 	Web       WebConfig                  `yaml:"web"`
