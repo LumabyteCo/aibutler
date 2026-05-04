@@ -131,6 +131,19 @@ func (c *ClaudeAdapter) buildRequest(messages []agent.Message) ([]byte, error) {
 					Input: json.RawMessage(tc.Input),
 				})
 			}
+		} else if len(m.Images) > 0 {
+			// Multimodal: text block (if any) followed by one image block per Image.
+			if m.Content != "" {
+				msg.Content = append(msg.Content, claudeContentBlock{
+					Type: "text",
+					Text: m.Content,
+				})
+			}
+			for _, img := range m.Images {
+				if block, ok := claudeImageBlock(img); ok {
+					msg.Content = append(msg.Content, block)
+				}
+			}
 		} else {
 			msg.Content = []claudeContentBlock{{
 				Type: "text",
@@ -234,6 +247,58 @@ func unsanitizeToolName(name string) string {
 
 // --- Anthropic API types ---
 
+// claudeImageBlock converts an agent.Image into a claudeContentBlock with
+// type="image". Returns ok=false when the image has no usable data so the
+// caller can skip it cleanly.
+func claudeImageBlock(img agent.Image) (claudeContentBlock, bool) {
+	switch img.Source {
+	case agent.ImageSourceBase64:
+		if img.Data == "" {
+			return claudeContentBlock{}, false
+		}
+		mt := img.MimeType
+		if mt == "" {
+			mt = "image/png"
+		}
+		return claudeContentBlock{
+			Type: "image",
+			Source: &claudeImageSource{
+				Type:      "base64",
+				MediaType: mt,
+				Data:      img.Data,
+			},
+		}, true
+	case agent.ImageSourceURL:
+		if img.Data == "" {
+			return claudeContentBlock{}, false
+		}
+		return claudeContentBlock{
+			Type: "image",
+			Source: &claudeImageSource{
+				Type: "url",
+				URL:  img.Data,
+			},
+		}, true
+	default:
+		// Backward-compat: empty Source with non-empty Data is treated as base64.
+		if img.Data == "" {
+			return claudeContentBlock{}, false
+		}
+		mt := img.MimeType
+		if mt == "" {
+			mt = "image/png"
+		}
+		return claudeContentBlock{
+			Type: "image",
+			Source: &claudeImageSource{
+				Type:      "base64",
+				MediaType: mt,
+				Data:      img.Data,
+			},
+		}, true
+	}
+}
+
 type claudeRequest struct {
 	Model     string           `json:"model"`
 	MaxTokens int              `json:"max_tokens"`
@@ -248,13 +313,24 @@ type claudeMessage struct {
 }
 
 type claudeContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   string          `json:"content,omitempty"`
+	Type      string              `json:"type"`
+	Text      string              `json:"text,omitempty"`
+	ID        string              `json:"id,omitempty"`
+	Name      string              `json:"name,omitempty"`
+	Input     json.RawMessage     `json:"input,omitempty"`
+	ToolUseID string              `json:"tool_use_id,omitempty"`
+	Content   string              `json:"content,omitempty"`
+	Source    *claudeImageSource  `json:"source,omitempty"`
+}
+
+// claudeImageSource is the Anthropic image-source shape. For base64
+// images, Type="base64" with MediaType + Data set. For URL-fetched
+// images, Type="url" with URL set.
+type claudeImageSource struct {
+	Type      string `json:"type"` // "base64" | "url"
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
+	URL       string `json:"url,omitempty"`
 }
 
 type claudeTool struct {
