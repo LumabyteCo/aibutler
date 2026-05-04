@@ -77,6 +77,8 @@ var expectedTables = []string{
 	// Migration 019: Advanced Security (WebAuthn, Security Events)
 	"webauthn_credentials",
 	"security_events",
+	// Migration 020: Action recording
+	"actions",
 	// Tables from core migrations not previously listed
 	"oauth_tokens",
 	"agent_registry",
@@ -117,8 +119,8 @@ func TestSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schema version: %v", err)
 	}
-	if version != 19 {
-		t.Errorf("schema version = %d, want 19", version)
+	if version != 20 {
+		t.Errorf("schema version = %d, want 20", version)
 	}
 }
 

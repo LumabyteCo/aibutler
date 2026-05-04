@@ -30,6 +30,8 @@ import (
 	"time"
 
 	dbus "github.com/godbus/dbus/v5"
+
+	"github.com/LumabyteCo/aibutler/internal/action"
 )
 
 const defaultTimeout = 10 * time.Second
@@ -64,6 +66,7 @@ type Client struct {
 	allowlist []string
 	timeout   time.Duration
 	opener    busOpener
+	recorder  action.Recorder // optional — nil disables recording
 }
 
 // NewClient creates a D-Bus client with the given allowlist.
@@ -79,12 +82,27 @@ func NewClient(allowlist []string) *Client {
 // SetTimeout overrides the default call timeout.
 func (c *Client) SetTimeout(d time.Duration) { c.timeout = d }
 
+// SetRecorder attaches an action recorder. Pass nil to disable.
+// Each Call emits one Action row when a recorder is set.
+func (c *Client) SetRecorder(r action.Recorder) { c.recorder = r }
+
 // Call invokes a D-Bus method on the given service+path+interface+method,
 // passing the args verbatim. Returns the response body marshalled to JSON.
 //
 // SECURITY: An empty allowlist denies everything. The match key is
 // "service:object_path:interface:method" with `*` wildcards supported.
+//
+// When a recorder is attached (SetRecorder), every call emits one Action
+// row with the call target, allowlist outcome, duration, and a truncated
+// result summary.
 func (c *Client) Call(ctx context.Context, bus BusKind, service, objectPath, iface, method string, args []interface{}) (string, error) {
+	start := time.Now()
+	result, err := c.call(ctx, bus, service, objectPath, iface, method, args)
+	c.recordAction(ctx, bus, service, objectPath, iface, method, args, result, err, time.Since(start))
+	return result, err
+}
+
+func (c *Client) call(ctx context.Context, bus BusKind, service, objectPath, iface, method string, args []interface{}) (string, error) {
 	if runtime.GOOS != "linux" {
 		// D-Bus is also available on FreeBSD and (rarely) macOS, but this
 		// executor is Linux-targeted; FreeBSD is allowed through because the
@@ -184,11 +202,60 @@ func defaultBusOpener(kind BusKind) (busConn, error) {
 	}
 }
 
-// realConn wraps *dbus.Conn to satisfy busConn. We do NOT close shared
-// session/system buses (godbus manages them as singletons) — Close is a no-op.
+// realConn wraps *dbus.Conn to satisfy busConn. The shared session/system
+// buses are managed by godbus as singletons, so Close is a no-op.
 type realConn struct{ *dbus.Conn }
 
 func (realConn) Close() error { return nil }
+
+// recordAction emits one Action row for the just-completed call when a
+// recorder is attached.
+func (c *Client) recordAction(ctx context.Context, bus BusKind, service, objectPath, iface, method string, args []interface{}, result string, err error, dur time.Duration) {
+	if c.recorder == nil {
+		return
+	}
+
+	target := service
+	if iface != "" {
+		target += ":" + iface
+	}
+	summary := fmt.Sprintf("%s.%s on %s", iface, method, service)
+
+	payloadJSON, _ := json.Marshal(struct {
+		Bus        BusKind       `json:"bus,omitempty"`
+		Service    string        `json:"service"`
+		ObjectPath string        `json:"object_path"`
+		Interface  string        `json:"interface"`
+		Method     string        `json:"method"`
+		Args       []interface{} `json:"args,omitempty"`
+	}{bus, service, objectPath, iface, method, args})
+
+	status := "success"
+	errStr := ""
+	if err != nil {
+		status = "error"
+		errStr = err.Error()
+		if strings.Contains(errStr, "not in allowlist") {
+			status = "denied"
+		}
+	}
+
+	resSnippet := result
+	if len(resSnippet) > 200 {
+		resSnippet = resSnippet[:200]
+	}
+
+	_ = c.recorder.Record(ctx, action.Action{
+		Type:           "dbus.call",
+		Target:         target,
+		PayloadSummary: summary,
+		PayloadFull:    string(payloadJSON),
+		DurationMS:     dur.Milliseconds(),
+		Status:         status,
+		ResultSummary:  resSnippet,
+		Error:          errStr,
+	})
+}
 
 // DefaultAllowlist returns a curated set of D-Bus call patterns that cover
 // the safest common operations on a Linux desktop: posting system

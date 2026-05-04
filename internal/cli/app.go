@@ -15,6 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/LumabyteCo/aibutler/internal/action"
 	"github.com/LumabyteCo/aibutler/internal/agent"
 	"github.com/LumabyteCo/aibutler/internal/audit"
 	"github.com/LumabyteCo/aibutler/internal/backup"
@@ -305,6 +306,10 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 
 	// 4. Capability engine with SQLite audit logging.
 	auditor := audit.NewSQLiteAuditor(database.Conn())
+	// Action recorder — fine-grained side-effect log (per AppleScript /
+	// D-Bus call). Sits alongside the auditor; complements it rather than
+	// replaces it. Actions table is created by migration 020.
+	actionRecorder := action.NewSQLiteRecorder(database.Conn())
 	app.Engine = capability.NewEngine(auditor)
 
 	// 5. Tool registry.
@@ -675,10 +680,12 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		dbusAllowlist = mergeAllowlists(dbuspkg.DefaultAllowlist(), psAllowlist)
 	}
 	asExec := aspkg.NewExecutor(asAllowlist)
+	asExec.SetRecorder(actionRecorder)
 	aspkg.RegisterAppleScriptTool(ftReg, asExec)
 	scutRunner := scutpkg.NewRunner(scutAllowlist)
 	scutpkg.RegisterShortcutsTool(ftReg, scutRunner)
 	dbusClient := dbuspkg.NewClient(dbusAllowlist)
+	dbusClient.SetRecorder(actionRecorder)
 	dbuspkg.RegisterDBusTool(ftReg, dbusClient)
 
 	// Cross-OS dispatcher (shell.script). The agent supplies a per-OS
@@ -770,6 +777,12 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		DeniedKeys:       cfg.Configurations.Vault.Request.DeniedKeys,
 	}, auditor)
 	vault.RegisterRequestTool(ftReg, vaultBroker, nil)
+
+	// actions.list — read-only inspection of the action recorder's log.
+	// Lets users (and the agent) review what fine-grained actions have
+	// been performed, filtered by agent_id / action_type / status. No
+	// capability — diagnostic / read-only.
+	action.RegisterListTool(ftReg, actionRecorder)
 
 	// ElevenLabs TTS (only when API key is configured).
 	elKeyCred, _ := v.Get(ctx, "elevenlabs_api_key")

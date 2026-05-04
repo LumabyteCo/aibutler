@@ -26,8 +26,8 @@ func TestMigrateUpAndDown(t *testing.T) {
 		t.Fatalf("apply schema: %v", err)
 	}
 	v, _ = database.SchemaVersion(ctx)
-	if v != 19 {
-		t.Fatalf("after up version = %d, want 19", v)
+	if v != 20 {
+		t.Fatalf("after up version = %d, want 20", v)
 	}
 
 	// Verify tables exist
@@ -37,9 +37,18 @@ func TestMigrateUpAndDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	// Through migration 018 = ~62 tables + migration 019 adds webauthn_credentials, security_events = ~64
+	// Through migration 018 = ~62 tables + migration 019 adds webauthn_credentials, security_events = ~64 + migration 020 adds actions = ~65
 	if count < 57 {
 		t.Errorf("table count = %d, want >= 57", count)
+	}
+
+	// Migrate down (reverts migration 020 — Action recording)
+	if err := database.MigrateDown(ctx); err != nil {
+		t.Fatalf("migrate down 020: %v", err)
+	}
+	v, _ = database.SchemaVersion(ctx)
+	if v != 19 {
+		t.Fatalf("after down 020 version = %d, want 19", v)
 	}
 
 	// Migrate down (reverts migration 019 — Advanced Security)

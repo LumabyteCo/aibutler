@@ -35,6 +35,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/LumabyteCo/aibutler/internal/action"
 )
 
 const (
@@ -56,6 +58,7 @@ type toolRegistry interface {
 type Executor struct {
 	allowlist []string
 	timeout   time.Duration
+	recorder  action.Recorder // optional — nil disables recording
 }
 
 // NewExecutor creates an AppleScript executor with the given first-word allowlist.
@@ -70,13 +73,28 @@ func NewExecutor(allowlist []string) *Executor {
 // SetTimeout overrides the default command timeout.
 func (e *Executor) SetTimeout(d time.Duration) { e.timeout = d }
 
+// SetRecorder attaches an action recorder. Pass nil to disable.
+// Each Execute call produces one Action row when a recorder is set.
+func (e *Executor) SetRecorder(r action.Recorder) { e.recorder = r }
+
 // Execute runs an AppleScript (default) or JXA (when language=JavaScript)
 // script after validating the first word against the allowlist.
 //
 // SECURITY: An empty allowlist means no commands are permitted. Mirrors the
 // powershell executor's posture — do NOT wrap the allowlist check in
 // `if len(allowlist) > 0`, which would silently allow ALL commands.
+//
+// When a recorder is attached (SetRecorder), every call emits one Action
+// row with the script's target, allowlist outcome, duration, and a
+// truncated result summary.
 func (e *Executor) Execute(ctx context.Context, script, language string) (string, error) {
+	start := time.Now()
+	result, err := e.execute(ctx, script, language)
+	e.recordAction(ctx, script, language, result, err, time.Since(start))
+	return result, err
+}
+
+func (e *Executor) execute(ctx context.Context, script, language string) (string, error) {
 	if runtime.GOOS != "darwin" {
 		return "", fmt.Errorf(
 			"shell.applescript: macOS-only — you're on %s. "+
@@ -122,6 +140,53 @@ func (e *Executor) Execute(ctx context.Context, script, language string) (string
 		out += "\n--- stderr ---\n" + errOut
 	}
 	return out, nil
+}
+
+// recordAction emits one Action row for the just-completed call when a
+// recorder is attached.
+func (e *Executor) recordAction(ctx context.Context, script, language, result string, err error, dur time.Duration) {
+	if e.recorder == nil {
+		return
+	}
+	target := extractTellTarget(script)
+	verb := firstWord(script)
+	summary := verb
+	if target != "" {
+		summary += ":" + target
+	}
+	if language == LanguageJavaScript {
+		summary = "[jxa] " + summary
+	}
+	payloadJSON, _ := json.Marshal(struct {
+		Script   string `json:"script"`
+		Language string `json:"language,omitempty"`
+	}{Script: script, Language: language})
+
+	status := "success"
+	errStr := ""
+	if err != nil {
+		status = "error"
+		errStr = err.Error()
+		if strings.Contains(errStr, "not in allowlist") {
+			status = "denied"
+		}
+	}
+
+	resSnippet := result
+	if len(resSnippet) > 200 {
+		resSnippet = resSnippet[:200]
+	}
+
+	_ = e.recorder.Record(ctx, action.Action{
+		Type:           "applescript.exec",
+		Target:         target,
+		PayloadSummary: summary,
+		PayloadFull:    string(payloadJSON),
+		DurationMS:     dur.Milliseconds(),
+		Status:         status,
+		ResultSummary:  resSnippet,
+		Error:          errStr,
+	})
 }
 
 func (e *Executor) inAllowlist(script string) bool {
