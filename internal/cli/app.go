@@ -24,6 +24,7 @@ import (
 	wapkg "github.com/LumabyteCo/aibutler/internal/channel/whatsapp"
 	clippkg "github.com/LumabyteCo/aibutler/internal/clipboard"
 	costpkg "github.com/LumabyteCo/aibutler/internal/cost"
+	permpkg "github.com/LumabyteCo/aibutler/internal/permissions"
 	waitpkg "github.com/LumabyteCo/aibutler/internal/wait"
 	"github.com/LumabyteCo/aibutler/internal/config"
 	"github.com/LumabyteCo/aibutler/internal/contact"
@@ -749,6 +750,13 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// Capability: tool.wait.until. Probes are read-only (Stat / TCP connect /
 	// HTTP request / process listing); no mutation.
 	waitpkg.RegisterTool(ftReg, waitpkg.NewWaiter())
+
+	// permissions.check — OS-level permission diagnostic. On macOS probes
+	// Automation (System Events, Finder) and Screen Recording, returning
+	// a structured report with deep-links to the relevant System Settings
+	// panel for any denied entries. Other OSes get a "not applicable"
+	// report. No capability — read-only diagnostic.
+	permpkg.RegisterTool(ftReg)
 
 	// ElevenLabs TTS (only when API key is configured).
 	elKeyCred, _ := v.Get(ctx, "elevenlabs_api_key")
