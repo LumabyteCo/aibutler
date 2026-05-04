@@ -347,10 +347,19 @@ func (c *Composer) loadKeyFacts(ctx context.Context, limit int) []string {
 	return facts
 }
 
-// estimateTokens gives a rough token count using a hybrid approach:
-// English text averages ~4 characters per token; non-ASCII text (Arabic, CJK)
-// uses ~2-3 characters per token. We use byte-length / 3.5 as a compromise
-// that's more accurate than simple word count across languages.
+// EstimateTokens gives a rough token count for arbitrary text using a hybrid
+// approach. English text averages ~4 characters per token; non-ASCII text
+// (Arabic, CJK) uses ~2-3 characters per token. Uses byte-length / 3.5 as a
+// compromise that's more accurate than simple word count across languages.
+//
+// Returns the higher of the byte-based and word-based estimates to avoid
+// undercount (which would lead to over-budget surprises).
+func EstimateTokens(text string) int {
+	return estimateTokens(text)
+}
+
+// estimateTokens is the unexported implementation. Kept separate so the
+// existing call sites within this package don't need to migrate.
 func estimateTokens(text string) int {
 	if text == "" {
 		return 0

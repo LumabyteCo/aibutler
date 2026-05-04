@@ -22,6 +22,8 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/capability"
 	"github.com/LumabyteCo/aibutler/internal/channel"
 	wapkg "github.com/LumabyteCo/aibutler/internal/channel/whatsapp"
+	clippkg "github.com/LumabyteCo/aibutler/internal/clipboard"
+	costpkg "github.com/LumabyteCo/aibutler/internal/cost"
 	"github.com/LumabyteCo/aibutler/internal/config"
 	"github.com/LumabyteCo/aibutler/internal/contact"
 	"github.com/LumabyteCo/aibutler/internal/db"
@@ -722,6 +724,22 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		return dbusClient.Call(ctx, dbuspkg.BusKind(args.Bus), args.Service, args.ObjectPath, args.Interface, args.Method, args.Args)
 	})
 	dispatchpkg.RegisterDispatchTool(ftReg, osDispatch)
+
+	// Clipboard tools — cross-platform OS clipboard read/write via native
+	// command-line backends (pbcopy/pbpaste on macOS, wl-clipboard or xclip
+	// on Linux, clip + Get-Clipboard on Windows). No CGO required.
+	//
+	// Read and write have separate capabilities (tool.clipboard.read,
+	// tool.clipboard.write) so callers can grant write-only or read-only.
+	// Neither is in the default capability set — explicit grant required.
+	clippkg.RegisterTools(ftReg, clippkg.NewClient())
+
+	// cost.forecast — pre-action USD/token estimate for a planned model
+	// call. Pairs with the existing cost.status tool (which reports
+	// historical usage) to give the supervisor agent a "this mission will
+	// cost roughly $X — approve?" gate before kicking off expensive work.
+	// Capability is empty (advisory only — always available).
+	costpkg.RegisterForecastTool(ftReg, costpkg.NewForecaster())
 
 	// ElevenLabs TTS (only when API key is configured).
 	elKeyCred, _ := v.Get(ctx, "elevenlabs_api_key")
