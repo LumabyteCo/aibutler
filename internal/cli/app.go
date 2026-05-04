@@ -24,6 +24,7 @@ import (
 	wapkg "github.com/LumabyteCo/aibutler/internal/channel/whatsapp"
 	clippkg "github.com/LumabyteCo/aibutler/internal/clipboard"
 	costpkg "github.com/LumabyteCo/aibutler/internal/cost"
+	waitpkg "github.com/LumabyteCo/aibutler/internal/wait"
 	"github.com/LumabyteCo/aibutler/internal/config"
 	"github.com/LumabyteCo/aibutler/internal/contact"
 	"github.com/LumabyteCo/aibutler/internal/db"
@@ -740,6 +741,14 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// cost roughly $X — approve?" gate before kicking off expensive work.
 	// Capability is empty (advisory only — always available).
 	costpkg.RegisterForecastTool(ftReg, costpkg.NewForecaster())
+
+	// wait.until — block until a condition is true (or timeout). Five
+	// condition types: file_exists, process_running, port_open, http_ready,
+	// duration. Removes UI/IO race conditions by giving agents a primitive
+	// to gate on real-world readiness instead of guessing with sleep.
+	// Capability: tool.wait.until. Probes are read-only (Stat / TCP connect /
+	// HTTP request / process listing); no mutation.
+	waitpkg.RegisterTool(ftReg, waitpkg.NewWaiter())
 
 	// ElevenLabs TTS (only when API key is configured).
 	elKeyCred, _ := v.Get(ctx, "elevenlabs_api_key")
