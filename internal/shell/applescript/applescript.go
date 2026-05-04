@@ -14,9 +14,15 @@
 //
 // AppleScript first-word grammar covers most real scripts: tell, set, get,
 // display, do, run, return, on, of, repeat, if. Allowlisting these keywords
-// is coarse but matches the existing PowerShell executor's posture. A
-// target-application allowlist (e.g. `tell:Mail` to grant only Mail-targeted
-// scripts) is a natural follow-up if finer grain is needed.
+// is coarse but matches the existing PowerShell executor's posture.
+//
+// For `tell`-style scripts the allowlist also supports a target-application
+// pattern: an entry like `tell:Mail` grants ONLY scripts of the form
+// `tell application "Mail" to ...`. Wildcards work — `tell:Music*` matches
+// Music and Music Pro, `tell:*` matches any target. Bare `tell` keeps the
+// original broad behaviour (any target). This makes finer-grained safe
+// defaults (e.g. allow only `tell:System Events` and `tell:Notification
+// Center` while denying `tell:Mail`) possible without schema churn.
 package applescript
 
 import (
@@ -25,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -119,12 +126,84 @@ func (e *Executor) Execute(ctx context.Context, script, language string) (string
 
 func (e *Executor) inAllowlist(script string) bool {
 	cmd := firstWord(script)
+	if cmd == "" {
+		return false
+	}
+
+	// For tell-style scripts, also extract the target app/process name so
+	// the matcher can compare against `tell:Target` allowlist entries.
+	var target string
+	if strings.EqualFold(cmd, "tell") {
+		target = extractTellTarget(script)
+	}
+
 	for _, allowed := range e.allowlist {
-		if strings.EqualFold(allowed, cmd) {
+		if matchAllowlistEntry(allowed, cmd, target) {
 			return true
 		}
 	}
 	return false
+}
+
+// matchAllowlistEntry checks whether `entry` permits the script's first
+// word `cmd` and (for tell-style scripts) target `target`.
+//
+// Entry syntax:
+//
+//   - "tell"             — bare verb; permits any target (or no target)
+//   - "tell:Mail"        — exact target match (case-insensitive)
+//   - "tell:Music*"      — prefix wildcard on target
+//   - "tell:*"           — any target (equivalent to bare "tell")
+//   - "display"          — non-tell verbs ignore the target component
+func matchAllowlistEntry(entry, cmd, target string) bool {
+	parts := strings.SplitN(entry, ":", 2)
+	if !strings.EqualFold(parts[0], cmd) {
+		return false
+	}
+	if len(parts) == 1 {
+		// Bare verb — matches regardless of target.
+		return true
+	}
+	return matchTargetPattern(parts[1], target)
+}
+
+// matchTargetPattern compares an allowlist target pattern against the
+// extracted script target. Empty pattern denies, "*" allows anything,
+// "Foo*" allows prefix matches, exact strings match case-insensitively.
+func matchTargetPattern(pattern, target string) bool {
+	if pattern == "" {
+		return false
+	}
+	if pattern == "*" {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(strings.ToLower(target), strings.ToLower(prefix))
+	}
+	return strings.EqualFold(pattern, target)
+}
+
+// tellTargetRegex captures the application or process name in
+//
+//	tell application "<NAME>" ...
+//	tell app "<NAME>" ...
+//	tell process "<NAME>" ...
+//
+// AppleScript is case-insensitive on these keywords. Quoted target name is
+// the most common form; un-quoted identifiers (rare) are not parsed —
+// callers using those should use a bare-verb allowlist entry.
+var tellTargetRegex = regexp.MustCompile(`(?i)^\s*tell\s+(?:application|app|process)\s+"([^"]+)"`)
+
+// extractTellTarget returns the target application/process name from a
+// tell-style script, or "" if the script doesn't match the expected
+// `tell application "Name"` shape.
+func extractTellTarget(script string) string {
+	m := tellTargetRegex.FindStringSubmatch(script)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
 }
 
 // firstWord extracts the first word (keyword) from an AppleScript / JXA script.

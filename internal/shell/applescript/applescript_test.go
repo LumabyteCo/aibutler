@@ -159,3 +159,106 @@ func TestExecuteTool_DeniedViaRegistry(t *testing.T) {
 		t.Fatal("expected error for non-allowlisted command via tool exec")
 	}
 }
+
+// --- Target-app allowlist tests ---
+
+func TestAllowlist_TargetApp_ExactMatch(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("allowlist-only path tested on darwin; non-darwin gates earlier")
+	}
+	exec := applescript.NewExecutor([]string{"tell:Mail"})
+	// In-allowlist: tell Mail.
+	_, err := exec.Execute(context.Background(), `tell application "Mail" to get count of messages`, "")
+	if err != nil && strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("tell:Mail entry rejected a Mail-targeted script: %v", err)
+	}
+	// Out-of-allowlist: tell Music.
+	_, err = exec.Execute(context.Background(), `tell application "Music" to playpause`, "")
+	if err == nil || !strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("tell:Mail entry should have rejected a Music-targeted script, got: %v", err)
+	}
+}
+
+func TestAllowlist_TargetApp_PrefixWildcard(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("allowlist-only path tested on darwin; non-darwin gates earlier")
+	}
+	exec := applescript.NewExecutor([]string{"tell:Music*"})
+	// In-allowlist: prefix matches.
+	_, err := exec.Execute(context.Background(), `tell application "Music" to playpause`, "")
+	if err != nil && strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("prefix wildcard rejected exact-prefix match: %v", err)
+	}
+	_, err = exec.Execute(context.Background(), `tell application "Music Pro" to playpause`, "")
+	if err != nil && strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("prefix wildcard rejected prefix-wildcard match: %v", err)
+	}
+	// Out-of-allowlist: prefix doesn't match.
+	_, err = exec.Execute(context.Background(), `tell application "Mail" to get count of messages`, "")
+	if err == nil || !strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("prefix wildcard should have rejected non-matching prefix, got: %v", err)
+	}
+}
+
+func TestAllowlist_TargetApp_FullWildcard(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("allowlist-only path tested on darwin; non-darwin gates earlier")
+	}
+	exec := applescript.NewExecutor([]string{"tell:*"})
+	_, err := exec.Execute(context.Background(), `tell application "Anything" to do whatever`, "")
+	if err != nil && strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("tell:* should permit any target, got: %v", err)
+	}
+}
+
+func TestAllowlist_BareTell_PermitsAnyTarget(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("allowlist-only path tested on darwin; non-darwin gates earlier")
+	}
+	exec := applescript.NewExecutor([]string{"tell"})
+	// Bare `tell` keeps the original broad behaviour.
+	_, err := exec.Execute(context.Background(), `tell application "Music" to playpause`, "")
+	if err != nil && strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("bare tell entry rejected a tell-style script: %v", err)
+	}
+}
+
+func TestAllowlist_TargetApp_ProcessForm(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("allowlist-only path tested on darwin; non-darwin gates earlier")
+	}
+	exec := applescript.NewExecutor([]string{"tell:System Events"})
+	// `tell process "X"` — process variant.
+	_, err := exec.Execute(context.Background(), `tell process "System Events" to get name`, "")
+	if err != nil && strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("tell:System Events should permit `tell process \"System Events\"`, got: %v", err)
+	}
+}
+
+func TestAllowlist_TargetApp_NoTargetExtractable(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("allowlist-only path tested on darwin; non-darwin gates earlier")
+	}
+	// Allowlist requires target Mail. A tell script with no parseable target
+	// (e.g. `tell me to ...`) does NOT match `tell:Mail`.
+	exec := applescript.NewExecutor([]string{"tell:Mail"})
+	_, err := exec.Execute(context.Background(), `tell me to do nothing`, "")
+	if err == nil || !strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("expected rejection when target can't be extracted, got: %v", err)
+	}
+}
+
+func TestAllowlist_NonTellVerb_IgnoresTarget(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("allowlist-only path tested on darwin; non-darwin gates earlier")
+	}
+	// `display:foo` is a nonsense entry but the matcher should not
+	// silently accept a `display`-prefixed script under it — non-tell
+	// verbs don't carry a target, so the target component must be "*"
+	// or empty for the bare-verb match to apply.
+	exec := applescript.NewExecutor([]string{"display"})
+	_, err := exec.Execute(context.Background(), `display notification "ok"`, "")
+	if err != nil && strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("bare `display` should permit display scripts, got: %v", err)
+	}
+}
