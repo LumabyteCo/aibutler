@@ -29,6 +29,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/LumabyteCo/aibutler/internal/action"
 )
 
 const (
@@ -44,8 +46,9 @@ type toolRegistry interface {
 // Client reads and writes the OS clipboard.
 type Client struct {
 	timeout time.Duration
-	// commandFinder allows tests to override how we discover backend binaries.
+	// commandFinder allows tests to override how the backend binary is discovered.
 	commandFinder func(name string) (string, error)
+	recorder      action.Recorder // optional — nil disables recording
 }
 
 // NewClient creates a clipboard client with the default timeout.
@@ -59,9 +62,25 @@ func NewClient() *Client {
 // SetTimeout overrides the default command timeout.
 func (c *Client) SetTimeout(d time.Duration) { c.timeout = d }
 
+// SetRecorder attaches an action recorder. Pass nil to disable.
+//
+// Privacy note: clipboard contents are commonly sensitive (passwords from
+// password managers, 2FA codes). The recorder logs READ size only — never
+// the actual content read. WRITE payloads ARE logged, redacted by the
+// recorder's audit pipeline before storage; treat the agent's chosen
+// write text as sensitive accordingly.
+func (c *Client) SetRecorder(r action.Recorder) { c.recorder = r }
+
 // Read returns the current clipboard contents (text only). Output is capped
 // at maxReadBytes — anything beyond is replaced with a truncation marker.
 func (c *Client) Read(ctx context.Context) (string, error) {
+	start := time.Now()
+	out, err := c.read(ctx)
+	c.recordRead(ctx, len(out), err, time.Since(start))
+	return out, err
+}
+
+func (c *Client) read(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -90,6 +109,13 @@ func (c *Client) Read(ctx context.Context) (string, error) {
 
 // Write replaces the clipboard contents with the given text.
 func (c *Client) Write(ctx context.Context, text string) error {
+	start := time.Now()
+	err := c.write(ctx, text)
+	c.recordWrite(ctx, text, err, time.Since(start))
+	return err
+}
+
+func (c *Client) write(ctx context.Context, text string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -108,6 +134,63 @@ func (c *Client) Write(ctx context.Context, text string) error {
 		return fmt.Errorf("clipboard.write: %w", err)
 	}
 	return nil
+}
+
+// recordRead logs a clipboard read. Privacy: only the byte count is
+// recorded, never the actual content read (which may be a password).
+func (c *Client) recordRead(ctx context.Context, bytesRead int, err error, dur time.Duration) {
+	if c.recorder == nil {
+		return
+	}
+	status := "success"
+	errStr := ""
+	if err != nil {
+		status = "error"
+		errStr = err.Error()
+	}
+	_ = c.recorder.Record(ctx, action.Action{
+		Type:           "clipboard.read",
+		Target:         "os.clipboard",
+		PayloadSummary: "read",
+		PayloadFull:    `{"op":"read"}`,
+		DurationMS:     dur.Milliseconds(),
+		Status:         status,
+		ResultSummary:  fmt.Sprintf("%d bytes read", bytesRead),
+		Error:          errStr,
+	})
+}
+
+// recordWrite logs a clipboard write. The full text is included in the
+// payload — the recorder's audit-redact pipeline catches credentials
+// before storage. Treat agent-chosen write text as sensitive.
+func (c *Client) recordWrite(ctx context.Context, text string, err error, dur time.Duration) {
+	if c.recorder == nil {
+		return
+	}
+	status := "success"
+	errStr := ""
+	if err != nil {
+		status = "error"
+		errStr = err.Error()
+	}
+	preview := text
+	if len(preview) > 80 {
+		preview = preview[:80] + "..."
+	}
+	payloadJSON, _ := json.Marshal(struct {
+		Op   string `json:"op"`
+		Text string `json:"text"`
+	}{"write", text})
+	_ = c.recorder.Record(ctx, action.Action{
+		Type:           "clipboard.write",
+		Target:         "os.clipboard",
+		PayloadSummary: fmt.Sprintf("write %d bytes", len(text)),
+		PayloadFull:    string(payloadJSON),
+		DurationMS:     dur.Milliseconds(),
+		Status:         status,
+		ResultSummary:  preview,
+		Error:          errStr,
+	})
 }
 
 // readCommand resolves the backend command for reading.

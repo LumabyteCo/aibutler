@@ -78,8 +78,12 @@ func (r *SQLiteRecorder) Record(ctx context.Context, a Action) error {
 		a.Status = "success"
 	}
 
+	// Both payload_full and result_summary go through the audit redactor —
+	// these fields can hold tool input/output that may contain credentials
+	// (e.g. a clipboard read that returned a password manager paste, a
+	// PowerShell call that wrote a token to stdout). Redact before storage.
 	payloadFull := capString(audit.Redact(a.PayloadFull), maxPayloadFullBytes)
-	resultSummary := capString(a.ResultSummary, maxResultSummaryBytes)
+	resultSummary := capString(audit.Redact(a.ResultSummary), maxResultSummaryBytes)
 
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO actions

@@ -649,6 +649,7 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// PowerShell tool (shell allowlist from config).
 	psAllowlist := cfg.Configurations.Security.Shell.Allowed
 	psExec := pspkg.NewExecutor(psAllowlist)
+	psExec.SetRecorder(actionRecorder)
 	pspkg.RegisterPowerShellTool(ftReg, psExec)
 
 	// Native OS scripting — AppleScript / Shortcuts (macOS) and D-Bus (Linux).
@@ -683,6 +684,7 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	asExec.SetRecorder(actionRecorder)
 	aspkg.RegisterAppleScriptTool(ftReg, asExec)
 	scutRunner := scutpkg.NewRunner(scutAllowlist)
+	scutRunner.SetRecorder(actionRecorder)
 	scutpkg.RegisterShortcutsTool(ftReg, scutRunner)
 	dbusClient := dbuspkg.NewClient(dbusAllowlist)
 	dbusClient.SetRecorder(actionRecorder)
@@ -741,7 +743,13 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// Read and write have separate capabilities (tool.clipboard.read,
 	// tool.clipboard.write) so callers can grant write-only or read-only.
 	// Neither is in the default capability set — explicit grant required.
-	clippkg.RegisterTools(ftReg, clippkg.NewClient())
+	//
+	// Recording: clipboard.read records byte count only (never the actual
+	// content read — could be a password). clipboard.write records the
+	// text being written, redacted by the recorder's audit pipeline.
+	clipClient := clippkg.NewClient()
+	clipClient.SetRecorder(actionRecorder)
+	clippkg.RegisterTools(ftReg, clipClient)
 
 	// cost.forecast — pre-action USD/token estimate for a planned model
 	// call. Pairs with the existing cost.status tool (which reports

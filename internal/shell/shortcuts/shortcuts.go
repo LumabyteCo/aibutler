@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/LumabyteCo/aibutler/internal/action"
 )
 
 const (
@@ -38,6 +40,7 @@ type toolRegistry interface {
 type Runner struct {
 	allowlist []string
 	timeout   time.Duration
+	recorder  action.Recorder // optional — nil disables recording
 }
 
 // NewRunner creates a Shortcuts runner with the given allowlist of shortcut names.
@@ -53,12 +56,23 @@ func NewRunner(allowlist []string) *Runner {
 // SetTimeout overrides the default execution timeout.
 func (r *Runner) SetTimeout(d time.Duration) { r.timeout = d }
 
+// SetRecorder attaches an action recorder. Pass nil to disable.
+// Each Run emits one Action row when a recorder is set.
+func (r *Runner) SetRecorder(rec action.Recorder) { r.recorder = rec }
+
 // Run invokes the named Shortcut with optional stdin input.
 // Returns the shortcut's stdout (and stderr appended on non-zero exit).
 //
 // SECURITY: An empty allowlist denies everything. Mirrors the powershell
 // executor's posture — do NOT silently allow ALL shortcuts when allowlist is empty.
 func (r *Runner) Run(ctx context.Context, name, input string) (string, error) {
+	start := time.Now()
+	result, err := r.run(ctx, name, input)
+	r.recordAction(ctx, name, input, result, err, time.Since(start))
+	return result, err
+}
+
+func (r *Runner) run(ctx context.Context, name, input string) (string, error) {
 	if runtime.GOOS != "darwin" {
 		return "", fmt.Errorf(
 			"shell.shortcuts: macOS-only (Apple Shortcuts CLI) — you're on %s. "+
@@ -114,6 +128,41 @@ func (r *Runner) inAllowlist(name string) bool {
 		}
 	}
 	return false
+}
+
+// recordAction emits one Action row for the just-completed Run when a
+// recorder is attached.
+func (r *Runner) recordAction(ctx context.Context, name, input, result string, err error, dur time.Duration) {
+	if r.recorder == nil {
+		return
+	}
+	status := "success"
+	errStr := ""
+	if err != nil {
+		status = "error"
+		errStr = err.Error()
+		if strings.Contains(errStr, "not in allowlist") {
+			status = "denied"
+		}
+	}
+	payloadJSON, _ := json.Marshal(struct {
+		Name  string `json:"name"`
+		Input string `json:"input,omitempty"`
+	}{name, input})
+	resSnippet := result
+	if len(resSnippet) > 200 {
+		resSnippet = resSnippet[:200]
+	}
+	_ = r.recorder.Record(ctx, action.Action{
+		Type:           "shortcuts.run",
+		Target:         name,
+		PayloadSummary: "run:" + name,
+		PayloadFull:    string(payloadJSON),
+		DurationMS:     dur.Milliseconds(),
+		Status:         status,
+		ResultSummary:  resSnippet,
+		Error:          errStr,
+	})
 }
 
 // limitWriter wraps a bytes.Buffer with a size limit.

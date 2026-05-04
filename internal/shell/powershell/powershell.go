@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/LumabyteCo/aibutler/internal/action"
 )
 
 const (
@@ -25,6 +27,7 @@ type toolRegistry interface {
 type Executor struct {
 	allowlist []string
 	timeout   time.Duration
+	recorder  action.Recorder // optional — nil disables recording
 }
 
 // NewExecutor creates a PowerShell executor with the given command allowlist.
@@ -39,6 +42,10 @@ func NewExecutor(allowlist []string) *Executor {
 // SetTimeout overrides the default command timeout.
 func (e *Executor) SetTimeout(d time.Duration) { e.timeout = d }
 
+// SetRecorder attaches an action recorder. Pass nil to disable.
+// Each Execute call emits one Action row when a recorder is set.
+func (e *Executor) SetRecorder(r action.Recorder) { e.recorder = r }
+
 // Execute runs a PowerShell command after validating it against the allowlist.
 // It tries pwsh first, then falls back to powershell.
 //
@@ -49,6 +56,13 @@ func (e *Executor) SetTimeout(d time.Duration) { e.timeout = d }
 // allow ALL commands when the user leaves the allowlist empty, which is the
 // opposite of what they'd expect.
 func (e *Executor) Execute(ctx context.Context, command string) (string, error) {
+	start := time.Now()
+	result, err := e.execute(ctx, command)
+	e.recordAction(ctx, command, result, err, time.Since(start))
+	return result, err
+}
+
+func (e *Executor) execute(ctx context.Context, command string) (string, error) {
 	if !e.inAllowlist(command) {
 		return "", fmt.Errorf("shell.powershell: command not in allowlist: %q", firstWord(command))
 	}
@@ -80,6 +94,41 @@ func (e *Executor) Execute(ctx context.Context, command string) (string, error) 
 		out += "\n--- stderr ---\n" + errOut
 	}
 	return out, nil
+}
+
+// recordAction emits one Action row for the just-completed Execute when
+// a recorder is attached.
+func (e *Executor) recordAction(ctx context.Context, command, result string, err error, dur time.Duration) {
+	if e.recorder == nil {
+		return
+	}
+	status := "success"
+	errStr := ""
+	if err != nil {
+		status = "error"
+		errStr = err.Error()
+		if strings.Contains(errStr, "not in allowlist") {
+			status = "denied"
+		}
+	}
+	verb := firstWord(command)
+	payloadJSON, _ := json.Marshal(struct {
+		Command string `json:"command"`
+	}{command})
+	resSnippet := result
+	if len(resSnippet) > 200 {
+		resSnippet = resSnippet[:200]
+	}
+	_ = e.recorder.Record(ctx, action.Action{
+		Type:           "powershell.exec",
+		Target:         verb,
+		PayloadSummary: verb,
+		PayloadFull:    string(payloadJSON),
+		DurationMS:     dur.Milliseconds(),
+		Status:         status,
+		ResultSummary:  resSnippet,
+		Error:          errStr,
+	})
 }
 
 func (e *Executor) inAllowlist(command string) bool {
