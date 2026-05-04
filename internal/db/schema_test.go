@@ -79,6 +79,10 @@ var expectedTables = []string{
 	"security_events",
 	// Migration 020: Action recording
 	"actions",
+	// Migration 021: Mission engine — foundation
+	"missions",
+	"mission_steps",
+	"mission_events",
 	// Tables from core migrations not previously listed
 	"oauth_tokens",
 	"agent_registry",
@@ -119,8 +123,8 @@ func TestSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schema version: %v", err)
 	}
-	if version != 20 {
-		t.Errorf("schema version = %d, want 20", version)
+	if version != 21 {
+		t.Errorf("schema version = %d, want 21", version)
 	}
 }
 

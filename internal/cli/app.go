@@ -47,6 +47,7 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/memory/graph"
 	"github.com/LumabyteCo/aibutler/internal/memory/hybrid"
 	"github.com/LumabyteCo/aibutler/internal/memory/vector"
+	missionpkg "github.com/LumabyteCo/aibutler/internal/mission"
 	"github.com/LumabyteCo/aibutler/internal/offline"
 	mcpserver "github.com/LumabyteCo/aibutler/internal/mcp/server"
 	pluginpkg "github.com/LumabyteCo/aibutler/internal/plugin"
@@ -791,6 +792,16 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// been performed, filtered by agent_id / action_type / status. No
 	// capability — diagnostic / read-only.
 	action.RegisterListTool(ftReg, actionRecorder)
+
+	// Mission engine (foundation) — persistent, replannable goals with a
+	// state machine and audit trail. Tools: mission.create, mission.list,
+	// mission.get, mission.events. Capability: tool.mission. Supervisor /
+	// worker agent types, bus refactor, mode plumbing, and dashboard
+	// panel arrive in follow-up commits — this commit ships only the
+	// data layer.
+	missionStore := missionpkg.NewSQLiteStore(database.Conn())
+	missionMgr := missionpkg.NewManager(missionStore)
+	missionpkg.RegisterTools(ftReg, missionMgr, missionStore)
 
 	// ElevenLabs TTS (only when API key is configured).
 	elKeyCred, _ := v.Get(ctx, "elevenlabs_api_key")
