@@ -18,7 +18,7 @@ CGO_ENABLED=0 go build -o aibutler .
 
 ```bash
 ./aibutler version
-# aibutler v0.1.0
+# aibutler v0.2.0
 ```
 
 ## Setup
@@ -60,6 +60,8 @@ First run creates `~/.aibutler/` with:
 ./aibutler setup            # Show current settings
 ./aibutler config show      # Display full configuration
 ./aibutler cost status      # Check spending
+./aibutler mode             # Show the current agent mode
+./aibutler mode mission     # Opt into the mission engine runtime (v0.2)
 ./aibutler help             # List all commands
 ```
 
@@ -67,3 +69,5 @@ First run creates `~/.aibutler/` with:
 
 - [Setup](SETUP.md) -- configure language, model, and persona
 - [Choose Your AI](CHOOSE-YOUR-AI.md) -- pick a model provider (Claude, OpenAI, Ollama)
+- [Agent Modes](../agents/AGENT-MODES.md) -- including the v0.2 mission mode
+- [Missions](../agents/MISSIONS.md) -- long-running goals with persistent state and audit trail (v0.2)

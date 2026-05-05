@@ -16,7 +16,7 @@ All values have sensible defaults. Only set what you want to change.
 | `settings.persona_name` | string | `"Butler"` | Persona display name |
 | `settings.skills` | []string | `["coding", "research"]` | Enabled skills |
 | `settings.agents_enabled` | bool | `true` | Enable agent system |
-| `settings.agent_mode` | string | `"auto"` | Agent mode: `auto` or `single` |
+| `settings.agent_mode` | string | `"auto"` | Agent mode: `auto`, `single`, or `mission` (v0.2). `multi` / `swarm` / `custom` downgrade to `single`. |
 | `settings.cost.strategy` | string | `"balanced"` | Cost strategy: `frugal`, `balanced`, `quality` |
 | `settings.cost.monthly_budget` | float64 | `10.00` | Monthly budget in USD |
 
@@ -33,7 +33,10 @@ All values have sensible defaults. Only set what you want to change.
 | `configurations.agents.max_depth` | int | `3` | Max nesting depth (3 hops = 4 agents) |
 | `configurations.agents.default_subagent_model` | string | `"haiku"` | Default model for sub-agents |
 | `configurations.security.shell.mode` | string | `"allowlist"` | Shell security: `allowlist` or `denylist` |
-| `configurations.security.shell.allowed` | []string | `[]` | Allowed shell commands |
+| `configurations.security.shell.allowed` | []string | `[]` | Allowed shell commands. Shared with `shell.applescript`, `shell.shortcuts`, and `shell.dbus` — each executor matches entries that fit its grammar (PowerShell first-words, AppleScript first-words / `tell:Mail`, Shortcut names, D-Bus `service:path:interface:method` patterns). |
+| `configurations.security.shell.use_default_allowlist` | bool | `false` | When `true`, prepends a curated starter allowlist (system notifications, MPRIS media controls, common AppleScript verbs) to the user list. Off by default — empty allowlist still denies everything. (v0.2) |
+| `configurations.vault.request.auto_approved_keys` | []string | `[]` | Credential keys that the `vault.request` broker grants to agents without further confirmation. Default-deny: keys not listed return a guidance message. (v0.2) |
+| `configurations.vault.request.denied_keys` | []string | `[]` | Credential keys that the `vault.request` broker NEVER grants — overrides `auto_approved_keys`. (v0.2) |
 | `configurations.cost.alerts` | []int | `[50, 75, 90, 100]` | Budget alert thresholds (%) |
 | `configurations.cost.alert_channel` | string | `"same"` | Channel for budget alerts |
 | `configurations.cost.on_budget_reached` | string | `"warn"` | Action at budget limit: `warn` or `pause` |
@@ -105,7 +108,12 @@ configurations:
   security:
     shell:
       mode: allowlist
-      allowed: [ls, cat, grep, git]
+      allowed: [ls, cat, grep, git, tell, display, say, get]
+      use_default_allowlist: false   # v0.2 — set true to opt into curated starters
+  vault:
+    request:                          # v0.2 — controls vault.request tool
+      auto_approved_keys: []
+      denied_keys: []
   cost:
     alerts: [50, 75, 90, 100]
     alert_channel: same
