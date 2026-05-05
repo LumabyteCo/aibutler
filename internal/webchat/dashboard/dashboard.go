@@ -112,6 +112,9 @@ func (d *Dashboard) Handler() http.Handler {
 	// Enhanced dashboard routes.
 	d.RegisterEnhancedRoutes(mux)
 
+	// Mission dashboard routes — read-only viewer for the mission engine.
+	d.RegisterMissionRoutes(mux)
+
 	return mux
 }
 
