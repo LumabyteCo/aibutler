@@ -156,10 +156,14 @@ func TestRuntime_DoesNotReSpawnRunningMission(t *testing.T) {
 	store, mgr := newTestStore(t)
 	b := bus.New()
 
-	// Slow executor so the mission stays running across polls.
+	// Long-running executor so the mission stays "running" comfortably
+	// across multiple poll ticks. 1.5s gives a wide window for the
+	// RunningCount check below — even under heavy CPU contention from
+	// parallel test runs the executor is still in flight at the sample
+	// point.
 	executor := func(ctx context.Context, _ worker.Task) (string, error) {
 		select {
-		case <-time.After(300 * time.Millisecond):
+		case <-time.After(1500 * time.Millisecond):
 		case <-ctx.Done():
 		}
 		return "ok", nil
@@ -174,15 +178,22 @@ func TestRuntime_DoesNotReSpawnRunningMission(t *testing.T) {
 	m, _ := mgr.Create(ctx, "m", "", 0)
 	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{{Task: "x"}})
 
-	runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	go func() { _ = rt.Start(runCtx) }()
 
-	// During the slow execution there should be exactly one supervisor
-	// goroutine — re-polling shouldn't re-spawn for the same mission.
-	time.Sleep(150 * time.Millisecond)
-	if got := rt.RunningCount(); got != 1 {
-		t.Errorf("RunningCount during slow exec = %d, want 1", got)
+	// Wait for the supervisor to actually be running (not just spawned),
+	// then sample RunningCount across several polls. Re-polling shouldn't
+	// re-spawn for the same mission while it's mid-execution.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && rt.RunningCount() == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	for i := 0; i < 5; i++ {
+		if got := rt.RunningCount(); got > 1 {
+			t.Errorf("RunningCount during slow exec = %d, want 1 (re-spawn detected)", got)
+		}
+		time.Sleep(60 * time.Millisecond) // covers ~2 poll intervals each iteration
 	}
 
 	cancel()

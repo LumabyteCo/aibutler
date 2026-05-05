@@ -18,6 +18,7 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/config"
 	"github.com/LumabyteCo/aibutler/internal/agent"
 	"github.com/LumabyteCo/aibutler/internal/agent/bus"
+	missionruntimepkg "github.com/LumabyteCo/aibutler/internal/agent/missionruntime"
 	"github.com/LumabyteCo/aibutler/internal/agent/router"
 	"github.com/LumabyteCo/aibutler/internal/agent/specialist"
 	"github.com/LumabyteCo/aibutler/internal/capability"
@@ -63,7 +64,25 @@ func CmdRun(app *App, _ []string, w io.Writer) error {
 	// is a follow-up that wires the existing agent loop in as the
 	// TaskExecutor.
 	if app.MissionRuntimeEnabled && app.MissionRuntime != nil {
-		fmt.Fprintln(w, "Mission mode active: runtime started.")
+		// Try to upgrade the runtime's executor from EchoExecutor to
+		// an LLM-backed executor that runs each step through the
+		// existing agent loop. If the model adapter isn't available
+		// (no API key, offline mode, etc.), fall back to echo so the
+		// runtime can still demonstrate orchestration mechanics.
+		if adapter, _ := resolveModelAdapter(app); adapter != nil && app.Dispatcher != nil {
+			llmExec, err := missionruntimepkg.NewLLMExecutor(missionruntimepkg.LLMExecutorConfig{
+				Model: adapter,
+				Tools: app.Dispatcher,
+			})
+			if err == nil {
+				app.MissionRuntime.SetExecutor(llmExec)
+				fmt.Fprintln(w, "Mission mode active: runtime started (LLM-backed task executor).")
+			} else {
+				fmt.Fprintf(w, "Mission mode active: runtime started (echo fallback — %v).\n", err)
+			}
+		} else {
+			fmt.Fprintln(w, "Mission mode active: runtime started (echo fallback — no model adapter configured).")
+		}
 		fmt.Fprintln(w, "  Create missions via the mission.create tool.")
 		fmt.Fprintln(w, "  Inspect via mission.list / mission.get / mission.events.")
 		fmt.Fprintln(w, "  Pause / resume / cancel via mission.interrupt.")

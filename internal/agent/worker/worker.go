@@ -113,12 +113,28 @@ func (w *Worker) Run(ctx context.Context, missionID string) error {
 }
 
 func (w *Worker) handle(ctx context.Context, msg bus.ReliableMessage, eventsTopic string) {
+	// Ack-on-receipt: confirm "I got the message" immediately so the
+	// supervisor's reliable-publish returns quickly. The actual work
+	// can take seconds (or minutes for LLM-backed task execution) —
+	// blocking the dispatch ack on completion would force every
+	// supervisor PublishReliable to use a long timeout to cover the
+	// worst-case worker. Instead the supervisor relies on its own
+	// StepTimeout (waiting on the result event) to detect stuck
+	// workers; the dispatch ack is purely a delivery confirmation.
+	//
+	// Trade-off: if the worker process crashes between Ack and
+	// publishing the result, the dispatch is lost (the supervisor
+	// times out its step-wait and replans / fails). For at-least-
+	// once mission orchestration this is the right call — re-running
+	// an expensive LLM step blindly would burn budget faster than
+	// just failing and surfacing the issue to the user.
+	msg.Ack()
+
 	var task Task
 	if err := json.Unmarshal([]byte(msg.Payload), &task); err != nil {
-		// Malformed payload — ack so it doesn't loop forever, then
-		// publish an error event.
-		msg.Ack()
-		w.publishResult(ctx, eventsTopic, Result{
+		// Malformed payload — publish an error event so the supervisor
+		// can record the failure rather than wait until step timeout.
+		go w.publishResult(ctx, eventsTopic, Result{
 			MissionID: msg.Topic, // best we can do without a parsed StepID
 			WorkerID:  w.agentID,
 			Error:     "malformed task: " + err.Error(),
@@ -141,19 +157,10 @@ func (w *Worker) handle(ctx context.Context, msg bus.ReliableMessage, eventsTopi
 		res.Success = true
 	}
 
-	// Ack the dispatch BEFORE publishing the result — otherwise a slow
-	// supervisor (waiting on the result publish) would keep the
-	// dispatch un-acked and the supervisor would retry the dispatch
-	// before getting the result.
-	msg.Ack()
-
-	// Publish the result asynchronously so a slow supervisor doesn't
-	// block this worker from processing the NEXT dispatch. PublishOpts
-	// caps total time spent (default 5s × MaxAttempts) so goroutines
-	// drain naturally; ctx cancellation also tears them down. This is
-	// the correct trade-off for at-least-once: the dispatch is acked
-	// (no duplicate dispatch) and the result publish has its own
-	// retry budget if the supervisor is briefly unavailable.
+	// Publish the result asynchronously so the worker can immediately
+	// process the NEXT dispatch. PublishOpts caps total time spent
+	// (default 5s × MaxAttempts) so goroutines drain naturally;
+	// ctx cancellation also tears them down.
 	go w.publishResult(ctx, eventsTopic, res)
 }
 

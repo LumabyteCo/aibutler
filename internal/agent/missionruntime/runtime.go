@@ -136,6 +136,21 @@ func (r *Runtime) RunningCount() int {
 	return len(r.running)
 }
 
+// SetExecutor replaces the TaskExecutor used by future supervisor+worker
+// pairs. Existing in-flight workers keep the executor they were spawned
+// with — only newly-spawned workers see the change.
+//
+// Used by app startup to swap the default EchoExecutor for an LLM-backed
+// executor once the model adapter is resolved.
+func (r *Runtime) SetExecutor(fn worker.TaskExecutor) {
+	if fn == nil {
+		fn = worker.EchoExecutor
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.opts.Executor = fn
+}
+
 // scan looks for planned missions and spawns runner goroutines for any
 // not already running, up to MaxConcurrent.
 func (r *Runtime) scan(ctx context.Context) {
