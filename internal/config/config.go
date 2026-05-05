@@ -620,10 +620,10 @@ func (c *Config) Validate() error {
 
 	// Agent mode must be valid.
 	switch c.Settings.AgentMode {
-	case "auto", "single", "multi", "custom", "swarm":
+	case "auto", "single", "multi", "custom", "swarm", "mission":
 		// ok
 	default:
-		return fmt.Errorf("config: invalid agent_mode %q (must be auto, single, multi, custom, or swarm)", c.Settings.AgentMode)
+		return fmt.Errorf("config: invalid agent_mode %q (must be auto, single, multi, custom, swarm, or mission)", c.Settings.AgentMode)
 	}
 
 	// Agent depth must be within safe bounds (1-3 hops).

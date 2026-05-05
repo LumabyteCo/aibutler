@@ -9,11 +9,12 @@ import (
 type Mode string
 
 const (
-	ModeAuto   Mode = "auto"   // Resolved to ModeMulti at runtime
-	ModeSingle Mode = "single" // Sequential tool execution, no delegation
-	ModeMulti  Mode = "multi"  // Parallel tool execution, delegation enabled
-	ModeCustom Mode = "custom" // User-defined custom roles with routing
-	ModeSwarm  Mode = "swarm"  // Router auto-activates, all orchestration patterns enabled
+	ModeAuto    Mode = "auto"    // Resolved to ModeMulti at runtime
+	ModeSingle  Mode = "single"  // Sequential tool execution, no delegation
+	ModeMulti   Mode = "multi"   // Parallel tool execution, delegation enabled
+	ModeCustom  Mode = "custom"  // User-defined custom roles with routing
+	ModeSwarm   Mode = "swarm"   // Router auto-activates, all orchestration patterns enabled
+	ModeMission Mode = "mission" // Mission engine runtime — supervisor + worker pairs orchestrate planned missions
 )
 
 // effectiveMode resolves "auto" to the actual mode.
@@ -24,13 +25,16 @@ func effectiveMode(m Mode) Mode {
 	if m == ModeSwarm {
 		return ModeMulti // Swarm uses multi execution with router overlay
 	}
+	// ModeMission keeps its own identity — it isn't a tool-dispatch mode,
+	// it's a separate runtime that drives missions via supervisor + worker
+	// pairs alongside the normal agent loop.
 	return m
 }
 
 // ValidMode returns true if m is a recognized agent mode.
 func ValidMode(m string) bool {
 	switch Mode(m) {
-	case ModeAuto, ModeSingle, ModeMulti, ModeCustom, ModeSwarm:
+	case ModeAuto, ModeSingle, ModeMulti, ModeCustom, ModeSwarm, ModeMission:
 		return true
 	}
 	return false

@@ -47,6 +47,8 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/memory/graph"
 	"github.com/LumabyteCo/aibutler/internal/memory/hybrid"
 	"github.com/LumabyteCo/aibutler/internal/memory/vector"
+	busp "github.com/LumabyteCo/aibutler/internal/agent/bus"
+	missionruntimepkg "github.com/LumabyteCo/aibutler/internal/agent/missionruntime"
 	missionpkg "github.com/LumabyteCo/aibutler/internal/mission"
 	"github.com/LumabyteCo/aibutler/internal/offline"
 	mcpserver "github.com/LumabyteCo/aibutler/internal/mcp/server"
@@ -204,6 +206,13 @@ type App struct {
 	// Multi-Agent (stored for swarm mode access)
 	AgentRouter      interface{} // *router.Router when swarm mode active
 	MessageBus       interface{} // *bus.Bus when swarm mode active
+
+	// Mission runtime — populated unconditionally; only Started when
+	// AgentMode == "mission". MissionRuntimeEnabled records the user's
+	// configured intent so cmd_run can decide whether to launch it.
+	MissionBus            *busp.Bus
+	MissionRuntime        *missionruntimepkg.Runtime
+	MissionRuntimeEnabled bool
 
 	// Orphan fixes (Pass 10): previously built but never wired
 	ShellSandbox     *shellsandbox.Sandbox
@@ -802,6 +811,18 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	missionStore := missionpkg.NewSQLiteStore(database.Conn())
 	missionMgr := missionpkg.NewManager(missionStore)
 	missionpkg.RegisterTools(ftReg, missionMgr, missionStore)
+
+	// Mission runtime — when AgentMode is "mission", spin up a background
+	// poller that picks up planned missions and runs them via supervisor +
+	// worker pairs. Stash the runtime on the App so cmd_run / shutdown
+	// hooks can start / stop it. Default executor is EchoExecutor;
+	// LLM-backed task execution is a clearly-scoped follow-up.
+	//
+	// A dedicated bus instance keeps mission supervisor↔worker traffic
+	// separate from any future swarm-mode pub/sub on app.MessageBus.
+	app.MissionBus = busp.New()
+	app.MissionRuntime = missionruntimepkg.New(missionMgr, missionStore, app.MissionBus, missionruntimepkg.Options{})
+	app.MissionRuntimeEnabled = cfg.Settings.AgentMode == "mission"
 
 	// ElevenLabs TTS (only when API key is configured).
 	elKeyCred, _ := v.Get(ctx, "elevenlabs_api_key")

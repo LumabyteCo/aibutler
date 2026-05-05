@@ -55,6 +55,23 @@ func CmdRun(app *App, _ []string, w io.Writer) error {
 	// Resolve message handler: real AI pipeline or echo fallback.
 	handler := resolveHandler(app, w)
 
+	// Mission mode runtime — starts a background poller that picks up
+	// planned missions and runs them via supervisor + worker pairs.
+	// Cancellation of ctx (on shutdown) propagates through Start() and
+	// drains the running supervisor goroutines. Task execution is stub
+	// (EchoExecutor) in this initial integration; LLM-backed execution
+	// is a follow-up that wires the existing agent loop in as the
+	// TaskExecutor.
+	if app.MissionRuntimeEnabled && app.MissionRuntime != nil {
+		fmt.Fprintln(w, "Mission mode active: runtime started.")
+		fmt.Fprintln(w, "  Create missions via the mission.create tool.")
+		fmt.Fprintln(w, "  Inspect via mission.list / mission.get / mission.events.")
+		fmt.Fprintln(w, "  Pause / resume / cancel via mission.interrupt.")
+		go func() {
+			_ = app.MissionRuntime.Start(ctx)
+		}()
+	}
+
 	// Start A2A HTTP server if enabled (runner was wired in resolveHandler).
 	var a2aSrv *http.Server
 	if app.Config.Configurations.A2A.Enabled && app.A2AHandler != nil {
@@ -398,6 +415,7 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 		}
 		app.Config.Configurations.Agents.MaxConcurrent = maxConcurrent
 	}
+
 
 	// Register agent orchestration tools.
 	agentSem := agent.NewSemaphore(app.Config.Configurations.Agents.MaxConcurrent)
