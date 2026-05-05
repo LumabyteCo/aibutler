@@ -34,6 +34,13 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/mission"
 )
 
+// ErrMissionPaused indicates Run exited because the mission was
+// externally moved to waiting_user (e.g. via mission.interrupt
+// action=pause). The caller decides whether to Resume + re-Run or
+// Cancel. Distinguishing this from a genuine error helps callers
+// avoid logging it as a failure.
+var ErrMissionPaused = errors.New("supervisor: mission paused (waiting_user)")
+
 // Supervisor owns one mission and coordinates worker dispatch over the bus.
 type Supervisor struct {
 	mgr     *mission.Manager
@@ -76,8 +83,11 @@ func (s *Supervisor) Run(ctx context.Context, missionID string) error {
 	if err != nil {
 		return fmt.Errorf("supervisor: load mission: %w", err)
 	}
-	if mi.State != mission.StatePlanned {
-		return fmt.Errorf("supervisor: mission %s is in state %s, want planned",
+	// Accept `planned` (fresh start) and `running` (resume after Pause/
+	// Resume). Already-completed steps are skipped further down so re-Run
+	// on a partially-completed mission picks up where it left off.
+	if mi.State != mission.StatePlanned && mi.State != mission.StateRunning {
+		return fmt.Errorf("supervisor: mission %s is in state %s, want planned or running",
 			missionID, mi.State)
 	}
 
@@ -101,8 +111,13 @@ func (s *Supervisor) Run(ctx context.Context, missionID string) error {
 	events := s.bus.SubscribeReliable(eventsTopic)
 	defer s.bus.UnsubscribeReliable(eventsTopic, events)
 
-	if err := s.mgr.Start(ctx, missionID); err != nil {
-		return fmt.Errorf("supervisor: start mission: %w", err)
+	// Only fire Start on a fresh (planned) mission — a re-Run after
+	// Resume is already in `running` state, and re-Starting would
+	// overwrite the original StartedAt timestamp.
+	if mi.State == mission.StatePlanned {
+		if err := s.mgr.Start(ctx, missionID); err != nil {
+			return fmt.Errorf("supervisor: start mission: %w", err)
+		}
 	}
 
 	for i := range steps {
@@ -112,8 +127,29 @@ func (s *Supervisor) Run(ctx context.Context, missionID string) error {
 			continue
 		}
 
+		// External-interrupt check: re-fetch the mission's current state
+		// before each step. If a mission.interrupt tool call has moved it
+		// to waiting_user / cancelled / failed, exit the run loop
+		// cleanly — don't dispatch the next step on top of an
+		// already-stopped mission.
+		current, err := s.store.GetMission(ctx, missionID)
+		if err != nil {
+			return fmt.Errorf("supervisor: re-check state: %w", err)
+		}
+		switch current.State {
+		case mission.StateCancelled:
+			return fmt.Errorf("supervisor: mission cancelled externally")
+		case mission.StateFailed:
+			return fmt.Errorf("supervisor: mission failed externally")
+		case mission.StateWaitingUser:
+			// Pause requested — exit gracefully so the caller can decide
+			// whether to Resume + re-Run or Cancel. The supervisor is
+			// stateless across runs; resuming creates a new Run call.
+			return ErrMissionPaused
+		}
+
 		stepCtx, cancel := context.WithTimeout(ctx, stepTimeout)
-		err := s.runStep(stepCtx, missionID, step, dispatchTopic, events)
+		err = s.runStep(stepCtx, missionID, step, dispatchTopic, events)
 		cancel()
 		if err != nil {
 			// Step failed — fail the whole mission. Replanning is a

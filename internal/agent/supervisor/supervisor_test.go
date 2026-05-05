@@ -3,6 +3,7 @@ package supervisor_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -266,3 +267,168 @@ var errFail = stringError("worker failed")
 type stringError string
 
 func (e stringError) Error() string { return string(e) }
+
+// --- Interrupt / external-state-change tests ---
+
+func TestRun_ExternalCancel_ExitsBetweenSteps(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "long mission", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{
+		{Task: "step 1"},
+		{Task: "step 2"},
+		{Task: "step 3"},
+	})
+
+	b := bus.New()
+
+	// Worker that cancels the mission externally after the first step
+	// completes — proves the supervisor's between-steps state recheck
+	// notices and exits cleanly. Synchronous Cancel before returning
+	// guarantees the supervisor sees the cancelled state on its next
+	// step-loop iteration (no goroutine race).
+	var stepsCompleted atomic.Int32
+	executor := func(_ context.Context, _ worker.Task) (string, error) {
+		n := stepsCompleted.Add(1)
+		if n == 1 {
+			_ = mgr.Cancel(context.Background(), m.ID, "external cancel")
+		}
+		return "ok", nil
+	}
+	w := worker.New(b, "w-1", executor)
+
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 1 * time.Second
+
+	err := s.Run(ctx, m.ID)
+	if err == nil || !strings.Contains(err.Error(), "cancelled externally") {
+		t.Fatalf("expected cancelled-externally error, got %v", err)
+	}
+
+	// Mission should still be in cancelled state (the supervisor saw it
+	// already terminal and didn't transition further).
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCancelled {
+		t.Errorf("state = %s, want cancelled", got.State)
+	}
+
+	// Should have completed at most 1-2 steps before noticing the
+	// external cancel.
+	if stepsCompleted.Load() > 2 {
+		t.Errorf("expected ≤2 steps before external cancel detected, got %d", stepsCompleted.Load())
+	}
+}
+
+func TestRun_ExternalPause_ReturnsErrMissionPaused(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "pausable", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{
+		{Task: "a"},
+		{Task: "b"},
+		{Task: "c"},
+	})
+
+	b := bus.New()
+
+	executor := func(_ context.Context, t worker.Task) (string, error) {
+		// Synchronously pause after step "a" so the supervisor's
+		// between-steps state recheck sees waiting_user immediately.
+		if t.Task == "a" {
+			_ = mgr.Pause(context.Background(), m.ID, "user away")
+		}
+		return "ok", nil
+	}
+	w := worker.New(b, "w-pause", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 1 * time.Second
+
+	err := s.Run(ctx, m.ID)
+	if !errors.Is(err, supervisor.ErrMissionPaused) {
+		t.Fatalf("expected ErrMissionPaused, got %v", err)
+	}
+
+	// State should remain waiting_user — the supervisor exited cleanly,
+	// did not transition to terminal, and the caller can resume + re-run.
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateWaitingUser {
+		t.Errorf("state = %s, want waiting_user", got.State)
+	}
+}
+
+func TestRun_ResumeAfterPause_PicksUpRemainingSteps(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "pause-resume", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{
+		{Task: "first"},
+		{Task: "second"},
+		{Task: "third"},
+	})
+
+	b := bus.New()
+
+	var pauseFired atomic.Bool
+	var executed atomic.Int32
+	executor := func(_ context.Context, t worker.Task) (string, error) {
+		executed.Add(1)
+		// Pause after first execution only — synchronously, so the
+		// supervisor sees waiting_user on the very next loop iteration.
+		// The resumed run shouldn't re-trigger the pause (pauseFired guard).
+		if !pauseFired.Load() && t.Task == "first" {
+			pauseFired.Store(true)
+			_ = mgr.Pause(context.Background(), m.ID, "checkpoint")
+		}
+		return "did " + t.Task, nil
+	}
+	w := worker.New(b, "w-pr", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 1 * time.Second
+
+	// First Run: should pause partway.
+	if err := s.Run(ctx, m.ID); !errors.Is(err, supervisor.ErrMissionPaused) {
+		t.Fatalf("first Run: want ErrMissionPaused, got %v", err)
+	}
+
+	// External resume.
+	if err := mgr.Resume(ctx, m.ID); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	// Second Run: should pick up the remaining steps and complete.
+	if err := s.Run(ctx, m.ID); err != nil {
+		t.Fatalf("second Run after resume: %v", err)
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("state = %s, want completed", got.State)
+	}
+
+	// Skipped-completed-steps logic: should NOT re-execute already-done
+	// steps. Total executions should be 3 (one per step).
+	if got := executed.Load(); got != 3 {
+		t.Errorf("executor calls = %d, want 3 (one per step, no re-runs)", got)
+	}
+}

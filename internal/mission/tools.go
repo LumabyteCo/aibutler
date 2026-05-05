@@ -134,6 +134,63 @@ func RegisterTools(registry toolRegistry, mgr *Manager, store Store) {
 		},
 	)
 
+	// mission.interrupt — pause / resume / cancel a running mission. The
+	// supervisor agent rechecks mission state between steps and exits
+	// cleanly when it sees the mission has been externally moved to a
+	// terminal or waiting state, so this is the user-facing way to stop
+	// or pause a mission mid-flight.
+	registry.Register(
+		"mission.interrupt",
+		"Pause, resume, or cancel an active mission. action='pause' moves it to waiting_user "+
+			"(supervisor exits the run loop between steps; resume returns it to running). "+
+			"action='cancel' marks the mission terminal — the supervisor exits with an error. "+
+			"action='resume' transitions a waiting_user mission back to running. The mission "+
+			"engine enforces state-machine transitions; invalid combinations return an error.",
+		`{"type":"object","properties":{`+
+			`"id":{"type":"string","description":"Mission ID"},`+
+			`"action":{"type":"string","enum":["pause","resume","cancel"]},`+
+			`"reason":{"type":"string","description":"Recorded in the mission event log"}`+
+			`},"required":["id","action"]}`,
+		"tool.mission",
+		func(ctx context.Context, input string) (string, error) {
+			var args struct {
+				ID     string `json:"id"`
+				Action string `json:"action"`
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal([]byte(input), &args); err != nil {
+				return "", fmt.Errorf("mission.interrupt: invalid input: %w", err)
+			}
+			if args.ID == "" {
+				return "", fmt.Errorf("mission.interrupt: id is required")
+			}
+			var err error
+			switch args.Action {
+			case "pause":
+				err = mgr.Pause(ctx, args.ID, args.Reason)
+			case "resume":
+				err = mgr.Resume(ctx, args.ID)
+			case "cancel":
+				err = mgr.Cancel(ctx, args.ID, args.Reason)
+			default:
+				return "", fmt.Errorf("mission.interrupt: unknown action %q (want pause | resume | cancel)", args.Action)
+			}
+			if err != nil {
+				return "", err
+			}
+			mi, err := store.GetMission(ctx, args.ID)
+			if err != nil {
+				return "", err
+			}
+			out, _ := json.Marshal(map[string]interface{}{
+				"id":     mi.ID,
+				"state":  mi.State,
+				"action": args.Action,
+			})
+			return string(out), nil
+		},
+	)
+
 	// mission.events — just the event log for a mission.
 	registry.Register(
 		"mission.events",

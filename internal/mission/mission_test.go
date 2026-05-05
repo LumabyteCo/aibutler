@@ -558,3 +558,116 @@ func TestTool_InvalidJSON(t *testing.T) {
 		}
 	}
 }
+
+// --- mission.interrupt tool tests ---
+
+func TestTool_Interrupt_PauseAndResume(t *testing.T) {
+	store := NewSQLiteStore(newMemDB(t))
+	mgr := NewManager(store)
+	reg := newMockRegistry()
+	RegisterTools(reg, mgr, store)
+	ctx := context.Background()
+
+	// Build a mission and walk it to running.
+	m, _ := mgr.Create(ctx, "x", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []Step{{Task: "a"}})
+	_ = mgr.Start(ctx, m.ID)
+
+	// Pause via tool.
+	out, err := reg.exec["mission.interrupt"](ctx, `{"id":"`+m.ID+`","action":"pause","reason":"user away"}`)
+	if err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal([]byte(out), &resp)
+	if resp["state"] != "waiting_user" {
+		t.Errorf("after pause, state = %v, want waiting_user", resp["state"])
+	}
+
+	// Resume via tool.
+	out, err = reg.exec["mission.interrupt"](ctx, `{"id":"`+m.ID+`","action":"resume"}`)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	_ = json.Unmarshal([]byte(out), &resp)
+	if resp["state"] != "running" {
+		t.Errorf("after resume, state = %v, want running", resp["state"])
+	}
+}
+
+func TestTool_Interrupt_Cancel(t *testing.T) {
+	store := NewSQLiteStore(newMemDB(t))
+	mgr := NewManager(store)
+	reg := newMockRegistry()
+	RegisterTools(reg, mgr, store)
+	ctx := context.Background()
+
+	m, _ := mgr.Create(ctx, "x", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []Step{{Task: "a"}})
+	_ = mgr.Start(ctx, m.ID)
+
+	out, err := reg.exec["mission.interrupt"](ctx, `{"id":"`+m.ID+`","action":"cancel","reason":"user stopped"}`)
+	if err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal([]byte(out), &resp)
+	if resp["state"] != "cancelled" {
+		t.Errorf("after cancel, state = %v, want cancelled", resp["state"])
+	}
+}
+
+func TestTool_Interrupt_UnknownAction(t *testing.T) {
+	store := NewSQLiteStore(newMemDB(t))
+	mgr := NewManager(store)
+	reg := newMockRegistry()
+	RegisterTools(reg, mgr, store)
+	ctx := context.Background()
+
+	m, _ := mgr.Create(ctx, "x", "", 0)
+	_, err := reg.exec["mission.interrupt"](ctx, `{"id":"`+m.ID+`","action":"reboot"}`)
+	if err == nil {
+		t.Fatal("expected error for unknown action")
+	}
+	if !strings.Contains(err.Error(), "pause") {
+		t.Errorf("error should list valid actions, got: %v", err)
+	}
+}
+
+func TestTool_Interrupt_EmptyID(t *testing.T) {
+	store := NewSQLiteStore(newMemDB(t))
+	mgr := NewManager(store)
+	reg := newMockRegistry()
+	RegisterTools(reg, mgr, store)
+
+	_, err := reg.exec["mission.interrupt"](context.Background(), `{"action":"pause"}`)
+	if err == nil {
+		t.Fatal("expected error for empty id")
+	}
+}
+
+func TestTool_Interrupt_MissionNotFound(t *testing.T) {
+	store := NewSQLiteStore(newMemDB(t))
+	mgr := NewManager(store)
+	reg := newMockRegistry()
+	RegisterTools(reg, mgr, store)
+
+	_, err := reg.exec["mission.interrupt"](context.Background(), `{"id":"ghost","action":"pause"}`)
+	if err == nil {
+		t.Fatal("expected error for nonexistent mission")
+	}
+}
+
+func TestTool_Interrupt_RegisteredAlongsideOthers(t *testing.T) {
+	store := NewSQLiteStore(newMemDB(t))
+	mgr := NewManager(store)
+	reg := newMockRegistry()
+	RegisterTools(reg, mgr, store)
+
+	want := []string{"mission.create", "mission.list", "mission.get", "mission.events", "mission.interrupt"}
+	for _, n := range want {
+		if _, ok := reg.exec[n]; !ok {
+			t.Errorf("tool %q not registered", n)
+		}
+	}
+}
