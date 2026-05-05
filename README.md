@@ -103,23 +103,48 @@ We wrote the code and it compiles + passes unit tests, but we haven't put these 
 | **Whisper STT** (local + cloud) | `beta` | — |
 | **Piper TTS** (local, CPU-only) | `beta` | — |
 
-### 🔜 On the roadmap (v0.2+)
+### ✨ New in v0.2
+
+The v0.2 release theme: **AI Butler can act on your computer**. Native
+OS scripting on every major platform, vision input on every major
+adapter, and a mission engine for goals that take more than one turn.
+
+| Feature | Status | What it does |
+|---|---|---|
+| **Native OS scripting** — `shell.applescript` (macOS), `shell.dbus` (Linux), `shell.shortcuts` (Apple Shortcuts), plus the existing `shell.powershell` (Windows) | `ready` | Drive Mail, Calendar, Music, Notification Center, MPRIS players, etc. without vision-driven UI clicking. |
+| **Cross-OS dispatcher** — `shell.script` | `ready` | Agent provides per-OS payloads; dispatcher routes by `runtime.GOOS`. |
+| **Vision input on Ollama vision / GPT-4o / Claude** — new `agent.Image` field with base64 + URL sources | `ready` | Verified end-to-end against `qwen3-vl:8b` and Claude image API. |
+| **Mission engine** — persistent state machine, supervisor + worker agents, reliable-bus orchestration, `aibutler mode mission` runtime, dashboard backend | `ready` | Long-running goals with audit trail, pause/resume/cancel, LLM-backed task execution. See [docs/agents/MISSIONS.md](docs/agents/MISSIONS.md). |
+| **Clipboard tool** — `clipboard.read` / `clipboard.write`, cross-platform | `ready` | Privacy: read records byte-count only, never content. |
+| **`wait.until` primitive** — file_exists / process_running / port_open / http_ready / duration | `ready` | Block until real-world readiness instead of racing UIs. |
+| **`cost.forecast` tool** | `ready` | Pre-action token + USD estimate for a planned model call. |
+| **macOS permission wizard** — `permissions.check` | `ready` | Probes Automation + Screen Recording, deep-links to Settings panels. |
+| **Just-in-time credential broker** — `vault.request` | `ready` | Default-deny credential issuance with audit trail. |
+| **Action recording** — fine-grained `actions` audit log with credential redaction | `ready` | Every native-script call logged with target, payload (redacted), duration, result. |
+| **AppleScript target-app allowlist** — `tell:Mail`, `tell:Music*`, `tell:*` | `ready` | Finer-grained safe defaults than bare-verb allowlisting. |
+
+### 🔜 On the roadmap (v0.3+)
 
 | Feature | Target |
 |---|---|
-| **Hosted demo** (`demo.aibutler.dev`) | v0.1.1 |
-| **Smart home full integration** — working Home Assistant adapter out of the box | v0.2 |
-| **Plugin marketplace** with sample plugins | v0.2 |
-| **Multi-agent swarm cookbook** with real delegation examples | v0.2 |
-| **Voice TUI mode** — terminal mic capture + playback | v0.2 |
-| **Image generation** — Flux, Stable Diffusion, DALL-E via official APIs | v0.2 |
-| **Advanced TTS** — ElevenLabs adapter | v0.2 |
+| **Hosted demo** (`demo.aibutler.dev`) | v0.2.x |
+| **LLM-driven replanning** when a mission step fails | v0.2.x |
+| **Mid-mission user-confirmation prompts** (today: manual `mission.interrupt action=pause`) | v0.2.x |
+| **Parallel step dispatch** in supervisor (sequential today) | v0.2.x |
+| **Manager tier** — 3-level supervisor → manager → worker hierarchy (2-level today) | v0.3 |
+| **Tier 3 accessibility tree** (AX, UIAutomation, AT-SPI) — one level finer than vision-driven UI | v0.3 |
+| **Tier 4 vision + input** — screen capture + mouse/keyboard for the long tail | v0.3 |
+| **Smart home full integration** — working Home Assistant adapter out of the box | v0.3 |
+| **Plugin marketplace** with sample plugins | v0.3 |
+| **Voice TUI mode** — terminal mic capture + playback | v0.3 |
+| **Image generation** — Flux, Stable Diffusion, DALL-E via official APIs | v0.3 |
+| **Advanced TTS** — ElevenLabs adapter | v0.3 |
 | **Video generation and advanced creative tools** | Later |
-| **Internet mode** with autocert + password + TOTP | v0.2 |
-| **PWA** (installable web app) | v0.2 |
-| **Homebrew formula** | v0.2 |
-| **SLSA Level 3 provenance + cosign binary signing** | v0.2 |
-| **14-language i18n** (full Arabic RTL, CJK, etc.) | v0.2 |
+| **Internet mode** with autocert + password + TOTP | v0.3 |
+| **PWA** (installable web app) | v0.3 |
+| **Homebrew formula** | v0.3 |
+| **SLSA Level 3 provenance + cosign binary signing** | v0.3 |
+| **14-language i18n** (full Arabic RTL, CJK, etc.) | v0.3 |
 | **External security audit** + bug bounty program | v1.0 |
 
 **Want to help push a feature from beta → ready, or from roadmap → beta?** [Open an issue](../../issues/new) or [start a discussion](../../discussions). This project thrives on contribution.

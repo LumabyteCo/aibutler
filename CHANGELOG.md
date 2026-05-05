@@ -193,9 +193,143 @@ channels, and help shape the roadmap.
 
 ---
 
+## [0.2.0] — 2026-05-05
+
+### Native OS scripting (Tier 2)
+
+The biggest theme of this release. Agents can now drive macOS apps via
+AppleScript, Linux desktops via D-Bus, and continue to drive Windows
+via PowerShell — all through one cross-OS dispatcher.
+
+- **AppleScript executor** (`shell.applescript`) — `osascript -e` wrapper
+  with allowlist + timeout + output cap. Allowlist supports both
+  bare verb (`tell`) and target-app patterns (`tell:Mail`,
+  `tell:Music*`, `tell:*`).
+- **macOS Shortcuts runner** (`shell.shortcuts`) — invokes named
+  Apple Shortcuts with optional stdin input.
+- **D-Bus client** (`shell.dbus`) — Linux method-call client with
+  4-part `service:path:interface:method` allowlist patterns and
+  wildcards. Pure Go via `github.com/godbus/dbus/v5`, no CGO.
+- **Cross-OS dispatcher** (`shell.script`) — agent provides per-OS
+  payloads (`{"darwin": {...}, "linux": {...}, "windows": {...}}`);
+  the dispatcher routes by `runtime.GOOS`.
+- **Out-of-box default allowlists** — opt-in via
+  `Configurations.Security.Shell.UseDefaultAllowlist` for system
+  notifications, MPRIS media controls, common AppleScript verbs.
+
+### Mission engine
+
+A new orchestration runtime for long-running goals. Persistent,
+inspectable, controllable.
+
+- **Mission state machine** — `created → planned → running ⇄ waiting_user
+  → completed/failed/cancelled` with strict transition enforcement.
+- **Persistence** — three new SQLite tables (`missions`,
+  `mission_steps`, `mission_events`) added by migration 021. Missions
+  survive process restart.
+- **Manager API + tools** — `mission.create`, `mission.list`,
+  `mission.get`, `mission.events`, `mission.interrupt`
+  (pause/resume/cancel).
+- **Reliable bus delivery** — new `PublishReliable` /
+  `SubscribeReliable` alongside the existing best-effort pair.
+  Bounded retry, ack-on-receipt, sentinel error types
+  (`ErrNoSubscribers` / `ErrAckTimeout` / `ErrAllNacked`).
+- **Supervisor + Worker agents** — Supervisor drives a planned mission
+  to completion by dispatching plan steps to Workers via the reliable
+  bus and aggregating results. External-state recheck between steps
+  picks up pause/cancel from `mission.interrupt`.
+- **`aibutler mode mission`** — runtime polls for planned missions
+  and spawns supervisor + worker pairs (concurrent missions capped
+  at 4 by default).
+- **LLM-backed task executor** — wraps the existing agent loop. Each
+  step runs through the configured model adapter with the tool
+  dispatcher and a per-step budget cap (default $0.50).
+- **Mission dashboard backend** — read-only HTTP endpoints under
+  `/api/dashboard/missions`: list, detail (with steps + events),
+  events stream, stats summary.
+
+See [docs/agents/MISSIONS.md](docs/agents/MISSIONS.md) for the full
+lifecycle, bus protocol, and tool reference.
+
+### Vision and multimodal
+
+- **Vision-capable model adapters** — new `agent.Image` type plumbed
+  through the OpenAI-compatible adapter (Ollama vision, GPT-4o,
+  LM Studio, vLLM) AND the Anthropic Claude adapter. Supports both
+  base64 and URL sources. Validated end-to-end against `qwen3-vl:8b`
+  on Ollama (synthetic 400×400 PNG → correct colour + shape
+  identification in 7.7s).
+
+### Computer-use primitives
+
+Building blocks for the on-your-computer assistant story.
+
+- **Clipboard tool** — `clipboard.read` / `clipboard.write`.
+  Cross-platform via `pbcopy`/`pbpaste` (macOS), `wl-clipboard` or
+  `xclip` (Linux), `clip.exe` + `Get-Clipboard` (Windows). Privacy:
+  read records byte-count only, never content.
+- **`wait.until` primitive** — block until one of `file_exists`,
+  `process_running`, `port_open`, `http_ready`, or `duration` is
+  satisfied. Per-attempt timeout, bounded poll interval, ctx
+  cancellation honoured.
+- **`cost.forecast` tool** — pre-action USD/token estimate for a
+  planned model call. Pluggable pricing table with starter Anthropic
+  prices and free-local prefix detection (ollama, lmstudio, vllm,
+  llamacpp).
+- **macOS permission wizard** — `permissions.check` probes Automation
+  (System Events, Finder) and Screen Recording, returns deep-links to
+  the relevant System Settings panel for any denied entries.
+- **Just-in-time credential broker** — `vault.request` issues stored
+  credentials to agents on demand with audit trail. Default-deny
+  posture; explicit auto-approval list per credential
+  (`Configurations.Vault.Request.AutoApprovedKeys`).
+- **Action recording** — fine-grained per-call audit log (new
+  `actions` SQLite table from migration 020) for AppleScript, D-Bus,
+  Shortcuts, PowerShell, clipboard. Credential patterns
+  auto-redacted in both payload and result fields before storage.
+
+### Other
+
+- Worker dispatch ack now happens on receipt rather than after
+  executor completion — supervisor's reliable-publish budget no
+  longer needs to cover the worst-case worker runtime.
+- AppleScript and D-Bus executors emit one Action row per call when a
+  recorder is attached; payload auto-redacted via the audit pipeline.
+- `godbus/dbus/v5` promoted from indirect to direct dependency.
+
+### Schema migrations
+
+- **020** — `actions` table (action recording)
+- **021** — `missions`, `mission_steps`, `mission_events` tables
+
+Upgrade path verified: 19 → 20 → 21 with clean rollback at each step.
+
+### Scoped follow-ups (intentionally not in v0.2)
+
+The mission engine architecture supports several capabilities that are
+not yet wired into the v0.2 supervisor:
+
+- **Replanning on step failure** — today a failed step fails the
+  whole mission; substituting a different worker or adjusting inputs
+  is a follow-up.
+- **Mid-mission user-confirmation prompts** — `mission.interrupt
+  action=pause` is the manual equivalent today.
+- **Parallel step dispatch** — the supervisor walks steps sequentially
+  even when `depends_on` would allow concurrency.
+- **Manager tier** — the 3-level supervisor → manager → worker
+  hierarchy ships as 2-level (supervisor → worker) in v0.2.
+
+The 5-tier automation framework (Tier 0 native API, Tier 1 MCP,
+Tier 2 native scripting, Tier 3 accessibility, Tier 4 vision + input)
+ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
+(vision-driven mouse/keyboard) are v0.3+ work.
+
+---
+
 ## [Unreleased]
 
 Changes in `main` that haven't been released yet will be tracked here.
 
 [0.1.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.1.0
-[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.0
+[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.2.0...HEAD
