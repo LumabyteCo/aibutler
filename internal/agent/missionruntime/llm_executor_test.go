@@ -183,7 +183,7 @@ func TestLLMExecutor_PluggedIntoRuntime(t *testing.T) {
 	exec, err := missionruntime.NewLLMExecutor(missionruntime.LLMExecutorConfig{
 		Model:       model,
 		Tools:       stubTools{},
-		StepTimeout: 2 * time.Second,
+		StepTimeout: 5 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -198,11 +198,16 @@ func TestLLMExecutor_PluggedIntoRuntime(t *testing.T) {
 	m, _ := mgr.Create(ctx, "test", "", 0)
 	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{{Task: "step 1"}})
 
-	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Generous deadline: locally the mission completes in ~100ms but
+	// under -race + heavy parallel CI load (the FAIL on the v0.2 push
+	// was at 3.03s — over the old 3s deadline), we need much more
+	// headroom. The runCtx and inner deadline are matched so we don't
+	// kill the runtime before the assertion can fire.
+	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	go func() { _ = rt.Start(runCtx) }()
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(12 * time.Second)
 	for time.Now().Before(deadline) {
 		got, _ := store.GetMission(ctx, m.ID)
 		if got.State == mission.StateCompleted {
