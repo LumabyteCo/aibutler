@@ -40,6 +40,9 @@ func newTestStore(t *testing.T) (mission.Store, *mission.Manager) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// :memory: SQLite is per-connection — pin to a single connection
+	// so the supervisor + worker goroutines all see the same database.
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.Exec(missionSchema); err != nil {
 		t.Fatal(err)
