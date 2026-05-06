@@ -193,6 +193,33 @@ channels, and help shape the roadmap.
 
 ---
 
+## [0.2.1] — 2026-05-06
+
+Patch release. No product behaviour changes — CI / test infrastructure
+fixes plus one dependency bump caught while shipping v0.2.0.
+
+### Fixed
+
+- **Test infrastructure: pinned in-memory SQLite to a single connection**
+  (`db.SetMaxOpenConns(1)`) in mission and supervisor tests. The
+  `database/sql` connection pool was handing fresh empty `:memory:`
+  databases to runtime poll goroutines under `-race` + heavy parallel
+  CI load, causing "no such table" flakes that masquerade as test
+  timeouts. Locally the Go scheduler hid the bug; on Linux CI it
+  surfaced reliably. (74c3610, 1ca121b)
+
+### Dependencies
+
+- Bumped `github.com/pelletier/go-toml/v2` from 2.3.0 to 2.3.1
+  (Dependabot, PR #2).
+
+### Other
+
+- Enabled Dependency Graph + vulnerability alerts on the repo. Future
+  Dependabot PRs no longer fail the `Dependency Review` Action.
+
+---
+
 ## [0.2.0] — 2026-05-05
 
 ### Native OS scripting (Tier 2)
@@ -332,4 +359,5 @@ Changes in `main` that haven't been released yet will be tracked here.
 
 [0.1.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.1.0
 [0.2.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.0
-[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.2.0...HEAD
+[0.2.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.1
+[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.2.1...HEAD
