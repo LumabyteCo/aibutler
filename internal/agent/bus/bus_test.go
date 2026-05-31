@@ -341,7 +341,7 @@ func TestReliableMessage_AckThenNack_FirstWins(t *testing.T) {
 	}
 }
 
-func TestUnsubscribeReliable_RemovesAndCloses(t *testing.T) {
+func TestUnsubscribeReliable_RemovesFromTopic(t *testing.T) {
 	b := New()
 	ch := b.SubscribeReliable("topic")
 
@@ -351,10 +351,21 @@ func TestUnsubscribeReliable_RemovesAndCloses(t *testing.T) {
 
 	b.UnsubscribeReliable("topic", ch)
 
-	// Channel should be closed.
-	_, open := <-ch
-	if open {
-		t.Error("channel should be closed after Unsubscribe")
+	// Topic should be gone from the subscriber map.
+	if got := b.ReliableTopicCount(); got != 0 {
+		t.Errorf("ReliableTopicCount after Unsubscribe = %d, want 0", got)
+	}
+
+	// Publish to the now-empty topic should report ErrNoSubscribers
+	// rather than reaching the previously-subscribed channel. (The
+	// channel is intentionally NOT closed — closing it would race with
+	// concurrent in-flight publishes; subscribers exit on their own ctx
+	// and the chan is reclaimed by GC.)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := b.PublishReliable(ctx, "topic", "x", "y", ReliableOpts{})
+	if !errors.Is(err, ErrNoSubscribers) {
+		t.Errorf("PublishReliable after Unsubscribe = %v, want ErrNoSubscribers", err)
 	}
 }
 

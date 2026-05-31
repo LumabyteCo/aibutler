@@ -208,9 +208,17 @@ func (b *Bus) SubscribeReliable(topic string) <-chan ReliableMessage {
 	return ch
 }
 
-// UnsubscribeReliable removes a reliable subscription and closes the channel.
+// UnsubscribeReliable removes a reliable subscription from the topic.
 // Pending acks from this subscriber are lost — pending PublishReliable
 // calls treat that as a timeout and may retry.
+//
+// The subscription channel is NOT closed. Closing it here would race
+// with concurrent PublishReliable goroutines that snapshot the
+// subscriber slice under read-lock and then send on the chan after
+// releasing the lock — closing the chan during the send window panics
+// the publisher and trips the race detector. Subscribers must exit on
+// their own context; the channel is garbage-collected once both the
+// subscriber goroutine and the bus drop their references.
 func (b *Bus) UnsubscribeReliable(topic string, ch <-chan ReliableMessage) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -218,7 +226,9 @@ func (b *Bus) UnsubscribeReliable(topic string, ch <-chan ReliableMessage) {
 	for i, sub := range subs {
 		if sub == ch {
 			b.reliableSubs[topic] = append(subs[:i], subs[i+1:]...)
-			close(sub)
+			if len(b.reliableSubs[topic]) == 0 {
+				delete(b.reliableSubs, topic)
+			}
 			return
 		}
 	}
@@ -373,9 +383,14 @@ func (b *Bus) SubscribeCompeting(topic string) <-chan ReliableMessage {
 	return ch
 }
 
-// UnsubscribeCompeting removes a competing-consumer subscription and
-// closes the channel. Any pending message that hadn't been acked is
-// treated as lost — the publisher's outer retry loop handles it.
+// UnsubscribeCompeting removes a competing-consumer subscription from
+// the topic. Any pending message that hadn't been acked is treated as
+// lost — the publisher's outer retry loop handles it.
+//
+// As with UnsubscribeReliable, the subscription channel is NOT closed
+// (same rationale: closing races with concurrent PublishCompeting
+// goroutines that already snapshot the subscriber slice). Subscribers
+// must exit on their own context.
 func (b *Bus) UnsubscribeCompeting(topic string, ch <-chan ReliableMessage) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -383,7 +398,9 @@ func (b *Bus) UnsubscribeCompeting(topic string, ch <-chan ReliableMessage) {
 	for i, sub := range subs {
 		if sub == ch {
 			b.competingSubs[topic] = append(subs[:i], subs[i+1:]...)
-			close(sub)
+			if len(b.competingSubs[topic]) == 0 {
+				delete(b.competingSubs, topic)
+			}
 			return
 		}
 	}
