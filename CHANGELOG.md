@@ -353,7 +353,7 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
-## [Unreleased]
+## [0.2.2] — 2026-05-31
 
 ### Added — Parallel mission execution
 
@@ -374,8 +374,11 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
   `bus.PublishCompeting` / `bus.UnsubscribeCompeting`. Each
   `PublishCompeting` message lands on EXACTLY ONE subscriber in the
   competing group; per-publish shuffle gives fair load distribution;
-  busy peers (buffer-of-1) fall through to ready peers via
-  `SendTimeout`. Independent of the existing broadcast
+  busy peers fall through to ready peers via `SendTimeout`.
+  Subscriber channels are unbuffered, so a send only completes when
+  a subscriber is actively waiting in its receive select — clean
+  "busy peer skipped" semantics with no queueing behind an already-
+  busy worker. Independent of the existing broadcast
   `PublishReliable` / `SubscribeReliable` — same topic can have both
   kinds of subscribers, and a competing publish does NOT reach
   broadcast subscribers (and vice versa).
@@ -390,7 +393,8 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 - **Real wall-clock parallel execution.** With N workers competing for
   dispatched tasks, independent steps run concurrently. Verified by
   test: 3 independent steps × 200 ms each with 3 workers complete in
-  ~420 ms wall-clock vs ~600 ms sequential.
+  ~220–370 ms wall-clock (best vs worst shuffle luck) vs ~600 ms
+  sequential. CI-safe assertion bound is < 500 ms.
 
 ### Notes
 
@@ -402,4 +406,4 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 [0.1.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.1.0
 [0.2.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.0
 [0.2.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.1
-[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.2.1...HEAD
+[0.2.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.2

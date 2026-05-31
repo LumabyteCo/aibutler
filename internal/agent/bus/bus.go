@@ -483,9 +483,11 @@ func (b *Bus) tryPublishCompeting(ctx context.Context, msgID, topic, from, paylo
 			once:    &sync.Once{},
 		}
 
-		// Try to enqueue with a bounded send-timeout. If the subscriber's
-		// buffer is full (already processing prior work — buffer-of-1
-		// guarantees only one in-flight at a time), skip to the next.
+		// Try to enqueue with a bounded send-timeout. Subscriber channels
+		// in the competing path are unbuffered, so the send only
+		// completes when a subscriber is actively waiting in its receive
+		// select. A busy peer therefore lets the timer fire and we skip
+		// to the next candidate.
 		sendTimer := time.NewTimer(opts.SendTimeout)
 		var enqueued bool
 		select {
