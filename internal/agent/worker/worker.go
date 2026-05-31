@@ -96,8 +96,13 @@ func (w *Worker) Run(ctx context.Context, missionID string) error {
 	dispatchTopic := "mission." + missionID + ".dispatch"
 	eventsTopic := "mission." + missionID + ".events"
 
-	in := w.bus.SubscribeReliable(dispatchTopic)
-	defer w.bus.UnsubscribeReliable(dispatchTopic, in)
+	// Subscribe as a competing consumer — each dispatched task should
+	// reach EXACTLY ONE worker in the pool, not be broadcast to every
+	// worker (which would duplicate the executor's work). The bus's
+	// competing-consumer mode handles fair distribution via per-publish
+	// shuffle + buffer-of-1 send semantics.
+	in := w.bus.SubscribeCompeting(dispatchTopic)
+	defer w.bus.UnsubscribeCompeting(dispatchTopic, in)
 
 	for {
 		select {

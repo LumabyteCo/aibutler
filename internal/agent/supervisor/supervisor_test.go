@@ -477,6 +477,73 @@ func TestRun_Parallel_Deadlock_DanglingDependency(t *testing.T) {
 	}
 }
 
+// TestRun_Parallel_ConcurrentWorkers_AchievesWallClockParallelism
+// verifies that with competing-consumer dispatch and multiple workers
+// in the pool, independent steps actually execute concurrently. With
+// 3 workers and 3 independent steps × 200ms each, sequential
+// execution would take ~600ms; concurrent execution should be much
+// closer to ~200ms.
+func TestRun_Parallel_ConcurrentWorkers_AchievesWallClockParallelism(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "real-parallel", "", 0)
+	const stepDelay = 200 * time.Millisecond
+	if err := mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
+		{Task: "A"}, {Task: "B"}, {Task: "C"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	b := bus.New()
+
+	executor := func(ctx context.Context, _ worker.Task) (string, error) {
+		select {
+		case <-time.After(stepDelay):
+		case <-ctx.Done():
+		}
+		return "ok", nil
+	}
+
+	// Spin up three workers, all competing for dispatched tasks.
+	for i := 0; i < 3; i++ {
+		w := worker.New(b, "w-"+string(rune('A'+i)), executor)
+		wctx, wcancel := context.WithCancel(ctx)
+		defer wcancel()
+		go func() { _ = w.Run(wctx, m.ID) }()
+	}
+	// Let all three subscribe before the supervisor starts dispatching.
+	time.Sleep(100 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+
+	start := time.Now()
+	if err := s.Run(ctx, m.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("state = %s, want completed", got.State)
+	}
+
+	// Sequential would take 3 × stepDelay = 600ms. Real wall-clock
+	// parallelism should complete in ~stepDelay plus some bus and
+	// scheduling overhead — best case ~220ms locally, worst case
+	// ~370ms when shuffle picks busy peers first and falls through
+	// via SendTimeout. Allow a generous CI-safe bound at 500ms:
+	// anything under that demonstrates parallelism vs sequential's
+	// 600ms floor.
+	if elapsed >= 500*time.Millisecond {
+		t.Errorf("expected parallel wall-clock < 500ms with 3 workers × %s each, got %s",
+			stepDelay, elapsed)
+	}
+	t.Logf("3 independent steps × %s with 3 workers: %s wall-clock", stepDelay, elapsed)
+}
+
 // TestSetPlanParallel_PersistsFlag verifies the Plan.Parallel flag
 // round-trips through the plan JSON.
 func TestSetPlanParallel_PersistsFlag(t *testing.T) {

@@ -183,12 +183,13 @@ A plan with a dangling `DependsOn` reference (the named step
 doesn't exist) is detected as a deadlock and fails the mission with
 a clear error rather than hanging.
 
-Real wall-clock parallelism currently requires multiple cooperating
-workers — the bus broadcasts each dispatch to every subscriber, so
-gains depend on workers handling distinct in-flight tasks
-concurrently. The supervisor-side concurrency shipped in this
-release is the prerequisite for those follow-up worker-side
-improvements.
+Wall-clock parallelism: each dispatched task lands on exactly ONE
+worker in the pool (competing-consumer delivery) rather than being
+broadcast to every worker. With N workers and N independent steps,
+all N steps run concurrently. With more steps than workers, work
+queues fairly as workers free up. Per-call shuffle in the bus
+distributes load across the pool; busy workers fall through to peers
+via the publish's SendTimeout.
 
 ## What's not in this revision
 
@@ -208,6 +209,8 @@ intentionally deferred:
 - **Manager tier (3-level hierarchy).** Workers report directly to the
   supervisor today. A manager layer between them, owning sub-domains,
   is part of the eventual hierarchy.
-- **Competing-consumer bus / per-worker concurrent handling.** Required
-  for `SetPlanParallel` to translate into true wall-clock parallelism
-  rather than just supervisor-side dispatch concurrency.
+- **Per-worker concurrent handling.** Each worker still handles one
+  task at a time within its own goroutine — competing-consumer
+  delivery distributes work across the pool, but a single worker
+  doesn't fan out further. Long-tail tasks could in principle be
+  handled in goroutines within one worker; that's a follow-up.

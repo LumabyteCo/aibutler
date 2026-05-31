@@ -69,7 +69,7 @@ func TestRun_ProcessesTaskAndPublishesResult(t *testing.T) {
 
 	// Dispatch a task.
 	taskJSON, _ := json.Marshal(Task{StepID: "step-1", MissionID: "M1", Task: "do thing"})
-	if err := b.PublishReliable(ctx, "mission.M1.dispatch", "supervisor", string(taskJSON), bus.ReliableOpts{
+	if err := b.PublishCompeting(ctx, "mission.M1.dispatch", "supervisor", string(taskJSON), bus.ReliableOpts{
 		Timeout: 1 * time.Second,
 	}); err != nil {
 		t.Fatalf("dispatch publish: %v", err)
@@ -123,7 +123,7 @@ func TestRun_ExecutorErrorBecomesFailedResult(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	taskJSON, _ := json.Marshal(Task{StepID: "step-1", MissionID: "M2", Task: "x"})
-	_ = b.PublishReliable(ctx, "mission.M2.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 1 * time.Second})
+	_ = b.PublishCompeting(ctx, "mission.M2.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 1 * time.Second})
 
 	var result Result
 	select {
@@ -157,7 +157,7 @@ func TestRun_MalformedPayload_AcksAndPublishesError(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Send NOT JSON.
-	if err := b.PublishReliable(ctx, "mission.M3.dispatch", "sup", "not json", bus.ReliableOpts{Timeout: 1 * time.Second}); err != nil {
+	if err := b.PublishCompeting(ctx, "mission.M3.dispatch", "sup", "not json", bus.ReliableOpts{Timeout: 1 * time.Second}); err != nil {
 		t.Fatalf("dispatch (malformed): %v", err)
 	}
 
@@ -225,7 +225,7 @@ func TestRun_HandlesMultipleTasks_Sequentially(t *testing.T) {
 
 	for _, stepID := range []string{"a", "b", "c"} {
 		taskJSON, _ := json.Marshal(Task{StepID: stepID, MissionID: "MX", Task: "x"})
-		_ = b.PublishReliable(ctx, "mission.MX.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 1 * time.Second})
+		_ = b.PublishCompeting(ctx, "mission.MX.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 1 * time.Second})
 	}
 
 	// Drain 3 result events.

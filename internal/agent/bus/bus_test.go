@@ -428,3 +428,176 @@ func TestReliableOpts_ClampedToSafeRange(t *testing.T) {
 		t.Errorf("MaxAttempts should be clamped at 10, got %d nacks", got)
 	}
 }
+
+
+// --- Competing-consumer (queue-group) tests ---
+
+func TestCompeting_SingleSubscriberReceives(t *testing.T) {
+	b := New()
+	sub := b.SubscribeCompeting("work")
+	defer b.UnsubscribeCompeting("work", sub)
+
+	got := make(chan ReliableMessage, 1)
+	go func() {
+		msg := <-sub
+		msg.Ack()
+		got <- msg
+	}()
+
+	if err := b.PublishCompeting(context.Background(), "work", "pub", "hello",
+		ReliableOpts{Timeout: 1 * time.Second}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	select {
+	case msg := <-got:
+		if msg.Payload != "hello" {
+			t.Errorf("payload = %q, want hello", msg.Payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for delivery")
+	}
+}
+
+func TestCompeting_ExactlyOneSubscriberPerMessage(t *testing.T) {
+	b := New()
+	const N = 3
+
+	var counts [N]atomic.Int32
+	subs := make([]<-chan ReliableMessage, N)
+	for i := 0; i < N; i++ {
+		ch := b.SubscribeCompeting("pool")
+		subs[i] = ch
+		idx := i
+		go func() {
+			for msg := range ch {
+				counts[idx].Add(1)
+				msg.Ack()
+			}
+		}()
+	}
+	defer func() {
+		for _, ch := range subs {
+			b.UnsubscribeCompeting("pool", ch)
+		}
+	}()
+
+	// Publish 12 messages.
+	for i := 0; i < 12; i++ {
+		if err := b.PublishCompeting(context.Background(), "pool", "pub",
+			"msg", ReliableOpts{Timeout: 1 * time.Second}); err != nil {
+			t.Fatalf("publish %d: %v", i, err)
+		}
+	}
+
+	// Wait for any in-flight goroutines to finish processing.
+	time.Sleep(100 * time.Millisecond)
+
+	total := int32(0)
+	for i := 0; i < N; i++ {
+		total += counts[i].Load()
+	}
+	if total != 12 {
+		t.Errorf("total deliveries = %d, want 12 (exactly one per message)", total)
+	}
+	// Fair distribution: each subscriber should have at least one
+	// message (shuffle on every publish).
+	for i := 0; i < N; i++ {
+		if counts[i].Load() == 0 {
+			t.Errorf("subscriber %d received 0 messages; shuffle did not distribute fairly", i)
+		}
+	}
+}
+
+func TestCompeting_NoSubscribers(t *testing.T) {
+	b := New()
+	err := b.PublishCompeting(context.Background(), "vacant", "pub", "hi",
+		ReliableOpts{Timeout: 200 * time.Millisecond})
+	if !errors.Is(err, ErrNoSubscribers) {
+		t.Errorf("expected ErrNoSubscribers, got %v", err)
+	}
+}
+
+func TestCompeting_BusySubscriberFallsThroughToPeer(t *testing.T) {
+	b := New()
+
+	// Subscriber 1: holds the message without acking (simulates busy).
+	busy := b.SubscribeCompeting("pool")
+	go func() {
+		msg := <-busy
+		// Hold it — never ack within the publish timeout.
+		time.Sleep(2 * time.Second)
+		msg.Ack()
+	}()
+	defer b.UnsubscribeCompeting("pool", busy)
+
+	// Subscriber 2: ready and willing.
+	ready := b.SubscribeCompeting("pool")
+	delivered := make(chan struct{}, 1)
+	go func() {
+		for msg := range ready {
+			msg.Ack()
+			delivered <- struct{}{}
+		}
+	}()
+	defer b.UnsubscribeCompeting("pool", ready)
+
+	// First publish may land on the busy subscriber (the buffer
+	// accepts it, but no ack). Second publish should fall through to
+	// the ready subscriber — but only when the bus exhausts the first
+	// peer in the same attempt. Use a short ack timeout so the bus
+	// skips ahead.
+	err1 := b.PublishCompeting(context.Background(), "pool", "pub", "a",
+		ReliableOpts{Timeout: 150 * time.Millisecond, MaxAttempts: 2, SendTimeout: 50 * time.Millisecond})
+	err2 := b.PublishCompeting(context.Background(), "pool", "pub", "b",
+		ReliableOpts{Timeout: 150 * time.Millisecond, MaxAttempts: 2, SendTimeout: 50 * time.Millisecond})
+
+	// At least one of the two publishes must have reached the ready
+	// subscriber (the busy one only takes one before its buffer fills).
+	select {
+	case <-delivered:
+		// OK
+	case <-time.After(time.Second):
+		t.Fatalf("ready subscriber never received; err1=%v err2=%v", err1, err2)
+	}
+}
+
+func TestCompeting_CompetingTopicCount(t *testing.T) {
+	b := New()
+	if b.CompetingTopicCount() != 0 {
+		t.Errorf("expected 0 topics initially, got %d", b.CompetingTopicCount())
+	}
+	a := b.SubscribeCompeting("topic-a")
+	c := b.SubscribeCompeting("topic-b")
+	defer b.UnsubscribeCompeting("topic-a", a)
+	defer b.UnsubscribeCompeting("topic-b", c)
+	if got := b.CompetingTopicCount(); got != 2 {
+		t.Errorf("expected 2 topics after 2 subs, got %d", got)
+	}
+}
+
+func TestCompeting_BroadcastAndCompetingAreIndependent(t *testing.T) {
+	b := New()
+	bcastCh := b.SubscribeReliable("split")
+	compCh := b.SubscribeCompeting("split")
+	defer b.UnsubscribeReliable("split", bcastCh)
+	defer b.UnsubscribeCompeting("split", compCh)
+
+	// PublishCompeting goes only to competing subscribers.
+	go func() {
+		msg := <-compCh
+		msg.Ack()
+	}()
+	if err := b.PublishCompeting(context.Background(), "split", "pub", "for-competing",
+		ReliableOpts{Timeout: 500 * time.Millisecond}); err != nil {
+		t.Fatalf("PublishCompeting: %v", err)
+	}
+	// Broadcast subscriber must NOT have received it.
+	select {
+	case msg := <-bcastCh:
+		msg.Ack()
+		t.Errorf("broadcast subscriber received a competing-publish message: %s", msg.Payload)
+	case <-time.After(100 * time.Millisecond):
+		// Good — broadcast channel stayed empty.
+	}
+}
+

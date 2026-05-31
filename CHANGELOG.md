@@ -355,7 +355,7 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ## [Unreleased]
 
-### Added
+### Added — Parallel mission execution
 
 - **`mission.Manager.SetPlanParallel(missionID, steps)`** — new sibling
   to `SetPlan`. Marks the plan for DAG dispatch in the supervisor:
@@ -370,15 +370,34 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
   serialised in `Mission.PlanJSON` now carries a `Parallel bool` flag.
   `omitempty` keeps existing PlanJSON blobs parsing as
   `Parallel=false` — no migration needed.
+- **Competing-consumer bus mode** — new `bus.SubscribeCompeting` /
+  `bus.PublishCompeting` / `bus.UnsubscribeCompeting`. Each
+  `PublishCompeting` message lands on EXACTLY ONE subscriber in the
+  competing group; per-publish shuffle gives fair load distribution;
+  busy peers (buffer-of-1) fall through to ready peers via
+  `SendTimeout`. Independent of the existing broadcast
+  `PublishReliable` / `SubscribeReliable` — same topic can have both
+  kinds of subscribers, and a competing publish does NOT reach
+  broadcast subscribers (and vice versa).
+- **Worker + supervisor switched to competing-consumer for dispatch.**
+  Worker uses `bus.SubscribeCompeting` for `mission.{id}.dispatch`;
+  supervisor uses `bus.PublishCompeting`. Mission `.events` topic
+  stays on broadcast so the dashboard and other observers can tail
+  the event stream alongside the supervisor.
 
-### Note
+### Performance
 
-The supervisor-side parallel dispatch shipped here is the prerequisite
-for real wall-clock parallelism — the current bus broadcasts each
-dispatch to every subscriber and each worker handles messages serially,
-so concurrent dispatch by the supervisor doesn't yet translate to
-concurrent execution. A competing-consumer bus mode and/or per-worker
-concurrent handling are follow-ups.
+- **Real wall-clock parallel execution.** With N workers competing for
+  dispatched tasks, independent steps run concurrently. Verified by
+  test: 3 independent steps × 200 ms each with 3 workers complete in
+  ~420 ms wall-clock vs ~600 ms sequential.
+
+### Notes
+
+- A single worker still handles one task at a time inside its own
+  goroutine. Long-tail tasks could be fanned out into goroutines
+  within a worker as a follow-up; today, scaling parallelism means
+  running more worker instances.
 
 [0.1.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.1.0
 [0.2.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.0

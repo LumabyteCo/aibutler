@@ -25,6 +25,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	mathrand "math/rand/v2"
 	"sync"
 	"time"
 )
@@ -113,16 +114,18 @@ var (
 
 // Bus is a publish-subscribe message bus for agent-to-agent communication.
 type Bus struct {
-	mu           sync.RWMutex
-	subscribers  map[string][]chan Message
-	reliableSubs map[string][]chan ReliableMessage
+	mu            sync.RWMutex
+	subscribers   map[string][]chan Message
+	reliableSubs  map[string][]chan ReliableMessage
+	competingSubs map[string][]chan ReliableMessage
 }
 
 // New creates a new message bus.
 func New() *Bus {
 	return &Bus{
-		subscribers:  make(map[string][]chan Message),
-		reliableSubs: make(map[string][]chan ReliableMessage),
+		subscribers:   make(map[string][]chan Message),
+		reliableSubs:  make(map[string][]chan ReliableMessage),
+		competingSubs: make(map[string][]chan ReliableMessage),
 	}
 }
 
@@ -340,6 +343,198 @@ func (b *Bus) tryPublishReliable(ctx context.Context, msgID, topic, from, payloa
 		}
 	}
 	return ErrAllNacked
+}
+
+// --- Competing-consumer (queue group) delivery ---
+
+// SubscribeCompeting registers a channel as one consumer in the
+// competing-consumer group for the given topic. When the publisher
+// calls PublishCompeting, the message is delivered to EXACTLY ONE
+// subscriber in the group — the first one to ack wins. Other peers
+// don't see the message at all.
+//
+// This is the right model for "fan-out work to a pool" — e.g. mission
+// dispatch where multiple workers compete for incoming tasks. Use
+// SubscribeReliable when every subscriber should see every message
+// (broadcast model — e.g. event tailing in the dashboard).
+//
+// The channel is intentionally UNBUFFERED. With any buffer at all,
+// supervisor-side dispatch concurrency would queue work onto whichever
+// subscriber the bus picked first — even if that subscriber is busy
+// processing a prior message — leaving peers idle. Unbuffered + the
+// publish-side SendTimeout gives clean "busy peer skipped, try next"
+// semantics: the supervisor's send only completes when a subscriber is
+// actively waiting in its receive select (i.e. truly idle).
+func (b *Bus) SubscribeCompeting(topic string) <-chan ReliableMessage {
+	ch := make(chan ReliableMessage)
+	b.mu.Lock()
+	b.competingSubs[topic] = append(b.competingSubs[topic], ch)
+	b.mu.Unlock()
+	return ch
+}
+
+// UnsubscribeCompeting removes a competing-consumer subscription and
+// closes the channel. Any pending message that hadn't been acked is
+// treated as lost — the publisher's outer retry loop handles it.
+func (b *Bus) UnsubscribeCompeting(topic string, ch <-chan ReliableMessage) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	subs := b.competingSubs[topic]
+	for i, sub := range subs {
+		if sub == ch {
+			b.competingSubs[topic] = append(subs[:i], subs[i+1:]...)
+			close(sub)
+			return
+		}
+	}
+}
+
+// PublishCompeting sends a message with at-least-once semantics to
+// EXACTLY ONE subscriber in the competing-consumer group for the topic.
+// The publisher iterates subscribers in a per-call randomised order
+// (so over many publishes the load distributes fairly) and stops at
+// the first ack.
+//
+// Errors:
+//   - ErrNoSubscribers — no competing subscribers exist at publish time.
+//   - ErrAckTimeout    — every subscriber either had a full buffer
+//                        (busy with a prior message) or accepted but
+//                        didn't ack within opts.Timeout.
+//   - ErrAllNacked     — every subscriber explicitly nacked.
+//   - ctx.Err()        — context cancelled mid-publish.
+//
+// The same msgID is reused across the outer retry loop so a subscriber
+// can detect a duplicate if a prior attempt landed mid-process.
+func (b *Bus) PublishCompeting(ctx context.Context, topic, from, payload string, opts ReliableOpts) error {
+	opts = applyReliableDefaults(opts)
+	// Competing-consumer should fall through busy peers quickly. The
+	// broadcast-style 200 ms SendTimeout default would otherwise stall
+	// the dispatch loop on the first busy peer for the same duration
+	// as a typical worker handler, defeating the parallelism. 50 ms
+	// gives ample slack for scheduling jitter while still skipping
+	// busy peers fast.
+	if opts.SendTimeout > 50*time.Millisecond {
+		opts.SendTimeout = 50 * time.Millisecond
+	}
+	msgID := newReliableMsgID()
+
+	var lastErr error
+	for attempt := 0; attempt < opts.MaxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(opts.RetryDelay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		err := b.tryPublishCompeting(ctx, msgID, topic, from, payload, opts)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, ErrNoSubscribers) {
+			return err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		lastErr = err
+	}
+
+	if lastErr == nil {
+		lastErr = ErrAckTimeout
+	}
+	return lastErr
+}
+
+// tryPublishCompeting runs a single attempt. Returns nil on first
+// successful ack, an aggregate error otherwise.
+func (b *Bus) tryPublishCompeting(ctx context.Context, msgID, topic, from, payload string, opts ReliableOpts) error {
+	b.mu.RLock()
+	subs := make([]chan ReliableMessage, len(b.competingSubs[topic]))
+	copy(subs, b.competingSubs[topic])
+	b.mu.RUnlock()
+
+	if len(subs) == 0 {
+		return ErrNoSubscribers
+	}
+
+	// Shuffle for per-call fair distribution. math/rand/v2 is safe for
+	// concurrent use (no global Mutex required) and seeded from the OS.
+	mathrand.Shuffle(len(subs), func(i, j int) { subs[i], subs[j] = subs[j], subs[i] })
+
+	nackCount := 0
+	now := time.Now()
+
+	for _, ch := range subs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Each attempt-per-subscriber gets a fresh reply channel + once
+		// so an earlier subscriber's late ack can't unblock this one.
+		reply := make(chan ackResult, 1)
+		msg := ReliableMessage{
+			ID:      msgID,
+			Topic:   topic,
+			From:    from,
+			Payload: payload,
+			Time:    now,
+			reply:   reply,
+			once:    &sync.Once{},
+		}
+
+		// Try to enqueue with a bounded send-timeout. If the subscriber's
+		// buffer is full (already processing prior work — buffer-of-1
+		// guarantees only one in-flight at a time), skip to the next.
+		sendTimer := time.NewTimer(opts.SendTimeout)
+		var enqueued bool
+		select {
+		case ch <- msg:
+			enqueued = true
+		case <-sendTimer.C:
+			// busy peer; try next
+		case <-ctx.Done():
+			sendTimer.Stop()
+			return ctx.Err()
+		}
+		sendTimer.Stop()
+		if !enqueued {
+			continue
+		}
+
+		// Wait for this subscriber to ack/nack.
+		ackTimer := time.NewTimer(opts.Timeout)
+		select {
+		case res := <-reply:
+			ackTimer.Stop()
+			if res.ok {
+				return nil
+			}
+			nackCount++
+		case <-ackTimer.C:
+			// Subscriber didn't ack — they may still process the
+			// message and ack late, in which case the work would happen
+			// twice (the next subscriber gets a publish too). That's
+			// acceptable for at-least-once; handlers should be
+			// idempotent or use msg.ID to deduplicate.
+		case <-ctx.Done():
+			ackTimer.Stop()
+			return ctx.Err()
+		}
+	}
+
+	if nackCount == len(subs) {
+		return ErrAllNacked
+	}
+	return ErrAckTimeout
+}
+
+// CompetingTopicCount returns the number of topics with active
+// competing-consumer subscribers.
+func (b *Bus) CompetingTopicCount() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.competingSubs)
 }
 
 // applyReliableDefaults fills in zero-valued fields with safe defaults

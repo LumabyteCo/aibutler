@@ -231,8 +231,10 @@ func (s *Supervisor) runParallel(
 			ready = readyForDispatch(steps, byID, completed, failed, inFlight)
 		}
 
-		// Dispatch every ready step. PublishReliable is fast (worker
-		// acks on receipt now), so doing this in a tight loop is fine.
+		// Dispatch every ready step via PublishCompeting — each lands
+		// on exactly one worker. Buffer-of-1 + per-publish shuffle in
+		// the bus give fair distribution across the worker pool;
+		// busy workers fall through to peers via SendTimeout.
 		for _, step := range ready {
 			step.State = mission.StateRunning
 			now := time.Now()
@@ -250,7 +252,7 @@ func (s *Supervisor) runParallel(
 			if err != nil {
 				return fmt.Errorf("supervisor: parallel marshal task: %w", err)
 			}
-			if err := s.bus.PublishReliable(missionCtx, dispatchTopic, s.agentID, string(taskPayload), s.DispatchOpts); err != nil {
+			if err := s.bus.PublishCompeting(missionCtx, dispatchTopic, s.agentID, string(taskPayload), s.DispatchOpts); err != nil {
 				return fmt.Errorf("supervisor: parallel dispatch %s: %w", step.ID, err)
 			}
 			inFlight[step.ID] = true
@@ -461,7 +463,7 @@ func (s *Supervisor) runStep(
 		return fmt.Errorf("update step running: %w", err)
 	}
 
-	// Dispatch.
+	// Dispatch via competing-consumer — lands on exactly one worker.
 	taskPayload, err := json.Marshal(worker.Task{
 		StepID:    step.ID,
 		MissionID: missionID,
@@ -470,7 +472,7 @@ func (s *Supervisor) runStep(
 	if err != nil {
 		return fmt.Errorf("marshal task: %w", err)
 	}
-	if err := s.bus.PublishReliable(ctx, dispatchTopic, s.agentID, string(taskPayload), s.DispatchOpts); err != nil {
+	if err := s.bus.PublishCompeting(ctx, dispatchTopic, s.agentID, string(taskPayload), s.DispatchOpts); err != nil {
 		return fmt.Errorf("dispatch: %w", err)
 	}
 
