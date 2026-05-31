@@ -18,11 +18,19 @@
 //   3. When all steps complete (or any fails), transition the mission
 //      to its terminal state via the Manager.
 //
-// Failure policy: in both modes, the first step to fail terminates the
-// whole mission. In parallel mode, already-in-flight peer steps are
-// allowed to complete naturally (their results are still processed)
-// but no new steps are dispatched after the failure is observed.
-// Replanning on failure is a separate follow-up.
+// Failure policy:
+//
+//   - SEQUENTIAL mode: if Supervisor.Replanner is set, a failing step
+//     consults it for a replacement sequence. The Replanner returns
+//     new steps which are persisted via Manager.Replan and the loop
+//     continues; up to Supervisor.MaxReplans attempts per mission. If
+//     no Replanner is set, or it returns ErrReplanRejected, or the
+//     attempt cap is exhausted, the supervisor fails the mission.
+//   - PARALLEL mode: the first step to fail terminates the mission.
+//     Replanning under parallel dispatch is a separate follow-up — peer
+//     in-flight steps still get to publish their results, but no
+//     replan attempt is made and no new work is dispatched after the
+//     failure is observed.
 package supervisor
 
 import (
@@ -57,6 +65,27 @@ type Supervisor struct {
 	// StepTimeout caps how long the supervisor waits for one step's
 	// result event before declaring the step failed. Default 30s.
 	StepTimeout time.Duration
+	// Replanner, if non-nil, is consulted in sequential mode when a
+	// step fails. It is asked for a replacement step sequence; on
+	// success the supervisor persists the new steps via Manager.Replan
+	// and continues. nil (the default) preserves the historical
+	// "fail-on-first-failure" behaviour.
+	Replanner Replanner
+	// MaxReplans caps how many times one mission may be replanned
+	// before the supervisor gives up and fails it. Default 3. Has no
+	// effect when Replanner is nil.
+	MaxReplans int
+}
+
+// defaultMaxReplans is the per-mission replan attempt cap when
+// Supervisor.MaxReplans is unset or non-positive.
+const defaultMaxReplans = 3
+
+func (s *Supervisor) maxReplans() int {
+	if s.MaxReplans <= 0 {
+		return defaultMaxReplans
+	}
+	return s.MaxReplans
 }
 
 // New creates a Supervisor.
@@ -136,17 +165,56 @@ func (s *Supervisor) Run(ctx context.Context, missionID string) error {
 // runSequential drives the mission one step at a time, in plan-order.
 // This is the historical default behaviour, used when the plan was set
 // via Manager.SetPlan.
+//
+// When Supervisor.Replanner is set, a failing step triggers a replan
+// attempt: the Replanner is asked for a replacement sequence, those
+// new steps are persisted via Manager.Replan, and the loop continues
+// from the next non-completed step (which is now the first of the
+// replacement set). Up to maxReplans() attempts per mission; after
+// that, or if the Replanner rejects, the mission fails.
+//
+// The step list is re-fetched from the store after every successful
+// replan so the new steps are picked up. The initial `steps` argument
+// is the planned snapshot the caller passed in; on entry it's used
+// directly to avoid an extra round-trip on the common case (no
+// replan needed).
 func (s *Supervisor) runSequential(
 	ctx context.Context, missionID string,
 	steps []mission.Step, stepTimeout time.Duration,
 	dispatchTopic string, events <-chan bus.ReliableMessage,
 ) error {
-	for i := range steps {
-		step := &steps[i]
-		// Skip already-completed steps (resume-after-restart support).
-		if step.State == mission.StateCompleted {
-			continue
+	replanCount := 0
+	current := steps
+
+	for {
+		// Find the first step in the freshest snapshot that is neither
+		// completed nor in a terminal failure state. A failed step from
+		// an earlier replan iteration must be skipped — replanning
+		// leaves it on the audit log but the replacement is the path
+		// forward.
+		idx := -1
+		for i := range current {
+			switch current[i].State {
+			case mission.StateCompleted, mission.StateFailed, mission.StateCancelled:
+				continue
+			}
+			idx = i
+			break
 		}
+		if idx < 0 {
+			// Every step has reached a step-level terminal state. If
+			// any are failed, that's a bug in the loop (the failure
+			// path above should have failed the mission already); if
+			// all are completed, the mission is done.
+			var completedCount int
+			for _, st := range current {
+				if st.State == mission.StateCompleted {
+					completedCount++
+				}
+			}
+			return s.mgr.Complete(ctx, missionID, fmt.Sprintf("%d steps completed", completedCount))
+		}
+		step := &current[idx]
 
 		// External-interrupt check: re-fetch the mission's current state
 		// before each step. If a mission.interrupt tool call has moved it
@@ -160,15 +228,96 @@ func (s *Supervisor) runSequential(
 		stepCtx, cancel := context.WithTimeout(ctx, stepTimeout)
 		err := s.runStep(stepCtx, missionID, step, dispatchTopic, events)
 		cancel()
-		if err != nil {
-			// Step failed — fail the whole mission. Replanning is a
-			// follow-up.
-			_ = s.mgr.Fail(ctx, missionID, fmt.Sprintf("step %s: %v", step.ID, err))
-			return fmt.Errorf("supervisor: step %s: %w", step.ID, err)
+		if err == nil {
+			// Move on. The in-memory step state was already mutated by
+			// runStep, so the next "find non-completed" iteration will
+			// skip it.
+			continue
+		}
+
+		// Step failed. Try to replan if configured.
+		if s.Replanner != nil && replanCount < s.maxReplans() {
+			refreshed, replanErr := s.tryReplan(ctx, missionID, step, err, current, replanCount)
+			if replanErr == nil {
+				replanCount++
+				current = refreshed
+				continue
+			}
+			if !errors.Is(replanErr, ErrReplanRejected) {
+				// A non-rejection error from the Replanner (LLM call
+				// failed, persistence failed, etc.) — surface it in
+				// the mission.failed reason but still take the fail
+				// path. We don't burn a replan attempt for impl errors.
+				err = fmt.Errorf("%w (replan also failed: %v)", err, replanErr)
+			}
+			// On ErrReplanRejected, fall through to the fail path with
+			// the original step error as the cause.
+		}
+
+		_ = s.mgr.Fail(ctx, missionID, fmt.Sprintf("step %s: %v", step.ID, err))
+		return fmt.Errorf("supervisor: step %s: %w", step.ID, err)
+	}
+}
+
+// tryReplan consults the configured Replanner for a replacement
+// sequence, persists those steps via Manager.Replan, and returns the
+// fresh step list. Returns (nil, ErrReplanRejected) when the Replanner
+// declines; (nil, otherErr) when the Replanner or persistence fails.
+// On success the returned slice is the fresh GetSteps result including
+// the failed step (now state=failed) and the new replacement steps.
+func (s *Supervisor) tryReplan(
+	ctx context.Context, missionID string,
+	failedStep *mission.Step, stepErr error,
+	allSteps []mission.Step, priorReplans int,
+) ([]mission.Step, error) {
+	mi, err := s.store.GetMission(ctx, missionID)
+	if err != nil {
+		return nil, fmt.Errorf("load mission for replan: %w", err)
+	}
+
+	var completed, remaining []mission.Step
+	for _, st := range allSteps {
+		switch {
+		case st.State == mission.StateCompleted:
+			completed = append(completed, st)
+		case st.ID == failedStep.ID:
+			// The failed step itself — not "remaining."
+		default:
+			if st.State != mission.StateFailed {
+				remaining = append(remaining, st)
+			}
 		}
 	}
 
-	return s.mgr.Complete(ctx, missionID, fmt.Sprintf("%d steps completed", len(steps)))
+	req := ReplanRequest{
+		MissionID:      missionID,
+		Goal:           mi.Goal,
+		CompletedSteps: completed,
+		FailedStep:     *failedStep,
+		FailureReason:  stepErr.Error(),
+		RemainingSteps: remaining,
+		PriorReplans:   priorReplans,
+	}
+
+	newSteps, err := s.Replanner.Replan(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if len(newSteps) == 0 {
+		return nil, errors.New("replanner returned empty step list")
+	}
+
+	reason := fmt.Sprintf("replan attempt %d after step %s: %v",
+		priorReplans+1, failedStep.ID, stepErr)
+	if err := s.mgr.Replan(ctx, missionID, failedStep.ID, newSteps, reason); err != nil {
+		return nil, fmt.Errorf("persist replan: %w", err)
+	}
+
+	refreshed, err := s.store.GetSteps(ctx, missionID)
+	if err != nil {
+		return nil, fmt.Errorf("reload steps after replan: %w", err)
+	}
+	return refreshed, nil
 }
 
 // runParallel drives the mission as a DAG. At each iteration:

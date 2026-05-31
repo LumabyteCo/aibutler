@@ -27,8 +27,9 @@ when there's real orchestration work to do.
 Owns one mission end-to-end. Reads the plan, dispatches each step to a
 worker via the reliable bus, waits for the result event, persists step
 state, and transitions the mission through its state machine. On step
-failure the supervisor marks the mission `failed` and stops; replanning
-is reserved for a future revision.
+failure, if a `Replanner` is configured the supervisor consults it for
+a recovery sequence (see *Replanning on step failure* below); otherwise
+the mission is marked `failed` and the supervisor stops.
 
 ### Worker
 
@@ -191,16 +192,87 @@ queues fairly as workers free up. Per-call shuffle in the bus
 distributes load across the pool; busy workers fall through to peers
 via the publish's SendTimeout.
 
+## Replanning on step failure
+
+`Supervisor.Replanner` is an optional `supervisor.Replanner` interface.
+When set, a failing step does not immediately terminate the mission —
+the Replanner is consulted for a replacement step sequence and the
+supervisor continues from there.
+
+The interface is one method:
+
+```go
+type Replanner interface {
+    Replan(ctx context.Context, req ReplanRequest) ([]mission.Step, error)
+}
+```
+
+`ReplanRequest` carries the goal, the completed steps (with their
+outputs), the failed step (with its error), the remaining unstarted
+steps, and how many replan attempts the mission has already used.
+
+Returning `(steps, nil)` succeeds — the supervisor calls
+`Manager.Replan` to persist the new steps, marks any unstarted original
+steps that came after the failure as `cancelled` ("superseded by
+replan"), and continues from the next non-terminal step. Returning
+`(nil, ErrReplanRejected)` signals "this isn't recoverable" and the
+supervisor takes the fail-fast path immediately. Any other non-nil
+error is treated as a Replanner implementation failure — the mission
+still fails, but the implementation error is surfaced in the
+`mission.failed` reason for diagnostics.
+
+`Supervisor.MaxReplans` caps how many attempts one mission may make
+(default 3). After the cap, the next failure fails the mission
+regardless of what the Replanner would have returned.
+
+The runtime ships an LLM-backed implementation under
+`missionruntime.NewLLMReplanner`. It calls a configured
+`agent.ModelAdapter` directly (no tools, no nested agent loop) with a
+strict JSON-output prompt, retries on malformed output up to
+`LLMReplannerConfig.MaxRetries` (default 1), and translates an empty
+`steps` array to `ErrReplanRejected`. The replan call has its own
+timeout (`Timeout`, default 30 s).
+
+To enable replanning at app startup, construct the LLM-backed replanner
+once and pass it to the runtime:
+
+```go
+rp, err := missionruntime.NewLLMReplanner(missionruntime.LLMReplannerConfig{
+    Model: modelAdapter, // existing Anthropic/Ollama adapter
+})
+// ...
+rt := missionruntime.New(mgr, store, b, missionruntime.Options{
+    Executor:   llmExec,
+    Replanner:  rp,
+    MaxReplans: 3,
+})
+```
+
+Existing missions without a configured Replanner keep the previous
+"fail on first failure" behaviour — no flag flips, no migrations.
+
+Scope notes:
+
+- Replanning is **sequential mode only** in this revision. Parallel
+  dispatch (`SetPlanParallel`) still fails the whole mission on the
+  first failure; in-flight peers complete naturally but no replan
+  attempt is made.
+- The Replanner sees prior completed step outputs but does NOT see
+  the mission's running event log or per-step telemetry. The signal it
+  gets is the same signal the supervisor has: goal + completed + failed
+  + remaining. A richer audit-trail integration is a clearly-scoped
+  follow-up.
+
 ## What's not in this revision
 
 Several capabilities were considered for the initial release but
 intentionally deferred:
 
-- **Replanning on step failure.** Today a failed step fails the
-  whole mission; the supervisor doesn't try the same step with adjusted
-  inputs or substitute a different worker. The architecture supports
-  it (events are recorded, steps have `state` columns) — the policy
-  layer is the next addition.
+- **Replanning in parallel mode.** Sequential mode replanning ships
+  in this revision (above); the parallel-DAG path still fails the
+  whole mission on the first step failure. Replanning under parallel
+  dispatch is its own design problem (what to do with in-flight peers
+  whose results are already partway done) and is a follow-up.
 - **Mid-mission user-confirmation prompts.** When a worker hits a
   capability that requires confirmation, the existing capability engine
   surfaces a prompt — but the mission engine doesn't yet auto-pause

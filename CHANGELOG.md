@@ -353,6 +353,58 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [Unreleased]
+
+### Added — LLM-driven replanning on step failure
+
+- **`supervisor.Replanner` interface + `Supervisor.Replanner` /
+  `Supervisor.MaxReplans` fields.** When a step fails in sequential
+  mode, the supervisor consults the configured `Replanner` for a
+  replacement step sequence and continues from there instead of
+  failing the mission. Each mission may be replanned up to
+  `MaxReplans` times (default 3). The Replanner can return
+  `ErrReplanRejected` to opt out of recovery for a specific failure;
+  any other non-nil error is treated as an implementation failure
+  and surfaced in the `mission.failed` reason. Existing missions
+  without a configured Replanner keep the v0.2.x fail-fast
+  behaviour — purely additive.
+- **`supervisor.NoopReplanner`** — a Replanner that always returns
+  `ErrReplanRejected`. Same semantics as leaving `Replanner` nil;
+  useful in tests and as documentation.
+- **`mission.Manager.Replan(missionID, fromStepID, newSteps, reason)`**
+  — persistence-layer replanning. Appends replacement steps after the
+  failed one, marks every still-unstarted original step that came
+  after as `cancelled` (error: "superseded by replan"), rewrites
+  `Mission.PlanJSON` to the union, and emits one
+  `mission.replanned` event with payload
+  `{from_step_id, new_step_count, superseded_step_ids, reason}`.
+  The failed step itself stays in `state=failed` for the audit log;
+  replanning never rewrites history.
+- **`missionruntime.NewLLMReplanner(LLMReplannerConfig)`** — an
+  LLM-backed `supervisor.Replanner`. Calls a configured
+  `agent.ModelAdapter` directly with a strict JSON-output prompt
+  (no tools, no nested agent loop, predictable cost), retries on
+  malformed output up to `MaxRetries` (default 1), and translates
+  an empty `steps` array to `ErrReplanRejected`. Per-call timeout
+  is `Timeout` (default 30 s). Strips common LLM noise (markdown
+  fences, leading/trailing prose) before parsing.
+- **`missionruntime.Options.Replanner` /
+  `Options.MaxReplans` / `Runtime.SetReplanner(...)`**. The runtime
+  passes the configured Replanner to every spawned Supervisor.
+  `SetReplanner` mirrors `SetExecutor` for hot-swap at app startup
+  once the model adapter is resolved.
+
+### Notes
+
+- Replanning is **sequential mode only** in this revision. Parallel
+  dispatch (`SetPlanParallel`) still fails the whole mission on the
+  first failure; in-flight peers complete naturally but no replan
+  attempt is made. Parallel-mode replanning has its own design
+  problem (what to do with in-flight peers whose results are partway
+  done) and is a separate follow-up.
+
+---
+
 ## [0.2.3] — 2026-05-31
 
 ### Fixed
@@ -433,3 +485,4 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 [0.2.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.1
 [0.2.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.2
 [0.2.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.3
+[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.2.3...HEAD

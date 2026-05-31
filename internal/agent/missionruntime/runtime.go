@@ -49,6 +49,17 @@ type Options struct {
 	// Executor is the TaskExecutor passed to every spawned worker. If
 	// nil, worker.EchoExecutor is used.
 	Executor worker.TaskExecutor
+	// Replanner, if non-nil, is set on every spawned Supervisor as
+	// the recovery policy for step failures. nil (the default) keeps
+	// the historical fail-on-first-step-failure behaviour. The
+	// runtime does not own the Replanner's lifecycle — callers are
+	// responsible for constructing it (typically via
+	// NewLLMReplanner) before passing it in.
+	Replanner supervisor.Replanner
+	// MaxReplans caps how many times one mission may be replanned
+	// before the supervisor gives up. Default 3 when Replanner is
+	// non-nil; ignored when Replanner is nil.
+	MaxReplans int
 	// Logger optionally captures runtime lifecycle messages. Defaults
 	// to the standard log package.
 	Logger *log.Logger
@@ -151,6 +162,21 @@ func (r *Runtime) SetExecutor(fn worker.TaskExecutor) {
 	r.opts.Executor = fn
 }
 
+// SetReplanner replaces the Replanner installed on future
+// Supervisor instances. Existing in-flight supervisors keep the
+// Replanner they were spawned with. Pass nil to revert to fail-fast.
+//
+// Same use-case as SetExecutor: app startup wires the LLM-backed
+// replanner once the model adapter is resolved.
+func (r *Runtime) SetReplanner(rp supervisor.Replanner, maxReplans int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.opts.Replanner = rp
+	if maxReplans > 0 {
+		r.opts.MaxReplans = maxReplans
+	}
+}
+
 // scan looks for planned missions and spawns runner goroutines for any
 // not already running, up to MaxConcurrent.
 func (r *Runtime) scan(ctx context.Context) {
@@ -199,6 +225,10 @@ func (r *Runtime) spawn(parentCtx context.Context, missionID string) {
 
 	w := worker.New(r.bus, "worker-"+short, r.opts.Executor)
 	s := supervisor.New(r.mgr, r.store, r.bus, "supervisor-"+short)
+	if r.opts.Replanner != nil {
+		s.Replanner = r.opts.Replanner
+		s.MaxReplans = r.opts.MaxReplans
+	}
 
 	r.logf("mission runtime: spawning supervisor+worker for %s", missionID)
 

@@ -734,3 +734,333 @@ func TestRun_ResumeAfterPause_PicksUpRemainingSteps(t *testing.T) {
 		t.Errorf("executor calls = %d, want 3 (one per step, no re-runs)", got)
 	}
 }
+
+// --- Replan-on-failure tests ---
+//
+// A test Replanner is a closure-backed implementation of
+// supervisor.Replanner. Wraps a single mission and surfaces what the
+// supervisor passed in so assertions can check both the trigger and
+// the args.
+
+type stubReplanner struct {
+	mu       sync.Mutex
+	calls    []supervisor.ReplanRequest
+	respond  func(req supervisor.ReplanRequest) ([]mission.Step, error)
+}
+
+func (r *stubReplanner) Replan(_ context.Context, req supervisor.ReplanRequest) ([]mission.Step, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, req)
+	r.mu.Unlock()
+	return r.respond(req)
+}
+
+func (r *stubReplanner) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
+
+func (r *stubReplanner) lastCall() supervisor.ReplanRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.calls) == 0 {
+		return supervisor.ReplanRequest{}
+	}
+	return r.calls[len(r.calls)-1]
+}
+
+// TestRun_FailedStep_ReplanRecovers verifies that a Replanner-returned
+// replacement step is dispatched after a failure and the mission
+// completes via the replacement path.
+func TestRun_FailedStep_ReplanRecovers(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "recoverable mission", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{
+		{Task: "FAIL-ME"},
+		{Task: "would-have-been-skipped"},
+	})
+
+	b := bus.New()
+
+	// Executor that fails the first task ("FAIL-ME") and succeeds the
+	// replacement ("RECOVERED").
+	var seen []string
+	var seenMu sync.Mutex
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		seenMu.Lock()
+		seen = append(seen, task.Task)
+		seenMu.Unlock()
+		if task.Task == "FAIL-ME" {
+			return "", errFail
+		}
+		return "did " + task.Task, nil
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	replanner := &stubReplanner{
+		respond: func(req supervisor.ReplanRequest) ([]mission.Step, error) {
+			return []mission.Step{{Task: "RECOVERED"}}, nil
+		},
+	}
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+	s.Replanner = replanner
+
+	if err := s.Run(ctx, m.ID); err != nil {
+		t.Fatalf("supervisor Run after replan: %v", err)
+	}
+	wcancel()
+
+	// Replanner consulted exactly once.
+	if got := replanner.callCount(); got != 1 {
+		t.Fatalf("Replanner called %d times, want 1", got)
+	}
+	call := replanner.lastCall()
+	if call.FailedStep.Task != "FAIL-ME" {
+		t.Errorf("FailedStep.Task = %q, want FAIL-ME", call.FailedStep.Task)
+	}
+	if !strings.Contains(call.FailureReason, "worker failed") {
+		t.Errorf("FailureReason = %q, want it to mention worker failed", call.FailureReason)
+	}
+	if call.Goal != "recoverable mission" {
+		t.Errorf("Goal = %q, want 'recoverable mission'", call.Goal)
+	}
+	if call.PriorReplans != 0 {
+		t.Errorf("PriorReplans = %d, want 0", call.PriorReplans)
+	}
+
+	// Mission should be completed via the replacement step.
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("mission state = %s, want completed", got.State)
+	}
+
+	// Steps should be: FAIL-ME (failed), would-have-been-skipped
+	// (created), RECOVERED (completed). The supervisor stops at the
+	// failure point and the replan replaces what comes after, so the
+	// "would-have-been-skipped" step stays untouched in state=created.
+	// We don't assert that here — what matters is the failed step is
+	// failed and at least one completed replacement exists.
+	steps, _ := store.GetSteps(ctx, m.ID)
+	var failedCount, completedCount int
+	for _, st := range steps {
+		switch st.State {
+		case mission.StateFailed:
+			failedCount++
+		case mission.StateCompleted:
+			completedCount++
+		}
+	}
+	if failedCount != 1 {
+		t.Errorf("failed step count = %d, want 1", failedCount)
+	}
+	if completedCount < 1 {
+		t.Errorf("completed step count = %d, want at least 1 (the replacement)", completedCount)
+	}
+
+	// Dispatch order should be FAIL-ME first, then RECOVERED. The
+	// "would-have-been-skipped" task should NOT have been dispatched
+	// since the failure short-circuited that point in the original plan
+	// and the replan superseded the remaining sequence.
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	if len(seen) != 2 || seen[0] != "FAIL-ME" || seen[1] != "RECOVERED" {
+		t.Errorf("dispatch order = %v, want [FAIL-ME RECOVERED]", seen)
+	}
+
+	// mission.replanned event recorded.
+	events, _ := store.GetEvents(ctx, m.ID, 100)
+	var sawReplan bool
+	for _, e := range events {
+		if e.Type == "mission.replanned" {
+			sawReplan = true
+			break
+		}
+	}
+	if !sawReplan {
+		t.Error("expected mission.replanned event in log")
+	}
+}
+
+// TestRun_FailedStep_ReplanRejected_FailsFast verifies that a Replanner
+// returning ErrReplanRejected causes the mission to fail immediately
+// without burning a replan attempt or issuing another dispatch.
+func TestRun_FailedStep_ReplanRejected_FailsFast(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "unrecoverable", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{{Task: "FAIL-ME"}})
+
+	b := bus.New()
+	executor := func(_ context.Context, _ worker.Task) (string, error) {
+		return "", errFail
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	replanner := &stubReplanner{
+		respond: func(req supervisor.ReplanRequest) ([]mission.Step, error) {
+			return nil, supervisor.ErrReplanRejected
+		},
+	}
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+	s.Replanner = replanner
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error after ErrReplanRejected")
+	}
+	wcancel()
+
+	if got := replanner.callCount(); got != 1 {
+		t.Errorf("Replanner called %d times, want 1 (one consult, no retries on rejection)", got)
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}
+
+// TestRun_FailedStep_MaxReplansExhausted verifies that after MaxReplans
+// attempts the mission fails.
+func TestRun_FailedStep_MaxReplansExhausted(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "persistently broken", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{{Task: "FAIL-ALWAYS"}})
+
+	b := bus.New()
+
+	// Executor that fails every single task no matter what name it has.
+	executor := func(_ context.Context, _ worker.Task) (string, error) {
+		return "", errFail
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	// Replanner that always proposes one new step. Every replacement
+	// will also fail because the executor fails everything.
+	replanner := &stubReplanner{
+		respond: func(req supervisor.ReplanRequest) ([]mission.Step, error) {
+			return []mission.Step{{Task: "FAIL-ALSO"}}, nil
+		},
+	}
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+	s.Replanner = replanner
+	s.MaxReplans = 2
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error after replan attempts exhausted")
+	}
+	wcancel()
+
+	// Replanner consulted MaxReplans times — once per failure within the
+	// cap. After the cap, the (cap+1)th failure does not consult.
+	if got := replanner.callCount(); got != 2 {
+		t.Errorf("Replanner called %d times, want 2 (MaxReplans)", got)
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}
+
+// TestRun_NoReplanner_PreservesOldFailFastBehavior verifies that
+// leaving Replanner nil keeps the v0.2.x behavior: one step failure
+// terminates the mission immediately.
+func TestRun_NoReplanner_PreservesOldFailFastBehavior(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "no-replanner-mission", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{{Task: "FAIL-ME"}})
+
+	b := bus.New()
+	executor := func(_ context.Context, _ worker.Task) (string, error) {
+		return "", errFail
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+	// Replanner intentionally nil.
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error when step fails")
+	}
+	wcancel()
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}
+
+// TestRun_NoopReplanner_BehavesLikeNoReplanner verifies that the
+// NoopReplanner (which always returns ErrReplanRejected) gives the
+// same fail-fast behavior as leaving Replanner nil.
+func TestRun_NoopReplanner_BehavesLikeNoReplanner(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "noop-mission", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{{Task: "FAIL-ME"}})
+
+	b := bus.New()
+	executor := func(_ context.Context, _ worker.Task) (string, error) {
+		return "", errFail
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+	s.Replanner = supervisor.NoopReplanner{}
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error when step fails")
+	}
+	wcancel()
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}

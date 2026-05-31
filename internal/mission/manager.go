@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -105,6 +106,138 @@ func (m *Manager) setPlan(ctx context.Context, missionID string, steps []Step, p
 	}
 	_ = m.appendStateEvent(ctx, missionID, "mission.planned", msg)
 	return nil
+}
+
+// Replan replaces the un-started portion of a mission's plan with a
+// new step sequence. The mission must already be in the running state —
+// replanning is a mid-flight recovery, not a fresh plan.
+//
+// Semantics:
+//
+//   - The fromStepID step stays in state=failed (or whatever its current
+//     state is) — replanning does NOT rewrite history. The audit log
+//     still shows the failure as it happened.
+//   - All steps that come after fromStepID (in created_at order) AND
+//     are still in state=created get marked StateCancelled with reason
+//     "superseded by replan". The original plan's remaining work was
+//     predicated on the failed step's assumed output; the replan
+//     supersedes those assumptions wholesale.
+//   - newSteps get fresh server-allocated IDs and state=created and are
+//     appended to the mission_steps table in order. The supervisor's
+//     loop picks them up on its next iteration.
+//   - Mission.PlanJSON is rewritten to the union of all steps so
+//     dashboards and replay tools see the current plan.
+//   - The Plan.Parallel flag from the original plan is preserved (a
+//     parallel mission stays parallel after replan).
+//   - One mission_events row is appended: {event_type: "mission.replanned",
+//     payload: {from_step_id, new_step_count, superseded_step_ids, reason}}.
+//
+// Returns ErrInvalidTransition if the mission is not in StateRunning,
+// and a wrapped sql error if any persistence step fails. Replan does
+// NOT change Mission.State — the mission stays running.
+func (m *Manager) Replan(ctx context.Context, missionID, fromStepID string, newSteps []Step, reason string) error {
+	mi, err := m.store.GetMission(ctx, missionID)
+	if err != nil {
+		return err
+	}
+	if mi.State != StateRunning {
+		return fmt.Errorf("%w: replan requires running state, got %s", ErrInvalidTransition, mi.State)
+	}
+	if fromStepID == "" {
+		return errors.New("mission: replan fromStepID is required")
+	}
+	if len(newSteps) == 0 {
+		return errors.New("mission: replan requires at least one new step")
+	}
+
+	existing, err := m.store.GetSteps(ctx, missionID)
+	if err != nil {
+		return err
+	}
+
+	// Locate the failed step. A stale or unknown ID surfaces as an
+	// error rather than silently rewriting the plan against a
+	// mismatched cursor.
+	failedIdx := -1
+	for i := range existing {
+		if existing[i].ID == fromStepID {
+			failedIdx = i
+			break
+		}
+	}
+	if failedIdx < 0 {
+		return fmt.Errorf("mission: replan target step %s not found in mission %s", fromStepID, missionID)
+	}
+
+	now := m.now()
+
+	// Supersede every un-started step that comes after the failed one.
+	// Only state=created steps are touched — running/completed/failed
+	// stay as they are. (In sequential mode there are no concurrent
+	// running steps; parallel replan is deferred.)
+	supersededIDs := []string{}
+	for i := failedIdx + 1; i < len(existing); i++ {
+		st := existing[i]
+		if st.State != StateCreated {
+			continue
+		}
+		st.State = StateCancelled
+		st.Error = "superseded by replan"
+		if st.CompletedAt == nil {
+			t := now
+			st.CompletedAt = &t
+		}
+		if err := m.store.UpdateStep(ctx, st); err != nil {
+			return fmt.Errorf("supersede step %s: %w", st.ID, err)
+		}
+		supersededIDs = append(supersededIDs, st.ID)
+	}
+
+	// Allocate IDs and persist the replacement steps in order. The
+	// CreatedAt stagger keeps the canonical (created_at, ID) order
+	// stable so the supervisor's "first non-terminal" pick is
+	// deterministic.
+	for i := range newSteps {
+		if newSteps[i].ID == "" {
+			newSteps[i].ID = "step_" + randID(10)
+		}
+		newSteps[i].MissionID = missionID
+		if newSteps[i].State == "" {
+			newSteps[i].State = StateCreated
+		}
+		if newSteps[i].CreatedAt.IsZero() {
+			newSteps[i].CreatedAt = now.Add(time.Duration(i+1) * time.Nanosecond)
+		}
+		if err := m.store.AddStep(ctx, newSteps[i]); err != nil {
+			return err
+		}
+	}
+
+	// Refresh and rewrite PlanJSON. We re-read from store to pick up
+	// the updated step rows in canonical (created_at, ID) order.
+	refreshed, err := m.store.GetSteps(ctx, missionID)
+	if err != nil {
+		return err
+	}
+	parallel := PlanFromJSON(mi.PlanJSON).Parallel
+	planJSON, _ := json.Marshal(Plan{Steps: refreshed, Parallel: parallel})
+	mi.PlanJSON = string(planJSON)
+	if err := m.store.UpdateMission(ctx, mi); err != nil {
+		return err
+	}
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"from_step_id":        fromStepID,
+		"new_step_count":      len(newSteps),
+		"superseded_step_ids": supersededIDs,
+		"reason":              reason,
+	})
+	return m.store.AppendEvent(ctx, Event{
+		MissionID:   missionID,
+		Type:        "mission.replanned",
+		PayloadJSON: string(payload),
+		Timestamp:   now,
+	})
 }
 
 // PlanFromJSON parses a mission's PlanJSON. Returns a zero-valued Plan

@@ -671,3 +671,170 @@ func TestTool_Interrupt_RegisteredAlongsideOthers(t *testing.T) {
 		}
 	}
 }
+
+// --- Replan tests ---
+
+// TestManager_Replan_PersistsNewStepsAndSupersedesUnstarted verifies the
+// happy path: a running mission with a failed step gets new replacement
+// steps appended, the un-started original steps are marked
+// StateCancelled with the supersede reason, and a mission.replanned
+// event captures the audit trail.
+func TestManager_Replan_PersistsNewStepsAndSupersedesUnstarted(t *testing.T) {
+	mgr, store := newTestManager(t)
+	ctx := context.Background()
+
+	m, _ := mgr.Create(ctx, "rebuild after failure", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []Step{
+		{Task: "do A"},
+		{Task: "do B"},
+		{Task: "do C"},
+	})
+	_ = mgr.Start(ctx, m.ID)
+
+	steps, _ := store.GetSteps(ctx, m.ID)
+	// Mark A completed, B failed (the trigger).
+	steps[0].State = StateCompleted
+	steps[0].Output = "did A"
+	_ = store.UpdateStep(ctx, steps[0])
+	steps[1].State = StateFailed
+	steps[1].Error = "B blew up"
+	_ = store.UpdateStep(ctx, steps[1])
+	failedID := steps[1].ID
+	cStepID := steps[2].ID
+
+	// Replan: replacement is two new steps after B.
+	err := mgr.Replan(ctx, m.ID, failedID, []Step{
+		{Task: "do B-prime"},
+		{Task: "do D"},
+	}, "B failed, here's the recovery")
+	if err != nil {
+		t.Fatalf("Replan: %v", err)
+	}
+
+	got, _ := store.GetSteps(ctx, m.ID)
+	if len(got) != 5 {
+		t.Fatalf("steps count = %d, want 5 (A, B, C, B-prime, D)", len(got))
+	}
+
+	// A still completed, B still failed, C now cancelled (superseded),
+	// B-prime + D new in state=created.
+	byID := map[string]Step{}
+	for _, st := range got {
+		byID[st.ID] = st
+	}
+	if s := byID[steps[0].ID]; s.State != StateCompleted {
+		t.Errorf("A state = %s, want completed", s.State)
+	}
+	if s := byID[failedID]; s.State != StateFailed {
+		t.Errorf("B (failed) state = %s, want failed (unchanged by replan)", s.State)
+	}
+	c := byID[cStepID]
+	if c.State != StateCancelled {
+		t.Errorf("C state = %s, want cancelled (superseded by replan)", c.State)
+	}
+	if c.Error != "superseded by replan" {
+		t.Errorf("C error = %q, want 'superseded by replan'", c.Error)
+	}
+	if c.CompletedAt == nil {
+		t.Error("C CompletedAt should be set on cancellation")
+	}
+
+	// Find replacement steps (state=created, not in the original three).
+	originalIDs := map[string]bool{steps[0].ID: true, failedID: true, cStepID: true}
+	var replacements []Step
+	for _, st := range got {
+		if !originalIDs[st.ID] {
+			replacements = append(replacements, st)
+		}
+	}
+	if len(replacements) != 2 {
+		t.Fatalf("replacement count = %d, want 2", len(replacements))
+	}
+	for _, r := range replacements {
+		if r.State != StateCreated {
+			t.Errorf("replacement step %s state = %s, want created", r.ID, r.State)
+		}
+		if r.Task != "do B-prime" && r.Task != "do D" {
+			t.Errorf("replacement task = %q, want one of [do B-prime, do D]", r.Task)
+		}
+	}
+
+	// PlanJSON updated to the new step list.
+	mi, _ := store.GetMission(ctx, m.ID)
+	plan := PlanFromJSON(mi.PlanJSON)
+	if len(plan.Steps) != 5 {
+		t.Errorf("PlanJSON steps = %d, want 5", len(plan.Steps))
+	}
+
+	// Mission state unchanged (still running).
+	if mi.State != StateRunning {
+		t.Errorf("mission state = %s, want running (replan does not transition)", mi.State)
+	}
+
+	// mission.replanned event with payload containing the failed ID.
+	events, _ := store.GetEvents(ctx, m.ID, 100)
+	var replanEvt *Event
+	for i := range events {
+		if events[i].Type == "mission.replanned" {
+			replanEvt = &events[i]
+		}
+	}
+	if replanEvt == nil {
+		t.Fatal("expected mission.replanned event in log")
+	}
+	if !strings.Contains(replanEvt.PayloadJSON, failedID) {
+		t.Errorf("event payload should mention failed step %s, got %q", failedID, replanEvt.PayloadJSON)
+	}
+	if !strings.Contains(replanEvt.PayloadJSON, cStepID) {
+		t.Errorf("event payload should mention superseded step %s, got %q", cStepID, replanEvt.PayloadJSON)
+	}
+}
+
+// TestManager_Replan_RejectsNonRunningMission verifies the state guard.
+func TestManager_Replan_RejectsNonRunningMission(t *testing.T) {
+	mgr, store := newTestManager(t)
+	ctx := context.Background()
+	m, _ := mgr.Create(ctx, "not started yet", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []Step{{Task: "do A"}})
+	steps, _ := store.GetSteps(ctx, m.ID)
+
+	err := mgr.Replan(ctx, m.ID, steps[0].ID, []Step{{Task: "rescue"}}, "fail")
+	if err == nil {
+		t.Fatal("expected error replanning a planned mission")
+	}
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Errorf("error = %v, want wraps ErrInvalidTransition", err)
+	}
+}
+
+// TestManager_Replan_RejectsUnknownStep verifies the ID validation.
+func TestManager_Replan_RejectsUnknownStep(t *testing.T) {
+	mgr, _ := newTestManager(t)
+	ctx := context.Background()
+	m, _ := mgr.Create(ctx, "active", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []Step{{Task: "do A"}})
+	_ = mgr.Start(ctx, m.ID)
+
+	err := mgr.Replan(ctx, m.ID, "step_does_not_exist", []Step{{Task: "rescue"}}, "fail")
+	if err == nil {
+		t.Fatal("expected error for unknown step ID")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %v, want 'not found'", err)
+	}
+}
+
+// TestManager_Replan_RejectsEmptyNewSteps verifies the input validation.
+func TestManager_Replan_RejectsEmptyNewSteps(t *testing.T) {
+	mgr, store := newTestManager(t)
+	ctx := context.Background()
+	m, _ := mgr.Create(ctx, "active", "", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []Step{{Task: "do A"}})
+	_ = mgr.Start(ctx, m.ID)
+	steps, _ := store.GetSteps(ctx, m.ID)
+
+	err := mgr.Replan(ctx, m.ID, steps[0].ID, nil, "fail")
+	if err == nil {
+		t.Fatal("expected error for empty new step list")
+	}
+}
