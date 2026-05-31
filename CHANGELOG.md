@@ -353,6 +353,31 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.2.3] — 2026-05-31
+
+### Fixed
+
+- **Data race in bus Unsubscribe vs concurrent in-flight publish**
+  (supersedes v0.2.2). `UnsubscribeReliable` and `UnsubscribeCompeting`
+  previously closed the subscriber channel. `tryPublishReliable` /
+  `tryPublishCompeting` snapshot the subscriber slice under read-lock
+  and then send on the chan after releasing the lock — closing the
+  chan during that send window racing under `-race` and could panic
+  ("send on closed channel") under the same goroutine timing in
+  production. The race had been latent on the broadcast path since
+  v0.2.0; v0.2.2's competing-consumer dispatch + worker's
+  fire-and-forget `publishResult` goroutine made it reproducible in
+  CI on `internal/agent/missionruntime`. Fix removes the close in
+  both Unsubscribe paths — subscribers exit on their own context
+  (worker and supervisor already do), and the chan is reclaimed by
+  GC once the bus and the subscriber goroutine drop their references.
+  Empty topic entries are now also pruned from the bus's internal
+  map so the `*TopicCount` helpers report the actual count.
+  `TestUnsubscribeReliable_RemovesAndCloses` renamed to
+  `TestUnsubscribeReliable_RemovesFromTopic` and the assertion
+  changed from "channel closes" to "topic disappears + subsequent
+  publish returns `ErrNoSubscribers`."
+
 ## [0.2.2] — 2026-05-31
 
 ### Added — Parallel mission execution
@@ -407,3 +432,4 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 [0.2.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.0
 [0.2.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.1
 [0.2.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.2
+[0.2.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.3
