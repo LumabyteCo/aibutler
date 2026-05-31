@@ -355,7 +355,30 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ## [Unreleased]
 
-Changes in `main` that haven't been released yet will be tracked here.
+### Added
+
+- **`mission.Manager.SetPlanParallel(missionID, steps)`** — new sibling
+  to `SetPlan`. Marks the plan for DAG dispatch in the supervisor:
+  the supervisor walks `Step.DependsOn` as an authoritative dependency
+  graph, dispatches every step whose dependencies are completed, and
+  blocks on the next worker result rather than serialising at each
+  step. Failure terminates the mission (already-in-flight peers
+  publish their results, no new dispatches issued). Dangling
+  `DependsOn` references are detected as deadlocks and surface a clear
+  error.
+- **`mission.Plan` struct + `mission.PlanFromJSON` helper** — the plan
+  serialised in `Mission.PlanJSON` now carries a `Parallel bool` flag.
+  `omitempty` keeps existing PlanJSON blobs parsing as
+  `Parallel=false` — no migration needed.
+
+### Note
+
+The supervisor-side parallel dispatch shipped here is the prerequisite
+for real wall-clock parallelism — the current bus broadcasts each
+dispatch to every subscriber and each worker handles messages serially,
+so concurrent dispatch by the supervisor doesn't yet translate to
+concurrent execution. A competing-consumer bus mode and/or per-worker
+concurrent handling are follow-ups.
 
 [0.1.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.1.0
 [0.2.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.0

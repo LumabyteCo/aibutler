@@ -55,7 +55,23 @@ func (m *Manager) Create(ctx context.Context, goal, supervisorAgentID string, bu
 
 // SetPlan transitions the mission to the planned state and records the
 // plan steps. Each step gets a server-allocated ID.
+//
+// Steps run sequentially under SetPlan — see SetPlanParallel for DAG
+// dispatch. The two methods share storage; the only difference is the
+// Plan.Parallel flag persisted in Mission.PlanJSON.
 func (m *Manager) SetPlan(ctx context.Context, missionID string, steps []Step) error {
+	return m.setPlan(ctx, missionID, steps, false)
+}
+
+// SetPlanParallel is like SetPlan but enables parallel dispatch. The
+// supervisor walks Step.DependsOn as a DAG and runs steps with
+// satisfied dependencies concurrently. Steps with no dependencies are
+// ready immediately.
+func (m *Manager) SetPlanParallel(ctx context.Context, missionID string, steps []Step) error {
+	return m.setPlan(ctx, missionID, steps, true)
+}
+
+func (m *Manager) setPlan(ctx context.Context, missionID string, steps []Step, parallel bool) error {
 	mission, err := m.store.GetMission(ctx, missionID)
 	if err != nil {
 		return err
@@ -64,9 +80,7 @@ func (m *Manager) SetPlan(ctx context.Context, missionID string, steps []Step) e
 		return fmt.Errorf("%w: %s → %s", ErrInvalidTransition, mission.State, StatePlanned)
 	}
 
-	planJSON, _ := json.Marshal(struct {
-		Steps []Step `json:"steps"`
-	}{Steps: steps})
+	planJSON, _ := json.Marshal(Plan{Steps: steps, Parallel: parallel})
 	mission.State = StatePlanned
 	mission.PlanJSON = string(planJSON)
 	if err := m.store.UpdateMission(ctx, mission); err != nil {
@@ -85,8 +99,23 @@ func (m *Manager) SetPlan(ctx context.Context, missionID string, steps []Step) e
 			return err
 		}
 	}
-	_ = m.appendStateEvent(ctx, missionID, "mission.planned", fmt.Sprintf("%d steps", len(steps)))
+	msg := fmt.Sprintf("%d steps", len(steps))
+	if parallel {
+		msg += " (parallel)"
+	}
+	_ = m.appendStateEvent(ctx, missionID, "mission.planned", msg)
 	return nil
+}
+
+// PlanFromJSON parses a mission's PlanJSON. Returns a zero-valued Plan
+// if json is empty (mission not yet planned) or malformed.
+func PlanFromJSON(planJSON string) Plan {
+	var p Plan
+	if planJSON == "" {
+		return p
+	}
+	_ = json.Unmarshal([]byte(planJSON), &p)
+	return p
 }
 
 // Start moves a planned mission into running. Records the wall-clock

@@ -271,6 +271,238 @@ type stringError string
 
 func (e stringError) Error() string { return string(e) }
 
+// --- Parallel dispatch tests ---
+//
+// Scope note: these tests verify supervisor-side DAG dispatch logic —
+// the supervisor walks Step.DependsOn as a DAG and stops blocking on
+// each step's result before dispatching the next ready step. Real
+// wall-clock parallelism additionally requires either a competing-
+// consumer bus or per-worker concurrent handling, both of which are
+// follow-up changes. The tests here therefore check correctness of
+// the DAG order and completion, not wall-clock concurrency.
+
+// TestRun_Parallel_IndependentStepsAllComplete verifies that when a
+// plan is set via SetPlanParallel and the steps have no DependsOn
+// links between them, all of them are dispatched and the mission
+// completes.
+func TestRun_Parallel_IndependentStepsAllComplete(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "parallel", "", 0)
+	if err := mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
+		{Task: "A"}, {Task: "B"}, {Task: "C"}, // no DependsOn = all independent
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	b := bus.New()
+	var dispatched atomic.Int32
+	executor := func(_ context.Context, _ worker.Task) (string, error) {
+		dispatched.Add(1)
+		return "ok", nil
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+	if err := s.Run(ctx, m.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("state = %s, want completed", got.State)
+	}
+	if dispatched.Load() != 3 {
+		t.Errorf("executor calls = %d, want 3", dispatched.Load())
+	}
+}
+
+// TestRun_Parallel_RespectsDependsOnGraph verifies that a DAG like
+//
+//	A → B
+//	  → C → D
+//
+// completes successfully and that A always runs before B/C, C runs
+// before D.
+func TestRun_Parallel_RespectsDependsOnGraph(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "dag", "", 0)
+	// Assign explicit IDs so DependsOn can reference them.
+	steps := []mission.Step{
+		{ID: "a", Task: "A"},
+		{ID: "b", Task: "B", DependsOn: []string{"a"}},
+		{ID: "c", Task: "C", DependsOn: []string{"a"}},
+		{ID: "d", Task: "D", DependsOn: []string{"c"}},
+	}
+	if err := mgr.SetPlanParallel(ctx, m.ID, steps); err != nil {
+		t.Fatal(err)
+	}
+
+	b := bus.New()
+	var mu sync.Mutex
+	startedAt := map[string]time.Time{}
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		mu.Lock()
+		startedAt[task.Task] = time.Now()
+		mu.Unlock()
+		time.Sleep(40 * time.Millisecond)
+		return "ok", nil
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+	if err := s.Run(ctx, m.ID); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("state = %s, want completed", got.State)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// A must start before B, C, and D — they all transitively depend on A.
+	for _, downstream := range []string{"B", "C", "D"} {
+		if !startedAt["A"].Before(startedAt[downstream]) {
+			t.Errorf("A should start before %s; A=%v %s=%v",
+				downstream, startedAt["A"], downstream, startedAt[downstream])
+		}
+	}
+	// D must start after C.
+	if !startedAt["C"].Before(startedAt["D"]) {
+		t.Errorf("D should start after C; C=%v D=%v",
+			startedAt["C"], startedAt["D"])
+	}
+}
+
+// TestRun_Parallel_FailedStep_FailsMission verifies that a failed
+// step terminates the mission. In-flight peers may still run; the
+// supervisor stops dispatching new work and reports the first failure.
+func TestRun_Parallel_FailedStep_FailsMission(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "fails", "", 0)
+	if err := mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
+		{ID: "ok1", Task: "ok"},
+		{ID: "bad", Task: "bad"},
+		{ID: "downstream", Task: "downstream", DependsOn: []string{"bad"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	b := bus.New()
+
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		if task.Task == "bad" {
+			return "", errors.New("step deliberately fails")
+		}
+		return "ok", nil
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error from failed step")
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+
+	// "downstream" should NOT have run (its dep failed).
+	stepsAfter, _ := store.GetSteps(ctx, m.ID)
+	for _, st := range stepsAfter {
+		if st.ID == "downstream" && st.State == mission.StateCompleted {
+			t.Error("downstream step ran even though its dep failed")
+		}
+	}
+}
+
+// TestRun_Parallel_Deadlock_DanglingDependency verifies a clear error
+// when a step references a DependsOn entry that doesn't exist (typo or
+// model hallucination).
+func TestRun_Parallel_Deadlock_DanglingDependency(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "dangling", "", 0)
+	if err := mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
+		{ID: "a", Task: "A", DependsOn: []string{"ghost"}}, // ghost doesn't exist
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := supervisor.New(mgr, store, bus.New(), "sup-1")
+	s.StepTimeout = 1 * time.Second
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected deadlock error")
+	}
+	if !strings.Contains(err.Error(), "deadlock") {
+		t.Errorf("error should mention deadlock, got: %v", err)
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}
+
+// TestSetPlanParallel_PersistsFlag verifies the Plan.Parallel flag
+// round-trips through the plan JSON.
+func TestSetPlanParallel_PersistsFlag(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx := context.Background()
+
+	mSeq, _ := mgr.Create(ctx, "seq", "", 0)
+	_ = mgr.SetPlan(ctx, mSeq.ID, []mission.Step{{Task: "a"}})
+
+	mPar, _ := mgr.Create(ctx, "par", "", 0)
+	_ = mgr.SetPlanParallel(ctx, mPar.ID, []mission.Step{{Task: "a"}})
+
+	gotSeq, _ := store.GetMission(ctx, mSeq.ID)
+	gotPar, _ := store.GetMission(ctx, mPar.ID)
+
+	planSeq := mission.PlanFromJSON(gotSeq.PlanJSON)
+	planPar := mission.PlanFromJSON(gotPar.PlanJSON)
+
+	if planSeq.Parallel {
+		t.Error("SetPlan should leave Parallel=false")
+	}
+	if !planPar.Parallel {
+		t.Error("SetPlanParallel should set Parallel=true")
+	}
+}
+
 // --- Interrupt / external-state-change tests ---
 
 func TestRun_ExternalCancel_ExitsBetweenSteps(t *testing.T) {

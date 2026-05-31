@@ -161,6 +161,35 @@ The `cost.forecast` tool returns a pre-action token + USD estimate for
 a planned model call — useful in the agent's plan-the-plan turn before
 calling `mission.create`.
 
+## Dispatch modes — sequential vs parallel
+
+`mission.Manager` exposes two ways to set the plan:
+
+- **`SetPlan(missionID, steps)`** — the historical default. The
+  supervisor walks steps one at a time in plan order. Each step's
+  `DependsOn` field is ignored (steps run sequentially regardless).
+- **`SetPlanParallel(missionID, steps)`** — the supervisor walks
+  `Step.DependsOn` as a DAG. Each step whose dependencies are all
+  completed is dispatched as soon as the previous result is observed.
+  Multiple steps can be in flight at once. Steps with an empty
+  `DependsOn` list are ready immediately (no implicit chain).
+
+Failure policy is the same in both modes: the first step that fails
+terminates the mission. In parallel mode, peer steps that were
+already in flight before the failure get to publish their result;
+no new work is dispatched after the failure is observed.
+
+A plan with a dangling `DependsOn` reference (the named step
+doesn't exist) is detected as a deadlock and fails the mission with
+a clear error rather than hanging.
+
+Real wall-clock parallelism currently requires multiple cooperating
+workers — the bus broadcasts each dispatch to every subscriber, so
+gains depend on workers handling distinct in-flight tasks
+concurrently. The supervisor-side concurrency shipped in this
+release is the prerequisite for those follow-up worker-side
+improvements.
+
 ## What's not in this revision
 
 Several capabilities were considered for the initial release but
@@ -179,6 +208,6 @@ intentionally deferred:
 - **Manager tier (3-level hierarchy).** Workers report directly to the
   supervisor today. A manager layer between them, owning sub-domains,
   is part of the eventual hierarchy.
-- **Parallel step dispatch.** The supervisor walks steps sequentially
-  even when their `depends_on` graph would allow parallelism. Both bus
-  and store already support concurrent dispatch — this is policy work.
+- **Competing-consumer bus / per-worker concurrent handling.** Required
+  for `SetPlanParallel` to translate into true wall-clock parallelism
+  rather than just supervisor-side dispatch concurrency.

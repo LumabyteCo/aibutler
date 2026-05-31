@@ -93,6 +93,28 @@ type Event struct {
 	PayloadJSON string    `json:"payload_json,omitempty"`
 }
 
+// Plan is the serialised mission plan stored in Mission.PlanJSON.
+//
+// Parallel controls dispatch policy in the supervisor:
+//
+//   - false (default) — steps dispatch sequentially via an implicit
+//     position-based chain. Each step depends on the previous one,
+//     regardless of what's in Step.DependsOn. This preserves the
+//     historical mission-engine behaviour and is the safer default
+//     for plans the model didn't author with parallelism in mind.
+//   - true — the supervisor walks Step.DependsOn as an authoritative
+//     DAG. Steps whose dependencies are all completed run
+//     concurrently, up to the supervisor's per-mission worker pool.
+//     Steps with an empty DependsOn list are treated as ready
+//     immediately (no implicit chain).
+//
+// The Parallel field is omitempty so existing PlanJSON blobs ({steps:
+// [...]}) parse correctly with Parallel=false — no migration needed.
+type Plan struct {
+	Steps    []Step `json:"steps"`
+	Parallel bool   `json:"parallel,omitempty"`
+}
+
 // Sentinel errors.
 var (
 	ErrNotFound           = errors.New("mission: not found")
