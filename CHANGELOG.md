@@ -353,7 +353,7 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
-## [Unreleased]
+## [0.3.0] — 2026-06-01
 
 ### Added — LLM-driven replanning on step failure
 
@@ -485,4 +485,4 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 [0.2.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.1
 [0.2.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.2
 [0.2.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.3
-[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.2.3...HEAD
+[0.3.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.0
