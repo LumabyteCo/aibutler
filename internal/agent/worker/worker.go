@@ -1,10 +1,18 @@
 // Package worker is one half of the mission orchestration pair.
 //
-// A Worker subscribes to the supervisor's dispatch topic, executes one
-// task at a time via a pluggable TaskExecutor, and publishes results
-// back to the supervisor's event topic — both legs use the bus's
-// at-least-once delivery so neither dispatch nor result can be silently
-// dropped on a slow consumer.
+// A Worker subscribes to the supervisor's dispatch topic, executes
+// tasks via a pluggable TaskExecutor, and publishes results back to
+// the supervisor's event topic — both legs use the bus's at-least-
+// once delivery so neither dispatch nor result can be silently dropped
+// on a slow consumer.
+//
+// By default a Worker processes one task at a time. Set
+// Worker.MaxConcurrent > 1 to fan out: tasks run in their own
+// goroutines bounded by a semaphore, with the receive loop blocking
+// at the cap so the bus's competing-consumer dispatch keeps routing
+// new work to peer workers until a slot frees up. Useful when a
+// worker handles long-tail I/O-bound tasks (e.g. LLM calls) and the
+// pool size is smaller than the in-flight work the user wants.
 //
 // The Worker itself is execution-agnostic: it doesn't know how to "do"
 // anything. It just shuttles tasks through whatever TaskExecutor the
@@ -22,6 +30,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent/bus"
@@ -69,6 +78,26 @@ type Worker struct {
 	// PublishOpts controls how results are reported back to the
 	// supervisor. Zero values resolve to bus defaults.
 	PublishOpts bus.ReliableOpts
+	// MaxConcurrent caps how many tasks this worker may process at
+	// once. Default 1 (preserves the historical one-task-at-a-time
+	// semantics — fully backwards compatible). Set to N > 1 to fan
+	// out within this worker: up to N tasks run concurrently in
+	// their own goroutines. When the worker is at the cap the
+	// receive loop blocks before consuming the next dispatch, so the
+	// bus's competing-consumer routing keeps work flowing to peer
+	// workers until a slot frees up.
+	MaxConcurrent int
+}
+
+// defaultMaxConcurrent is the per-worker concurrency cap when
+// Worker.MaxConcurrent is unset or non-positive.
+const defaultMaxConcurrent = 1
+
+func (w *Worker) maxConcurrent() int {
+	if w.MaxConcurrent <= 0 {
+		return defaultMaxConcurrent
+	}
+	return w.MaxConcurrent
 }
 
 // New creates a Worker. agentID identifies this worker in result
@@ -87,8 +116,17 @@ func New(b *bus.Bus, agentID string, executor TaskExecutor) *Worker {
 // reserved for transient delivery problems the supervisor should retry
 // (no current callers; reserved for future use).
 //
-// Run is safe to call once per Worker — subsequent calls return
-// ErrAlreadyRunning. To re-use the bus, create a new Worker.
+// With Worker.MaxConcurrent == 1 (the default), Run handles tasks
+// strictly sequentially. With MaxConcurrent > 1, Run fans tasks out
+// into goroutines bounded by a semaphore: when N tasks are in flight,
+// the receive loop blocks before consuming the next dispatch, so the
+// bus's competing-consumer dispatch routes that dispatch to a peer
+// worker (or queues briefly until a slot frees up). Run does not
+// return until every in-flight handler completes, so cancellation
+// drains cleanly rather than leaking goroutines.
+//
+// Run is safe to call once per Worker. To re-use the bus, create a
+// new Worker.
 func (w *Worker) Run(ctx context.Context, missionID string) error {
 	if missionID == "" {
 		return errors.New("worker: missionID is required")
@@ -100,9 +138,24 @@ func (w *Worker) Run(ctx context.Context, missionID string) error {
 	// reach EXACTLY ONE worker in the pool, not be broadcast to every
 	// worker (which would duplicate the executor's work). The bus's
 	// competing-consumer mode handles fair distribution via per-publish
-	// shuffle + buffer-of-1 send semantics.
+	// shuffle + unbuffered send semantics with a fall-through timeout
+	// for busy peers.
 	in := w.bus.SubscribeCompeting(dispatchTopic)
 	defer w.bus.UnsubscribeCompeting(dispatchTopic, in)
+
+	// Bounded fan-out. sem capacity == maxConcurrent(): a token is
+	// acquired before each handler launches and released when it
+	// returns. With cap=1 the loop is effectively sequential (same as
+	// the historical Worker), preserving full backwards compatibility.
+	sem := make(chan struct{}, w.maxConcurrent())
+
+	// wg tracks in-flight handlers so Run can wait for them to drain
+	// before returning. Without this, a Run that exits on ctx.Done
+	// could leave handler goroutines running with a cancelled context
+	// — they'd eventually exit but only after the caller assumed
+	// shutdown completed.
+	var wg sync.WaitGroup
+	defer wg.Wait()
 
 	for {
 		select {
@@ -112,7 +165,25 @@ func (w *Worker) Run(ctx context.Context, missionID string) error {
 			if !ok {
 				return nil // channel closed (Unsubscribe)
 			}
-			w.handle(ctx, msg, eventsTopic)
+
+			// Acquire a concurrency slot. If the worker is already at
+			// the cap this blocks here — the receive loop won't pull
+			// another dispatch until a peer in-flight handler finishes.
+			// While this loop is blocked, the bus's competing-consumer
+			// publish will fall through to a peer worker via its
+			// SendTimeout, so dispatch continues to flow pool-wide.
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+
+			wg.Add(1)
+			go func(msg bus.ReliableMessage) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				w.handle(ctx, msg, eventsTopic)
+			}(msg)
 		}
 	}
 }

@@ -49,6 +49,15 @@ type Options struct {
 	// Executor is the TaskExecutor passed to every spawned worker. If
 	// nil, worker.EchoExecutor is used.
 	Executor worker.TaskExecutor
+	// WorkerMaxConcurrent caps how many tasks each spawned worker may
+	// process concurrently. Default 1 (preserves the historical
+	// one-task-at-a-time semantics — fully backwards compatible). Set
+	// to N > 1 to enable per-worker fan-out: each individual worker
+	// runs up to N tasks in goroutines bounded by a semaphore.
+	// Useful when worker tasks are I/O-bound (LLM calls, slow HTTP)
+	// and the pool size is smaller than the in-flight work the
+	// caller wants.
+	WorkerMaxConcurrent int
 	// Replanner, if non-nil, is set on every spawned Supervisor as
 	// the recovery policy for step failures. nil (the default) keeps
 	// the historical fail-on-first-step-failure behaviour. The
@@ -224,6 +233,9 @@ func (r *Runtime) spawn(parentCtx context.Context, missionID string) {
 	}
 
 	w := worker.New(r.bus, "worker-"+short, r.opts.Executor)
+	if r.opts.WorkerMaxConcurrent > 0 {
+		w.MaxConcurrent = r.opts.WorkerMaxConcurrent
+	}
 	s := supervisor.New(r.mgr, r.store, r.bus, "supervisor-"+short)
 	if r.opts.Replanner != nil {
 		s.Replanner = r.opts.Replanner

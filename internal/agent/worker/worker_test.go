@@ -250,3 +250,218 @@ func TestRun_HandlesMultipleTasks_Sequentially(t *testing.T) {
 		t.Errorf("step order wrong: %v", seen)
 	}
 }
+
+// --- Per-worker concurrent handling tests ---
+
+// TestRun_MaxConcurrent_GreaterThanOne_RunsTasksInParallel verifies
+// that a single worker with MaxConcurrent=3 completes 3 concurrent
+// tasks in roughly one task's wall-clock time, not three.
+func TestRun_MaxConcurrent_GreaterThanOne_RunsTasksInParallel(t *testing.T) {
+	b := bus.New()
+	events := b.SubscribeReliable("mission.MP.events")
+
+	stepDelay := 200 * time.Millisecond
+	executor := func(ctx context.Context, _ Task) (string, error) {
+		select {
+		case <-time.After(stepDelay):
+			return "ok", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	w := New(b, "w-par", executor)
+	w.MaxConcurrent = 3
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx, "MP") }()
+	time.Sleep(50 * time.Millisecond)
+
+	start := time.Now()
+	for _, stepID := range []string{"a", "b", "c"} {
+		taskJSON, _ := json.Marshal(Task{StepID: stepID, MissionID: "MP", Task: "x"})
+		if err := b.PublishCompeting(ctx, "mission.MP.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 1 * time.Second}); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+	}
+
+	for i := 0; i < 3; i++ {
+		select {
+		case msg := <-events:
+			msg.Ack()
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out after %d/3 results", i)
+		}
+	}
+	elapsed := time.Since(start)
+	t.Logf("3 tasks × %s with MaxConcurrent=3 on one worker: %s wall-clock", stepDelay, elapsed)
+
+	// Sequential would be ~600ms; parallel within one worker should
+	// be roughly 200-350ms (one step + scheduling jitter). Bound at
+	// 500ms for CI safety — well under the sequential floor.
+	if elapsed >= 500*time.Millisecond {
+		t.Errorf("wall-clock = %s, want < 500ms (sequential would be ~600ms)", elapsed)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestRun_MaxConcurrent_RespectsCap verifies that with MaxConcurrent=2
+// and 4 tasks queued, no more than 2 are ever in flight at once.
+func TestRun_MaxConcurrent_RespectsCap(t *testing.T) {
+	b := bus.New()
+	events := b.SubscribeReliable("mission.MC.events")
+
+	var inFlight atomic.Int32
+	var maxObserved atomic.Int32
+	executor := func(_ context.Context, _ Task) (string, error) {
+		cur := inFlight.Add(1)
+		// atomic max update — only if cur > maxObserved.
+		for {
+			prev := maxObserved.Load()
+			if cur <= prev || maxObserved.CompareAndSwap(prev, cur) {
+				break
+			}
+		}
+		time.Sleep(150 * time.Millisecond)
+		inFlight.Add(-1)
+		return "ok", nil
+	}
+	w := New(b, "w-cap", executor)
+	w.MaxConcurrent = 2
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx, "MC") }()
+	time.Sleep(50 * time.Millisecond)
+
+	for _, stepID := range []string{"a", "b", "c", "d"} {
+		taskJSON, _ := json.Marshal(Task{StepID: stepID, MissionID: "MC", Task: "x"})
+		if err := b.PublishCompeting(ctx, "mission.MC.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 2 * time.Second}); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+	}
+
+	for i := 0; i < 4; i++ {
+		select {
+		case msg := <-events:
+			msg.Ack()
+		case <-time.After(3 * time.Second):
+			t.Fatalf("timed out after %d/4 results", i)
+		}
+	}
+
+	cancel()
+	<-done
+
+	if got := maxObserved.Load(); got > 2 {
+		t.Errorf("max in-flight = %d, want <= MaxConcurrent (2)", got)
+	}
+	if got := maxObserved.Load(); got < 2 {
+		t.Errorf("max in-flight = %d, want exactly 2 (cap should be reached, not just respected)", got)
+	}
+}
+
+// TestRun_MaxConcurrent_DrainsInFlightBeforeReturning verifies that
+// Run waits for any in-flight handler goroutines to complete before
+// returning on cancellation — no leaked goroutines, no spurious
+// missed results.
+func TestRun_MaxConcurrent_DrainsInFlightBeforeReturning(t *testing.T) {
+	b := bus.New()
+
+	var inFlight atomic.Int32
+	executor := func(ctx context.Context, _ Task) (string, error) {
+		inFlight.Add(1)
+		defer inFlight.Add(-1)
+		// Long-ish sleep that ctx cancellation should be able to
+		// interrupt. The handler must finish (one way or another)
+		// before Run returns.
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Done():
+		}
+		return "ok", nil
+	}
+	w := New(b, "w-drain", executor)
+	w.MaxConcurrent = 3
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx, "MD") }()
+	time.Sleep(50 * time.Millisecond)
+
+	for _, stepID := range []string{"a", "b", "c"} {
+		taskJSON, _ := json.Marshal(Task{StepID: stepID, MissionID: "MD", Task: "x"})
+		_ = b.PublishCompeting(ctx, "mission.MD.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 1 * time.Second})
+	}
+
+	// Give time for all 3 to be in flight.
+	time.Sleep(100 * time.Millisecond)
+	if got := inFlight.Load(); got != 3 {
+		t.Errorf("inFlight before cancel = %d, want 3", got)
+	}
+
+	cancel()
+	select {
+	case <-done:
+		// Run returned — verify no handlers are still in flight.
+		if got := inFlight.Load(); got != 0 {
+			t.Errorf("inFlight after Run returned = %d, want 0 (handlers should drain before Run exits)", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return within 2s after cancellation")
+	}
+}
+
+// TestRun_MaxConcurrent_Default1_PreservesSequentialBehavior verifies
+// that an unset (zero) MaxConcurrent gives identical semantics to
+// MaxConcurrent=1: only one task in flight at any moment.
+func TestRun_MaxConcurrent_Default1_PreservesSequentialBehavior(t *testing.T) {
+	b := bus.New()
+	events := b.SubscribeReliable("mission.MS.events")
+
+	var inFlight atomic.Int32
+	var maxObserved atomic.Int32
+	executor := func(_ context.Context, _ Task) (string, error) {
+		cur := inFlight.Add(1)
+		for {
+			prev := maxObserved.Load()
+			if cur <= prev || maxObserved.CompareAndSwap(prev, cur) {
+				break
+			}
+		}
+		time.Sleep(75 * time.Millisecond)
+		inFlight.Add(-1)
+		return "ok", nil
+	}
+	w := New(b, "w-seq", executor) // MaxConcurrent unset → zero → default 1
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx, "MS") }()
+	time.Sleep(50 * time.Millisecond)
+
+	for _, stepID := range []string{"a", "b", "c"} {
+		taskJSON, _ := json.Marshal(Task{StepID: stepID, MissionID: "MS", Task: "x"})
+		_ = b.PublishCompeting(ctx, "mission.MS.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 1 * time.Second})
+	}
+
+	for i := 0; i < 3; i++ {
+		select {
+		case msg := <-events:
+			msg.Ack()
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out after %d/3 results", i)
+		}
+	}
+	cancel()
+	<-done
+
+	if got := maxObserved.Load(); got != 1 {
+		t.Errorf("max in-flight = %d, want 1 (default MaxConcurrent should be sequential)", got)
+	}
+}

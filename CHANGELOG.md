@@ -353,6 +353,48 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [Unreleased]
+
+### Added — Per-worker concurrent handling
+
+- **`Worker.MaxConcurrent` field.** Caps how many tasks a single
+  worker may process at once. Default 1 (preserves the historical
+  one-task-at-a-time semantics — fully backwards compatible). Set
+  to N > 1 to fan tasks out into goroutines bounded by an internal
+  semaphore: when the worker is at the cap its receive loop blocks
+  before consuming the next dispatch, so the bus's competing-
+  consumer routing keeps pushing work to peer workers (or queues
+  briefly until a slot frees up).
+- **Clean shutdown.** `Worker.Run` now waits for every in-flight
+  handler to complete before returning on context cancellation. With
+  `MaxConcurrent=1` (the default) this is a single goroutine wait;
+  with `MaxConcurrent=N` it's all N. No leaked goroutines and no
+  silent result-publish races during shutdown.
+- **`missionruntime.Options.WorkerMaxConcurrent`.** Runtime-level
+  configuration plumbed through to every spawned `Worker`. Same
+  zero-value-is-1 default. Useful when wiring the runtime to an
+  LLM-backed executor: a single worker with `MaxConcurrent=5` can
+  drive five concurrent LLM API calls rather than serialising them.
+
+### Performance
+
+- **9× wall-clock parallelism upper bound.** With 3 workers ×
+  `MaxConcurrent=3`, up to 9 LLM API calls can be in flight
+  simultaneously while the goroutine count and runtime overhead stay
+  small. Verified by test: 3 tasks × 200 ms each on one worker with
+  `MaxConcurrent=3` complete in ~205 ms wall-clock vs ~600 ms
+  sequential.
+
+### Notes
+
+- Per-worker concurrency multiplies with cross-worker parallelism
+  (the competing-consumer bus shipped in v0.2.2). With M workers ×
+  `MaxConcurrent=N`, the effective in-flight cap is M×N tasks
+  pool-wide. Existing single-task-per-worker deployments see no
+  behaviour change.
+
+---
+
 ## [0.3.0] — 2026-06-01
 
 ### Added — LLM-driven replanning on step failure
@@ -486,3 +528,4 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 [0.2.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.2
 [0.2.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.3
 [0.3.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.0
+[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.3.0...HEAD

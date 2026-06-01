@@ -33,11 +33,28 @@ the mission is marked `failed` and the supervisor stops.
 
 ### Worker
 
-Receives one task at a time on the mission's dispatch topic. Runs the
-task through a `TaskExecutor` callback (the LLM-backed default wraps the
-agent loop with the configured model adapter, tool dispatcher, and
-capability set), reports the result on the events topic, and waits for
-the next task.
+Receives tasks on the mission's dispatch topic. Runs each task through
+a `TaskExecutor` callback (the LLM-backed default wraps the agent loop
+with the configured model adapter, tool dispatcher, and capability
+set), reports the result on the events topic, and continues.
+
+**Concurrency.** By default a worker processes one task at a time —
+fully backwards-compatible with v0.1/v0.2 semantics. Set
+`Worker.MaxConcurrent` (or `missionruntime.Options.WorkerMaxConcurrent`)
+to N > 1 to enable per-worker fan-out: each worker runs up to N tasks
+concurrently in their own goroutines, bounded by an internal
+semaphore. When at the cap the worker's receive loop blocks before
+consuming the next dispatch, so the bus's competing-consumer routing
+keeps pushing work to peer workers (or briefly queues until a slot
+frees up). On context cancellation `Worker.Run` waits for every
+in-flight handler to complete before returning, so shutdown is clean
+and goroutines do not leak.
+
+Useful when worker tasks are I/O-bound — e.g. LLM API calls — and the
+pool size is smaller than the in-flight work the caller wants. With 3
+workers × `MaxConcurrent=3`, up to 9 LLM calls can be in flight
+simultaneously while the goroutine count and runtime overhead stay
+small.
 
 ## Lifecycle
 
@@ -281,8 +298,3 @@ intentionally deferred:
 - **Manager tier (3-level hierarchy).** Workers report directly to the
   supervisor today. A manager layer between them, owning sub-domains,
   is part of the eventual hierarchy.
-- **Per-worker concurrent handling.** Each worker still handles one
-  task at a time within its own goroutine — competing-consumer
-  delivery distributes work across the pool, but a single worker
-  doesn't fan out further. Long-tail tasks could in principle be
-  handled in goroutines within one worker; that's a follow-up.
