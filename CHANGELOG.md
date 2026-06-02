@@ -353,7 +353,7 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
-## [Unreleased]
+## [0.3.1] — 2026-06-02
 
 ### Added — Mission dashboard panel in webchat
 
@@ -591,4 +591,4 @@ dashboard panel is read-only by design.
 [0.2.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.2
 [0.2.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.3
 [0.3.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.0
-[Unreleased]: https://github.com/LumabyteCo/aibutler/compare/v0.3.0...HEAD
+[0.3.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.1
