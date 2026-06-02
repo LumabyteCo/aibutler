@@ -156,9 +156,18 @@ func (w *Worker) Run(ctx context.Context, missionID string) error {
 	defer w.bus.UnsubscribeCompeting(dispatchTopic, in)
 
 	// Bounded fan-out. sem capacity == maxConcurrent(): a token is
-	// acquired before each handler launches and released when it
-	// returns. With cap=1 the loop is effectively sequential (same as
-	// the historical Worker), preserving full backwards compatibility.
+	// acquired BEFORE the worker competes for a dispatch, and released
+	// when the handler goroutine returns. With cap=1 the loop is
+	// effectively sequential (matches the historical Worker), preserving
+	// full backwards compatibility.
+	//
+	// The "acquire before receive" ordering matters: if the worker
+	// received from `in` first and then blocked on sem, a fully-saturated
+	// worker could still pull a message off the dispatch chan and queue
+	// it internally — leaving idle peer workers untouched. Acquiring
+	// sem first means a saturated worker never reads from `in`, so the
+	// bus's competing-consumer SendTimeout fall-through correctly routes
+	// the next dispatch to an idle peer.
 	sem := make(chan struct{}, w.maxConcurrent())
 
 	// wg tracks in-flight handlers so Run can wait for them to drain
@@ -170,26 +179,25 @@ func (w *Worker) Run(ctx context.Context, missionID string) error {
 	defer wg.Wait()
 
 	for {
+		// Stage 1: claim a concurrency slot. Block here while at the
+		// cap so the bus's PublishCompeting falls through to peer
+		// workers via SendTimeout rather than queuing inside this one.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		// Stage 2: have a slot — now compete for the next dispatch.
 		select {
 		case <-ctx.Done():
+			<-sem
 			return ctx.Err()
 		case msg, ok := <-in:
 			if !ok {
+				<-sem
 				return nil // channel closed (Unsubscribe)
 			}
-
-			// Acquire a concurrency slot. If the worker is already at
-			// the cap this blocks here — the receive loop won't pull
-			// another dispatch until a peer in-flight handler finishes.
-			// While this loop is blocked, the bus's competing-consumer
-			// publish will fall through to a peer worker via its
-			// SendTimeout, so dispatch continues to flow pool-wide.
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-
 			wg.Add(1)
 			go func(msg bus.ReliableMessage) {
 				defer wg.Done()

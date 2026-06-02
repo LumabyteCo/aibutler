@@ -490,7 +490,15 @@ func TestRun_Parallel_ConcurrentWorkers_AchievesWallClockParallelism(t *testing.
 	defer cancel()
 
 	m, _ := mgr.Create(ctx, "real-parallel", "", 0)
-	const stepDelay = 200 * time.Millisecond
+	// Each step takes 500ms — long enough that the
+	// per-dispatch shuffle + busy-peer fall-through overhead in the
+	// competing-consumer bus (worst case ~50ms × 3 steps = 150ms) is
+	// dwarfed by the work itself. Sequential floor: 1500ms. Parallel
+	// best case: ~500ms. Parallel worst case (busy shuffle): ~650ms.
+	// CI-safe bound at 1100ms leaves >400ms of headroom for slow
+	// runners under -race while still proving wall-clock parallelism
+	// vs the 1500ms sequential floor.
+	const stepDelay = 500 * time.Millisecond
 	if err := mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
 		{Task: "A"}, {Task: "B"}, {Task: "C"},
 	}); err != nil {
@@ -531,18 +539,20 @@ func TestRun_Parallel_ConcurrentWorkers_AchievesWallClockParallelism(t *testing.
 		t.Errorf("state = %s, want completed", got.State)
 	}
 
-	// Sequential would take 3 × stepDelay = 600ms. Real wall-clock
-	// parallelism should complete in ~stepDelay plus some bus and
-	// scheduling overhead — best case ~220ms locally, worst case
-	// ~370ms when shuffle picks busy peers first and falls through
-	// via SendTimeout. Allow a generous CI-safe bound at 500ms:
-	// anything under that demonstrates parallelism vs sequential's
-	// 600ms floor.
-	if elapsed >= 500*time.Millisecond {
-		t.Errorf("expected parallel wall-clock < 500ms with 3 workers × %s each, got %s",
-			stepDelay, elapsed)
+	// Sequential would take 3 × stepDelay = 1500ms. Real wall-clock
+	// parallelism completes in ~stepDelay plus bus and scheduling
+	// overhead — best case ~520ms, worst case ~650ms when the shuffle
+	// picks busy peers first and falls through via SendTimeout.
+	// Bound at 1100ms gives slow CI runners under -race plenty of
+	// headroom while still proving parallelism vs the 1500ms
+	// sequential floor.
+	const bound = 1100 * time.Millisecond
+	if elapsed >= bound {
+		t.Errorf("expected parallel wall-clock < %s with 3 workers × %s each, got %s",
+			bound, stepDelay, elapsed)
 	}
-	t.Logf("3 independent steps × %s with 3 workers: %s wall-clock", stepDelay, elapsed)
+	t.Logf("3 independent steps × %s with 3 workers: %s wall-clock (sequential floor = %s)",
+		stepDelay, elapsed, 3*stepDelay)
 }
 
 // TestSetPlanParallel_PersistsFlag verifies the Plan.Parallel flag
