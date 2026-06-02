@@ -39,6 +39,9 @@
       <button class="nav-item" data-panel="apps" type="button">
         <span class="nav-icon">🔗</span><span class="nav-label">Connected Apps</span>
       </button>
+      <button class="nav-item" data-panel="missions" type="button">
+        <span class="nav-icon">🎯</span><span class="nav-label">Missions</span>
+      </button>
       <button class="nav-item" data-panel="spending" type="button">
         <span class="nav-icon">💰</span><span class="nav-label">Spending</span>
       </button>
@@ -245,6 +248,54 @@
             <span class="app-name">Custom</span>
             <span class="app-desc">Any app with a webhook</span>
           </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Missions panel ============ -->
+    <section class="panel panel-missions" data-panel="missions">
+      <div class="panel-inner">
+        <h2 class="panel-heading">Missions</h2>
+        <p class="panel-sub">Long-running goals — what's planned, what's in flight, what shipped.</p>
+
+        <div class="stats-row">
+          <div class="ministat"><span class="ministat-value" id="missions-stat-active">—</span><span class="ministat-label">Active</span></div>
+          <div class="ministat"><span class="ministat-value" id="missions-stat-completed">—</span><span class="ministat-label">Completed</span></div>
+          <div class="ministat"><span class="ministat-value" id="missions-stat-failed">—</span><span class="ministat-label">Failed</span></div>
+          <div class="ministat"><span class="ministat-value" id="missions-stat-cost">—</span><span class="ministat-label">Total cost</span></div>
+        </div>
+
+        <div class="mission-toolbar">
+          <label class="mission-filter">
+            <input type="checkbox" id="missions-include-done"> Show completed / failed / cancelled
+          </label>
+          <button type="button" id="missions-refresh" class="linklike">↻ Refresh</button>
+        </div>
+
+        <h3 class="section-heading">Recent missions</h3>
+        <div id="missions-list" class="mission-list">
+          <div class="empty-state"><div class="empty-icon">🎯</div><p>Loading missions…</p></div>
+        </div>
+
+        <!-- Detail subview (hidden until a mission is clicked) -->
+        <div id="mission-detail" class="mission-detail" hidden>
+          <button type="button" id="mission-detail-back" class="linklike">← Back to list</button>
+          <h3 class="section-heading mission-detail-goal">—</h3>
+          <div class="mission-detail-meta muted"></div>
+
+          <h4 class="mission-section-heading">Steps</h4>
+          <div id="mission-detail-steps" class="mission-step-list">
+            <div class="empty-state muted">No steps yet.</div>
+          </div>
+
+          <h4 class="mission-section-heading">Live event tail</h4>
+          <div id="mission-detail-events" class="mission-event-list">
+            <div class="empty-state muted">No events yet.</div>
+          </div>
+          <div class="panel-hint">
+            💡 Events refresh every 2 seconds while this panel is open.
+            Pause / resume / cancel via <code>mission.interrupt</code> in chat.
+          </div>
         </div>
       </div>
     </section>

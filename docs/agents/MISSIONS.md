@@ -158,8 +158,31 @@ All under capability `tool.mission`:
 
 ## Dashboard
 
-The webchat dashboard exposes read-only mission state under
-`/api/dashboard/missions`:
+The webchat ships with a **Missions** panel in the sidebar that
+consumes the read-only mission state APIs. Click 🎯 Missions in the
+sidebar nav to open it. The panel surfaces:
+
+- **Header stats** — active / completed / failed counts and total cost
+  across all missions.
+- **Recent missions list** — goal, state badge (with pulsing animation
+  for `waiting_user`), step count, cost, age. Toggle to include
+  completed / failed / cancelled.
+- **Per-mission detail subview** — click a mission to drill in. Shows
+  every step with its state (colour-coded left border), the worker's
+  output or error inline, and a **live event tail** that polls every
+  2 seconds while the panel is open. The tail shows `mission.*`,
+  `supervisor.*`, and `worker.*` events including the new
+  `mission.confirmation_required` and `mission.replanned` events.
+
+The panel is fully theme-aware (light/dark) and mobile-responsive.
+Polling stops automatically when the panel closes — no SSE or
+WebSocket overhead.
+
+All state changes (pause / resume / cancel, mission creation, plan
+authoring) still happen via the agent-facing `mission.*` tools or the
+mission engine itself — the dashboard is read-only by design.
+
+Underlying APIs (also callable directly):
 
 - `GET /api/dashboard/missions` — list with filters
 - `GET /api/dashboard/missions/stats` — quick counts and cost totals

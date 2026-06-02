@@ -355,6 +355,34 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ## [Unreleased]
 
+### Added — Mission dashboard panel in webchat
+
+- **New "Missions" panel in the sidebar nav.** Consumes the existing
+  `/api/dashboard/missions/*` endpoints (shipped in v0.1.0) and
+  renders them as a first-class UI surface alongside Chat, Home,
+  Memories, Connected Apps, and Spending.
+- **Header stats** — active / completed / failed counts and total
+  cost across all missions, sourced from `/api/dashboard/missions/stats`.
+- **Recent missions list** — goal, state badge with `waiting_user`
+  pulse animation, step count, cost, age. Toggle to include
+  terminal-state missions.
+- **Per-mission detail subview** — click a mission to drill in. Every
+  step is rendered with its state (colour-coded left border:
+  green=completed, blue=running, red=failed, orange=waiting_user,
+  grey=cancelled), the worker's output or error inline, and a **live
+  event tail** showing the most recent 50 events newest-first
+  including the v0.3.x `mission.confirmation_required` and
+  `mission.replanned` events.
+- **2-second polling** while the panel is open; stops automatically on
+  panel switch. No SSE / WebSocket — append-only event log + low poll
+  rate keeps the implementation simple and reconnect-free.
+- **Theme-aware** (light/dark) and **mobile-responsive** — matches
+  the existing webchat panel conventions.
+
+All state changes (pause / resume / cancel, mission creation, plan
+authoring) still happen via the agent-facing `mission.*` tools — the
+dashboard panel is read-only by design.
+
 ### Added — Mid-mission auto-pause on capability confirmation
 
 - **`capability.ConfirmationRequiredError` + `capability.ErrConfirmationRequired`.**

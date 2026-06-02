@@ -71,7 +71,7 @@
   });
 
   // ============ Sidebar + panels ============
-  const PANEL_TITLES={chat:"AI Butler",home:"Home",memories:"Memories",apps:"Connected Apps",spending:"Spending",settings:"Settings"};
+  const PANEL_TITLES={chat:"AI Butler",home:"Home",memories:"Memories",apps:"Connected Apps",missions:"Missions",spending:"Spending",settings:"Settings"};
   function switchPanel(name){
     panels.forEach(p=>{
       p.classList.toggle("active",p.getAttribute("data-panel")===name);
@@ -86,6 +86,7 @@
     if(name==="home")loadHomeData();
     if(name==="memories")loadMemoriesData();
     if(name==="apps")loadAppsData();
+    if(name==="missions"){loadMissionsData();startMissionsPolling()}else{stopMissionsPolling()}
     if(name==="spending")loadSpendingData();
     if(name==="settings")loadSettingsData();
   }
@@ -396,6 +397,176 @@
       if(bd)bd.innerHTML='<div class="empty-state muted">Couldn\'t load spending data.</div>';
     });
   }
+
+  // Missions panel — list, detail subview, and live event tail.
+  //
+  // Polling strategy: a 2-second interval refreshes whichever view is
+  // active (list or detail). The interval starts when the panel opens
+  // and stops on every panel switch. No SSE / WebSocket here —
+  // mission events are append-only and a 2s polling cadence is plenty
+  // for a dashboard view. Cuts complexity vs a long-lived stream
+  // (no reconnect handling, no stale-cursor logic).
+  let missionsPollInterval=null;
+  let missionsActiveDetailID=null;
+
+  function missionStateBadge(state){
+    const labels={created:"created",planned:"planned",running:"running",waiting_user:"waiting user",completed:"completed",failed:"failed",cancelled:"cancelled"};
+    return '<span class="mission-state mission-state-'+escapeHtml(state||"unknown")+'">'+escapeHtml(labels[state]||state||"unknown")+'</span>';
+  }
+
+  function loadMissionsData(){
+    if(missionsActiveDetailID){loadMissionDetail(missionsActiveDetailID);return}
+    fetch("/api/dashboard/missions/stats").then(r=>r.ok?r.json():null).then(stats=>{
+      if(!stats)return;
+      const set=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=val};
+      set("missions-stat-active",(stats.active||0).toString());
+      set("missions-stat-completed",(stats.completed||0).toString());
+      set("missions-stat-failed",(stats.failed||0).toString());
+      set("missions-stat-cost",fmtUSD(stats.total_cost_usd||0));
+    }).catch(()=>{});
+
+    const includeDone=document.getElementById("missions-include-done");
+    const params=new URLSearchParams();
+    params.set("limit","30");
+    if(includeDone&&includeDone.checked)params.set("include_done","true");
+    fetch("/api/dashboard/missions?"+params.toString()).then(r=>r.ok?r.json():null).then(rows=>{
+      const list=document.getElementById("missions-list");
+      if(!list)return;
+      if(!rows||rows.length===0){
+        list.innerHTML='<div class="empty-state"><div class="empty-icon">🎯</div><p>No missions yet.<br>Create one via the <code>mission.create</code> tool in chat.</p></div>';
+        return;
+      }
+      list.innerHTML="";
+      rows.forEach(m=>{
+        const item=document.createElement("button");
+        item.type="button";
+        item.className="mission-item";
+        item.setAttribute("data-mission-id",m.id);
+        const cost=fmtUSD(m.cost_so_far_usd||0);
+        item.innerHTML=
+          '<div class="mission-item-row">'+
+            '<span class="mission-item-goal">'+escapeHtml(m.goal||"(no goal)")+'</span>'+
+            missionStateBadge(m.state)+
+          '</div>'+
+          '<div class="mission-item-meta muted">'+
+            escapeHtml(m.step_count+" steps")+' · '+
+            escapeHtml(cost)+' · '+
+            escapeHtml(fmtRelative(m.created_at))+
+          '</div>';
+        item.addEventListener("click",()=>{
+          missionsActiveDetailID=m.id;
+          showMissionDetail();
+          loadMissionDetail(m.id);
+        });
+        list.appendChild(item);
+      });
+    }).catch(()=>{
+      const list=document.getElementById("missions-list");
+      if(list)list.innerHTML='<div class="empty-state muted">Couldn\'t load missions.</div>';
+    });
+  }
+
+  function showMissionDetail(){
+    const list=document.getElementById("missions-list");
+    const detail=document.getElementById("mission-detail");
+    if(list)list.hidden=true;
+    if(detail)detail.hidden=false;
+  }
+  function hideMissionDetail(){
+    const list=document.getElementById("missions-list");
+    const detail=document.getElementById("mission-detail");
+    if(list)list.hidden=false;
+    if(detail)detail.hidden=true;
+    missionsActiveDetailID=null;
+  }
+
+  function loadMissionDetail(missionID){
+    fetch("/api/dashboard/missions/"+encodeURIComponent(missionID)).then(r=>r.ok?r.json():null).then(data=>{
+      if(!data||!data.mission)return;
+      const m=data.mission;
+      const goal=document.querySelector("#mission-detail .mission-detail-goal");
+      const meta=document.querySelector("#mission-detail .mission-detail-meta");
+      if(goal)goal.textContent=m.goal||"(no goal)";
+      if(meta){
+        const cost=fmtUSD(m.cost_so_far_usd||0);
+        meta.innerHTML=
+          missionStateBadge(m.state)+' · '+
+          escapeHtml(m.step_count+" steps")+' · '+
+          escapeHtml(m.event_count+" events")+' · '+
+          escapeHtml(cost)+' · created '+escapeHtml(fmtRelative(m.created_at));
+      }
+      const stepsEl=document.getElementById("mission-detail-steps");
+      if(stepsEl){
+        if(!data.steps||data.steps.length===0){
+          stepsEl.innerHTML='<div class="empty-state muted">No steps planned yet.</div>';
+        }else{
+          stepsEl.innerHTML="";
+          data.steps.forEach((s,i)=>{
+            const row=document.createElement("div");
+            row.className="mission-step mission-step-state-"+escapeHtml(s.state||"unknown");
+            const errBlock=s.error?'<div class="mission-step-error">'+escapeHtml(s.error)+'</div>':'';
+            const outBlock=s.output?'<div class="mission-step-output muted">'+escapeHtml(s.output)+'</div>':'';
+            row.innerHTML=
+              '<div class="mission-step-row">'+
+                '<span class="mission-step-idx">#'+(i+1)+'</span>'+
+                '<span class="mission-step-task">'+escapeHtml(s.task||"")+'</span>'+
+                missionStateBadge(s.state)+
+              '</div>'+
+              errBlock+outBlock;
+            stepsEl.appendChild(row);
+          });
+        }
+      }
+    }).catch(()=>{});
+
+    fetch("/api/dashboard/missions/"+encodeURIComponent(missionID)+"/events?limit=50").then(r=>r.ok?r.json():null).then(events=>{
+      const evEl=document.getElementById("mission-detail-events");
+      if(!evEl)return;
+      if(!events||events.length===0){
+        evEl.innerHTML='<div class="empty-state muted">No events yet.</div>';
+        return;
+      }
+      evEl.innerHTML="";
+      // Show newest first.
+      events.slice().reverse().forEach(e=>{
+        const row=document.createElement("div");
+        row.className="mission-event";
+        const payload=e.payload_json?escapeHtml(e.payload_json):"";
+        row.innerHTML=
+          '<span class="mission-event-time muted">'+escapeHtml(fmtRelative(e.timestamp))+'</span>'+
+          '<span class="mission-event-type">'+escapeHtml(e.event_type)+'</span>'+
+          (payload?'<span class="mission-event-payload muted">'+payload+'</span>':'');
+        evEl.appendChild(row);
+      });
+    }).catch(()=>{});
+  }
+
+  function startMissionsPolling(){
+    if(missionsPollInterval)return;
+    missionsPollInterval=setInterval(loadMissionsData,2000);
+  }
+  function stopMissionsPolling(){
+    if(missionsPollInterval){clearInterval(missionsPollInterval);missionsPollInterval=null}
+  }
+
+  // Wire up missions panel controls. Idempotent — safe to call once on
+  // page load; the listeners stay attached for the page's lifetime.
+  function initMissionsPanel(){
+    const back=document.getElementById("mission-detail-back");
+    if(back)back.addEventListener("click",()=>{
+      hideMissionDetail();
+      loadMissionsData();
+    });
+    const refresh=document.getElementById("missions-refresh");
+    if(refresh)refresh.addEventListener("click",loadMissionsData);
+    const includeDone=document.getElementById("missions-include-done");
+    if(includeDone)includeDone.addEventListener("change",()=>{
+      missionsActiveDetailID=null;
+      hideMissionDetail();
+      loadMissionsData();
+    });
+  }
+  initMissionsPanel();
 
   // Settings panel — show activity summary
   function loadSettingsData(){

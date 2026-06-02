@@ -292,6 +292,89 @@ func TestIndexReferencesStaticAssets(t *testing.T) {
 	}
 }
 
+// TestIndexContainsMissionsPanel verifies the v0.3.x missions panel
+// markup is present in the embedded index.html. The panel consumes
+// the existing /api/dashboard/missions/* endpoints (already covered
+// by handler tests in internal/webchat/dashboard) — this test just
+// ensures the frontend surface is wired up: nav button, panel
+// section, and the live-tail / detail subview placeholders.
+func TestIndexContainsMissionsPanel(t *testing.T) {
+	cfg := webchat.DefaultConfig()
+	cfg.Port = 18101
+	a := webchat.New(cfg)
+
+	handler := func(_ context.Context, _ channel.Envelope) error { return nil }
+	if err := a.Start(context.Background(), handler); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Stop(context.Background())
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, err := http.Get("http://localhost:18101/")
+	if err != nil {
+		t.Skipf("could not connect: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	html := string(body)
+
+	wantMarkers := []string{
+		`data-panel="missions"`,        // sidebar nav button + panel section both carry this
+		`id="missions-list"`,           // mission list container
+		`id="mission-detail"`,          // detail subview container
+		`id="mission-detail-events"`,   // live event tail
+		`id="missions-include-done"`,   // filter toggle
+		`id="missions-stat-active"`,    // header stats tile
+	}
+	for _, want := range wantMarkers {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing missions-panel marker %q", want)
+		}
+	}
+}
+
+// TestStaticJSReferencesMissionLoader verifies the v0.3.x chat.js
+// bundle includes the missions panel wiring — the loader and the
+// polling helpers. Without this, the panel HTML would render empty.
+func TestStaticJSReferencesMissionLoader(t *testing.T) {
+	cfg := webchat.DefaultConfig()
+	cfg.Port = 18102
+	a := webchat.New(cfg)
+
+	handler := func(_ context.Context, _ channel.Envelope) error { return nil }
+	if err := a.Start(context.Background(), handler); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Stop(context.Background())
+
+	time.Sleep(100 * time.Millisecond)
+
+	resp, err := http.Get("http://localhost:18102/static/chat.js")
+	if err != nil {
+		t.Skipf("could not connect: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	js := string(body)
+
+	wantSymbols := []string{
+		"loadMissionsData",
+		"loadMissionDetail",
+		"startMissionsPolling",
+		"/api/dashboard/missions",
+	}
+	for _, want := range wantSymbols {
+		if !strings.Contains(js, want) {
+			t.Errorf("chat.js missing missions-panel symbol %q", want)
+		}
+	}
+}
+
 func TestWebSocketEchoResponse(t *testing.T) {
 	cfg := webchat.DefaultConfig()
 	cfg.Port = 18098
