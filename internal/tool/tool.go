@@ -198,6 +198,18 @@ func (d *Dispatcher) ExecuteWithCaps(ctx context.Context, call agent.ToolCall, c
 		if !result.Allowed {
 			return "", fmt.Errorf("capability denied: %s (reason: %s)", cap, result.Reason)
 		}
+		// Allowed-but-confirmation-required is a structured signal, not
+		// a hard denial. The mission engine catches this via errors.As
+		// and auto-pauses the mission to waiting_user with a payload
+		// the UI can render. Outside a mission context the error
+		// surfaces as an ordinary tool failure — the agent loop logs
+		// it and the user retries after granting explicit confirmation.
+		if result.RequiresConfirmation {
+			return "", &capability.ConfirmationRequiredError{
+				Capability: cap,
+				Reason:     result.Reason,
+			}
+		}
 	}
 
 	// 3. Run pre-tool hooks — if denied, return denial message (skip execution).

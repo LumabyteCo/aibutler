@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent/bus"
+	"github.com/LumabyteCo/aibutler/internal/capability"
 )
 
 // Task is the dispatch payload — what the supervisor wants the worker
@@ -46,13 +47,24 @@ type Task struct {
 }
 
 // Result is the event payload emitted on worker completion or failure.
+//
+// NeedsConfirmation distinguishes "this step did not run because the
+// underlying capability requires explicit user approval" from a real
+// failure. When NeedsConfirmation=true the supervisor auto-pauses the
+// mission to waiting_user instead of failing or replanning;
+// ConfirmationReason carries the capability + engine reason for the
+// pause event payload. Success is false in this case (the step did
+// not complete) but the supervisor's branch order checks
+// NeedsConfirmation first.
 type Result struct {
-	StepID    string `json:"step_id"`
-	MissionID string `json:"mission_id"`
-	WorkerID  string `json:"worker_id"`
-	Output    string `json:"output,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Success   bool   `json:"success"`
+	StepID             string `json:"step_id"`
+	MissionID          string `json:"mission_id"`
+	WorkerID           string `json:"worker_id"`
+	Output             string `json:"output,omitempty"`
+	Error              string `json:"error,omitempty"`
+	Success            bool   `json:"success"`
+	NeedsConfirmation  bool   `json:"needs_confirmation,omitempty"`
+	ConfirmationReason string `json:"confirmation_reason,omitempty"`
 }
 
 // TaskExecutor is the pluggable "do the work" function. Returns the
@@ -226,7 +238,20 @@ func (w *Worker) handle(ctx context.Context, msg bus.ReliableMessage, eventsTopi
 		WorkerID:  w.agentID,
 	}
 	if err != nil {
-		res.Error = err.Error()
+		// Detect "this step needs user confirmation" as a structured
+		// pause signal rather than a hard failure. The supervisor will
+		// auto-pause the mission to waiting_user; the step state goes
+		// to waiting_user too so resume picks it up cleanly. The
+		// underlying error message is captured in both Error and
+		// ConfirmationReason for audit-log convenience.
+		var confirmErr *capability.ConfirmationRequiredError
+		if errors.As(err, &confirmErr) {
+			res.NeedsConfirmation = true
+			res.ConfirmationReason = confirmErr.Error()
+			res.Error = confirmErr.Error()
+		} else {
+			res.Error = err.Error()
+		}
 		res.Success = false
 	} else {
 		res.Output = output

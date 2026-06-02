@@ -13,6 +13,7 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/agent/bus"
 	"github.com/LumabyteCo/aibutler/internal/agent/supervisor"
 	"github.com/LumabyteCo/aibutler/internal/agent/worker"
+	"github.com/LumabyteCo/aibutler/internal/capability"
 	"github.com/LumabyteCo/aibutler/internal/mission"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -1062,5 +1063,181 @@ func TestRun_NoopReplanner_BehavesLikeNoReplanner(t *testing.T) {
 	got, _ := store.GetMission(ctx, m.ID)
 	if got.State != mission.StateFailed {
 		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}
+
+// --- Mid-mission auto-pause tests ---
+
+// confirmStepTask is the task body recognised by confirmRequiringExecutor
+// as the trigger to return a ConfirmationRequiredError. Any other task
+// runs through to completion.
+const confirmStepTask = "CONFIRM-ME"
+
+// confirmRequiringExecutor returns a structured ConfirmationRequiredError
+// for tasks matching confirmStepTask, and succeeds otherwise.
+func confirmRequiringExecutor(_ context.Context, t worker.Task) (string, error) {
+	if t.Task == confirmStepTask {
+		return "", &capability.ConfirmationRequiredError{
+			Capability: "tool.shell.exec",
+			Reason:     "granted",
+		}
+	}
+	return "did " + t.Task, nil
+}
+
+// TestRun_FailedStep_NeedsConfirmation_PausesMission verifies that
+// when the worker reports NeedsConfirmation=true the supervisor
+// transitions the mission to waiting_user, emits the
+// mission.confirmation_required event, leaves the step in
+// state=waiting_user (NOT failed), and exits with ErrMissionPaused
+// rather than failing or replanning.
+func TestRun_FailedStep_NeedsConfirmation_PausesMission(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "needs-confirmation mission", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{{Task: confirmStepTask}})
+
+	b := bus.New()
+	w := worker.New(b, "w-1", confirmRequiringExecutor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+
+	err := s.Run(ctx, m.ID)
+	if !errors.Is(err, supervisor.ErrMissionPaused) {
+		t.Fatalf("err = %v, want supervisor.ErrMissionPaused", err)
+	}
+	wcancel()
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateWaitingUser {
+		t.Errorf("mission state = %s, want waiting_user", got.State)
+	}
+
+	steps, _ := store.GetSteps(ctx, m.ID)
+	if len(steps) != 1 {
+		t.Fatalf("step count = %d, want 1", len(steps))
+	}
+	if steps[0].State != mission.StateWaitingUser {
+		t.Errorf("step state = %s, want waiting_user (NOT failed)", steps[0].State)
+	}
+	if steps[0].CompletedAt != nil {
+		t.Error("step CompletedAt should be nil — the step is paused, not finished")
+	}
+	if !strings.Contains(steps[0].Error, "tool.shell.exec") {
+		t.Errorf("step.Error = %q, want it to mention the capability", steps[0].Error)
+	}
+
+	events, _ := store.GetEvents(ctx, m.ID, 100)
+	var sawConfirm bool
+	for _, e := range events {
+		if e.Type == "mission.confirmation_required" {
+			sawConfirm = true
+			if !strings.Contains(e.PayloadJSON, steps[0].ID) {
+				t.Errorf("confirmation event payload should mention step ID; got %q", e.PayloadJSON)
+			}
+		}
+	}
+	if !sawConfirm {
+		t.Error("expected mission.confirmation_required event in log")
+	}
+}
+
+// TestRun_ResumeAfterConfirmation_RunsPausedStep verifies that after
+// the mission is resumed (state goes back to running via Manager.Resume)
+// and the underlying capability no longer needs confirmation, a fresh
+// Supervisor.Run picks up the previously-paused step from state=
+// waiting_user, dispatches it, and completes the mission. Simulates
+// the user granting the capability between Run #1 and Run #2.
+func TestRun_ResumeAfterConfirmation_RunsPausedStep(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "resumable", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{
+		{Task: confirmStepTask},
+		{Task: "do followup"},
+	})
+
+	b := bus.New()
+
+	// Phase 1 executor: confirmation required for FIRST call only.
+	var calls atomic.Int32
+	phase1 := func(_ context.Context, t worker.Task) (string, error) {
+		calls.Add(1)
+		if t.Task == confirmStepTask {
+			return "", &capability.ConfirmationRequiredError{
+				Capability: "tool.shell.exec",
+				Reason:     "granted",
+			}
+		}
+		return "did " + t.Task, nil
+	}
+	w := worker.New(b, "w-1", phase1)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+
+	// First Run: hits the pause path.
+	if err := s.Run(ctx, m.ID); !errors.Is(err, supervisor.ErrMissionPaused) {
+		t.Fatalf("first Run err = %v, want ErrMissionPaused", err)
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateWaitingUser {
+		t.Fatalf("post-pause mission state = %s, want waiting_user", got.State)
+	}
+
+	// Simulate the user resuming. In production this is invoked via
+	// the mission.interrupt tool with action=resume.
+	if err := mgr.Resume(ctx, m.ID); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	// Swap the worker's executor for one that succeeds (simulating the
+	// user having granted the confirmation between Run calls). The
+	// worker is the same goroutine — we restart it with a new executor.
+	wcancel()
+	b2 := bus.New()
+	phase2 := func(_ context.Context, t worker.Task) (string, error) {
+		return "did " + t.Task, nil
+	}
+	w2 := worker.New(b2, "w-2", phase2)
+	wctx2, wcancel2 := context.WithCancel(ctx)
+	defer wcancel2()
+	go func() { _ = w2.Run(wctx2, m.ID) }()
+	time.Sleep(50 * time.Millisecond)
+
+	s2 := supervisor.New(mgr, store, b2, "sup-2")
+	s2.StepTimeout = 2 * time.Second
+	if err := s2.Run(ctx, m.ID); err != nil {
+		t.Fatalf("second Run after resume: %v", err)
+	}
+	wcancel2()
+
+	got, _ = store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("post-resume mission state = %s, want completed", got.State)
+	}
+
+	steps, _ := store.GetSteps(ctx, m.ID)
+	if len(steps) != 2 {
+		t.Fatalf("step count = %d, want 2", len(steps))
+	}
+	for i, st := range steps {
+		if st.State != mission.StateCompleted {
+			t.Errorf("step %d state = %s, want completed", i, st.State)
+		}
 	}
 }

@@ -186,8 +186,22 @@ func (r *Runtime) SetReplanner(rp supervisor.Replanner, maxReplans int) {
 	}
 }
 
-// scan looks for planned missions and spawns runner goroutines for any
-// not already running, up to MaxConcurrent.
+// scan looks for missions that need a supervisor and spawns runner
+// goroutines for any not already running, up to MaxConcurrent.
+//
+// Two states are picked up:
+//
+//   - StatePlanned — fresh missions waiting for their first dispatch.
+//   - StateRunning — missions previously paused via the auto-pause
+//     path (worker signalled NeedsConfirmation, supervisor exited with
+//     ErrMissionPaused) and then resumed externally via
+//     mission.interrupt action=resume (which transitions state back
+//     to running). Without picking these up the mission would sit
+//     forever with no supervisor attached after resume.
+//
+// The spawn() helper de-dupes against the running map, so it's safe
+// for a planned + running mission to both surface in the same scan
+// pass — only the first call spawns.
 func (r *Runtime) scan(ctx context.Context) {
 	r.mu.Lock()
 	slotsLeft := r.opts.MaxConcurrent - len(r.running)
@@ -204,8 +218,28 @@ func (r *Runtime) scan(ctx context.Context) {
 		r.logf("mission runtime: list pending: %v", err)
 		return
 	}
-
 	for _, m := range pending {
+		r.spawn(ctx, m.ID)
+	}
+
+	// Re-check slot count — pending missions may have just consumed
+	// some, and we don't want to oversubscribe on the resume pass.
+	r.mu.Lock()
+	slotsLeft = r.opts.MaxConcurrent - len(r.running)
+	r.mu.Unlock()
+	if slotsLeft <= 0 {
+		return
+	}
+
+	resumable, err := r.store.ListMissions(ctx, mission.ListFilter{
+		State: mission.StateRunning,
+		Limit: slotsLeft,
+	})
+	if err != nil {
+		r.logf("mission runtime: list resumable: %v", err)
+		return
+	}
+	for _, m := range resumable {
 		r.spawn(ctx, m.ID)
 	}
 }

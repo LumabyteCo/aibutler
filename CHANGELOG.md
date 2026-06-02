@@ -355,6 +355,41 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ## [Unreleased]
 
+### Added — Mid-mission auto-pause on capability confirmation
+
+- **`capability.ConfirmationRequiredError` + `capability.ErrConfirmationRequired`.**
+  New structured error type returned by the tool dispatcher when a
+  capability check resolves to allowed AND `RequiresConfirmation`.
+  Carries the capability resource ID and engine reason; sentinel
+  detection via `errors.Is(err, capability.ErrConfirmationRequired)`
+  or structured recovery via `errors.As`. Previously the
+  `RequiresConfirmation` flag was plumbed through the engine but
+  silently ignored at the tool dispatch layer — this commit wires it
+  end-to-end.
+- **`worker.Result.NeedsConfirmation` + `Result.ConfirmationReason`.**
+  Distinguishes "this step did not run because the underlying
+  capability requires explicit approval" from a real failure. The
+  worker detects `capability.ConfirmationRequiredError` via
+  `errors.As`, sets the fields, and publishes the Result with
+  `Success=false` + `NeedsConfirmation=true`.
+- **Supervisor auto-pause path.** `runStep` branches on
+  `NeedsConfirmation` BEFORE the success/failure split. It marks the
+  step `State=waiting_user` (NOT failed), stamps the reason in
+  `Step.Error`, leaves `CompletedAt` unset, emits a
+  `supervisor.step_paused` event, and returns a `stepNeedsConfirmationError`.
+  `runSequential` catches it, emits a `mission.confirmation_required`
+  event with `{step_id, reason}` payload, calls `Manager.Pause` to
+  transition the mission to `waiting_user`, and exits with
+  `ErrMissionPaused`. Replanning is bypassed entirely on the auto-
+  pause path.
+- **Runtime auto-resume.** `Runtime.scan` now lists missions in
+  `StateRunning` (not just `StatePlanned`) on every poll tick. After
+  the user calls `mission.interrupt action=resume`, the mission
+  transitions back to running and the runtime spawns a fresh
+  supervisor + worker pair on the next scan. The supervisor's cursor
+  treats step `state=waiting_user` as non-terminal and re-dispatches
+  cleanly.
+
 ### Added — Per-worker concurrent handling
 
 - **`Worker.MaxConcurrent` field.** Caps how many tasks a single

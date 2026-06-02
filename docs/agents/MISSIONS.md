@@ -280,6 +280,49 @@ Scope notes:
   + remaining. A richer audit-trail integration is a clearly-scoped
   follow-up.
 
+## Mid-mission auto-pause on capability confirmation
+
+When a worker's task triggers a capability that requires explicit user
+confirmation (`Capability.RequiresConfirmation = true`), the mission
+auto-pauses instead of failing or replanning.
+
+The flow:
+
+1. The tool dispatcher's capability check resolves to allowed AND
+   `RequiresConfirmation`. It returns `capability.ConfirmationRequiredError`
+   (struct, `errors.As`-detectable) instead of executing the tool. The
+   error carries the capability resource ID and the engine reason.
+2. The worker's `handle` notices the sentinel via `errors.As`, builds a
+   `worker.Result` with `NeedsConfirmation=true` + `ConfirmationReason`
+   (and `Success=false`), and publishes it on the mission events topic.
+3. The supervisor's `runStep` branches on `NeedsConfirmation` BEFORE
+   the success/failure split. It marks the step's `State=waiting_user`,
+   stamps the reason as `Step.Error`, leaves `CompletedAt` unset
+   (the step is paused, not finished), emits a
+   `supervisor.step_paused` event with the full Result payload, and
+   returns a `stepNeedsConfirmationError` sentinel.
+4. `runSequential` catches that sentinel, emits a
+   `mission.confirmation_required` event with `{step_id, reason}`,
+   calls `Manager.Pause` to transition the mission to `waiting_user`,
+   and exits with `ErrMissionPaused`.
+5. The runtime's poll picks up the paused mission's eventual resume:
+   `scan` now lists missions in `StateRunning` (not just `StatePlanned`)
+   so that after `mission.interrupt action=resume` flips the mission
+   back to running, the runtime spawns a fresh supervisor + worker
+   pair. The supervisor's `runSequential` cursor treats step
+   `state=waiting_user` as non-terminal and picks it up for a clean
+   re-dispatch.
+
+If the underlying capability still requires confirmation when the
+mission resumes, the same pause path triggers again — by design.
+Granting the confirmation is the user's call, handled separately via
+the capability engine (grant the rule without `RequiresConfirmation`,
+or via the prompter's interactive path).
+
+Replanning and auto-pause are independent: a confirmation-required
+result NEVER triggers the Replanner. Auto-pause is checked first in
+the supervisor's outer loop, ahead of the replan branch.
+
 ## What's not in this revision
 
 Several capabilities were considered for the initial release but
@@ -290,11 +333,6 @@ intentionally deferred:
   whole mission on the first step failure. Replanning under parallel
   dispatch is its own design problem (what to do with in-flight peers
   whose results are already partway done) and is a follow-up.
-- **Mid-mission user-confirmation prompts.** When a worker hits a
-  capability that requires confirmation, the existing capability engine
-  surfaces a prompt — but the mission engine doesn't yet auto-pause
-  the mission while waiting. `mission.interrupt action=pause` is the
-  manual equivalent today.
 - **Manager tier (3-level hierarchy).** Workers report directly to the
   supervisor today. A manager layer between them, owning sub-domains,
   is part of the eventual hierarchy.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent/bus"
+	"github.com/LumabyteCo/aibutler/internal/capability"
 )
 
 func TestEchoExecutor_DefaultsToOK(t *testing.T) {
@@ -464,4 +465,59 @@ func TestRun_MaxConcurrent_Default1_PreservesSequentialBehavior(t *testing.T) {
 	if got := maxObserved.Load(); got != 1 {
 		t.Errorf("max in-flight = %d, want 1 (default MaxConcurrent should be sequential)", got)
 	}
+}
+
+// TestRun_ConfirmationRequiredError_PublishedAsNeedsConfirmation verifies
+// the worker recognises capability.ConfirmationRequiredError and
+// publishes the result with NeedsConfirmation=true + the reason populated.
+// This is the layer immediately below the supervisor's auto-pause
+// branch — locking it down here keeps the contract honest in isolation.
+func TestRun_ConfirmationRequiredError_PublishedAsNeedsConfirmation(t *testing.T) {
+	b := bus.New()
+	events := b.SubscribeReliable("mission.MNC.events")
+
+	executor := func(_ context.Context, _ Task) (string, error) {
+		return "", &capability.ConfirmationRequiredError{
+			Capability: "tool.shell.exec",
+			Reason:     "granted",
+		}
+	}
+	w := New(b, "w-nc", executor)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx, "MNC") }()
+	time.Sleep(50 * time.Millisecond)
+
+	taskJSON, _ := json.Marshal(Task{StepID: "s-nc", MissionID: "MNC", Task: "x"})
+	if err := b.PublishCompeting(ctx, "mission.MNC.dispatch", "sup", string(taskJSON), bus.ReliableOpts{Timeout: 1 * time.Second}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	select {
+	case msg := <-events:
+		msg.Ack()
+		var res Result
+		if err := json.Unmarshal([]byte(msg.Payload), &res); err != nil {
+			t.Fatalf("unmarshal result: %v", err)
+		}
+		if !res.NeedsConfirmation {
+			t.Error("Result.NeedsConfirmation = false, want true")
+		}
+		if res.Success {
+			t.Error("Result.Success = true, want false (step did not complete)")
+		}
+		if !strings.Contains(res.ConfirmationReason, "tool.shell.exec") {
+			t.Errorf("Result.ConfirmationReason = %q, want it to mention the capability", res.ConfirmationReason)
+		}
+		if !strings.Contains(res.Error, "tool.shell.exec") {
+			t.Errorf("Result.Error = %q, want it to mention the capability", res.Error)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for result event")
+	}
+
+	cancel()
+	<-done
 }

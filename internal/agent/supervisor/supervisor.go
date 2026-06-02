@@ -235,6 +235,31 @@ func (s *Supervisor) runSequential(
 			continue
 		}
 
+		// Worker signalled "this step needs user confirmation." This is
+		// neither a success nor a failure — it's a pause request. Auto-
+		// transition the mission to waiting_user, emit the
+		// mission.confirmation_required event, and exit Run with
+		// ErrMissionPaused so the runtime treats it like any other
+		// externally-paused mission. The step is already in
+		// state=waiting_user (set by runStep) so the resume path picks
+		// it up on the next Run via the runSequential cursor.
+		var confirmErr *stepNeedsConfirmationError
+		if errors.As(err, &confirmErr) {
+			payload := map[string]string{
+				"step_id": confirmErr.StepID,
+				"reason":  confirmErr.Reason,
+			}
+			_ = s.mgr.AppendEvent(ctx, missionID, "mission.confirmation_required", payload)
+			if pauseErr := s.mgr.Pause(ctx, missionID, confirmErr.Reason); pauseErr != nil {
+				// Persistence error transitioning the mission state.
+				// Surface it as a mission failure since the supervisor
+				// can no longer trust the mission's recorded state.
+				_ = s.mgr.Fail(ctx, missionID, fmt.Sprintf("auto-pause failed: %v", pauseErr))
+				return fmt.Errorf("supervisor: auto-pause: %w", pauseErr)
+			}
+			return ErrMissionPaused
+		}
+
 		// Step failed. Try to replan if configured.
 		if s.Replanner != nil && replanCount < s.maxReplans() {
 			refreshed, replanErr := s.tryReplan(ctx, missionID, step, err, current, replanCount)
@@ -650,9 +675,31 @@ func (s *Supervisor) runStep(
 			}
 			msg.Ack()
 
-			// Found our result. Persist and return.
-			completed := time.Now()
-			step.CompletedAt = &completed
+			// Found our result. Branch on the three outcomes:
+			//   1. NeedsConfirmation — auto-pause path. Step state goes
+			//      to waiting_user so the resume cursor picks it up
+			//      again. Mission gets transitioned to waiting_user via
+			//      Manager.Pause in the outer runSequential loop.
+			//   2. Success — normal completion.
+			//   3. Failure — replan or fail-fast (handled by outer loop).
+			now := time.Now()
+			if res.NeedsConfirmation {
+				step.State = mission.StateWaitingUser
+				step.Error = res.ConfirmationReason
+				// Leave CompletedAt unset — the step hasn't finished, it's
+				// paused. Resume re-dispatches and runStep stamps a fresh
+				// StartedAt on the next attempt.
+				if err := s.store.UpdateStep(ctx, *step); err != nil {
+					return fmt.Errorf("update step waiting_user: %w", err)
+				}
+				_ = s.mgr.AppendEvent(ctx, missionID, "supervisor.step_paused", res)
+				return &stepNeedsConfirmationError{
+					StepID: step.ID,
+					Reason: res.ConfirmationReason,
+				}
+			}
+
+			step.CompletedAt = &now
 			if res.Success {
 				step.State = mission.StateCompleted
 				step.Output = res.Output
@@ -671,4 +718,17 @@ func (s *Supervisor) runStep(
 			return nil
 		}
 	}
+}
+
+// stepNeedsConfirmationError is the sentinel runStep returns when the
+// worker signalled NeedsConfirmation. runSequential catches it via
+// errors.As, transitions the mission to waiting_user, and exits with
+// ErrMissionPaused — the existing graceful-pause return.
+type stepNeedsConfirmationError struct {
+	StepID string
+	Reason string
+}
+
+func (e *stepNeedsConfirmationError) Error() string {
+	return fmt.Sprintf("step %s requires user confirmation: %s", e.StepID, e.Reason)
 }
