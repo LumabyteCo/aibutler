@@ -1,8 +1,18 @@
-// Package browser provides a headless HTTP-based browser automation tool.
+// Package browser provides headless browser automation tools.
+//
+// Two backends:
+//
+//   - HTTP-only (the default Client): fast static fetches with title/text
+//     and link extraction. No JavaScript, no external runtime.
+//   - Chrome-backed (attach a ChromeClient via SetChrome, see chrome.go):
+//     live JavaScript rendering, real screenshots, and the interactive
+//     click/type/select/submit actions. Requires a Chrome/Chromium binary
+//     on the host; degrades gracefully when absent.
 package browser
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,11 +29,14 @@ type toolRegistry interface {
 	Register(name, description, schema, capability string, exec func(ctx context.Context, input string) (string, error))
 }
 
-// Client is an HTTP-based headless browser client.
+// Client is an HTTP-based headless browser client. With a ChromeClient
+// attached (SetChrome) it also gains live JS-rendered reads and real
+// screenshots; without one it stays HTTP-only.
 type Client struct {
 	httpClient *http.Client
 	userAgent  string
 	skipSSRF   bool
+	chrome     *ChromeClient // optional — enables RenderText + real Screenshot
 }
 
 // NewClient creates a browser client with sensible defaults.
@@ -33,6 +46,13 @@ func NewClient() *Client {
 		userAgent:  "Mozilla/5.0 (compatible; AIButler/1.0; +https://github.com/LumabyteCo/aibutler)",
 	}
 }
+
+// SetChrome attaches a ChromeClient, enabling live JS-rendered reads
+// (RenderText) and real screenshots when a browser binary is present.
+func (c *Client) SetChrome(cc *ChromeClient) { c.chrome = cc }
+
+// chromeLive reports whether a Chrome backend is attached and available.
+func (c *Client) chromeLive() bool { return c.chrome != nil && c.chrome.Available() }
 
 // SetHTTPClient overrides the HTTP client (for testing).
 // It also disables SSRF validation since test servers bind to localhost.
@@ -61,9 +81,32 @@ func (c *Client) ExtractLinks(ctx context.Context, rawURL string) ([]string, err
 	return extractLinks(body, rawURL), nil
 }
 
-// Screenshot always returns a placeholder message since this client is headless (no CGO).
-func (c *Client) Screenshot(_ context.Context, _ string) (string, error) {
-	return "screenshot not available in headless mode", nil
+// Screenshot captures the page. With a live Chrome backend it navigates
+// and returns a base64-encoded PNG data URI; without one it returns the
+// headless placeholder (no browser installed).
+func (c *Client) Screenshot(ctx context.Context, rawURL string) (string, error) {
+	if !c.chromeLive() {
+		return "screenshot not available in headless mode", nil
+	}
+	if err := c.chrome.EnsureOn(ctx, rawURL); err != nil {
+		return "", fmt.Errorf("browser.screenshot: navigate: %w", err)
+	}
+	png, err := c.chrome.Screenshot(ctx)
+	if err != nil {
+		return "", fmt.Errorf("browser.screenshot: %w", err)
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png), nil
+}
+
+// RenderText loads the URL in a live headless browser (executing
+// JavaScript) and returns the rendered title and visible text. Falls
+// back to nothing — returns ErrChromeUnavailable — when no browser is
+// installed; callers can use Navigate (static HTTP) instead.
+func (c *Client) RenderText(ctx context.Context, rawURL string) (title, text string, err error) {
+	if !c.chromeLive() {
+		return "", "", ErrChromeUnavailable
+	}
+	return c.chrome.Navigate(ctx, rawURL)
 }
 
 func (c *Client) fetch(ctx context.Context, rawURL string) (string, error) {
@@ -291,7 +334,7 @@ func RegisterBrowserTools(registry toolRegistry, client *Client) {
 
 	registry.Register(
 		"browser.screenshot",
-		"Take a screenshot of a web page (returns placeholder in headless mode).",
+		"Take a screenshot of a web page. Returns a base64 PNG data URI when a Chrome/Chromium browser is installed; a placeholder otherwise.",
 		`{"type":"object","properties":{"url":{"type":"string","description":"URL to screenshot"}},"required":["url"]}`,
 		"tool.web.fetch",
 		func(ctx context.Context, input string) (string, error) {
@@ -309,6 +352,30 @@ func RegisterBrowserTools(registry toolRegistry, client *Client) {
 				return "", err
 			}
 			out, _ := json.Marshal(map[string]string{"result": msg, "url": args.URL})
+			return string(out), nil
+		},
+	)
+
+	registry.Register(
+		"browser.read_page",
+		"Load a URL in a real headless browser (executing JavaScript) and return the rendered title and visible text. Use this for JS-heavy pages where browser.navigate (static HTTP fetch) returns little content. Requires a Chrome/Chromium browser; falls back with a clear error when none is installed.",
+		`{"type":"object","properties":{"url":{"type":"string","description":"URL to render"}},"required":["url"]}`,
+		"tool.web.fetch",
+		func(ctx context.Context, input string) (string, error) {
+			var args struct {
+				URL string `json:"url"`
+			}
+			if err := json.Unmarshal([]byte(input), &args); err != nil {
+				return "", fmt.Errorf("browser.read_page: invalid input: %w", err)
+			}
+			if args.URL == "" {
+				return "", fmt.Errorf("browser.read_page: url is required")
+			}
+			title, text, err := client.RenderText(ctx, args.URL)
+			if err != nil {
+				return "", err
+			}
+			out, _ := json.Marshal(map[string]string{"title": title, "text": text, "url": args.URL})
 			return string(out), nil
 		},
 	)

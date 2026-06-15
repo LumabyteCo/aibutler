@@ -353,6 +353,64 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.4.3] — 2026-06-15
+
+### Added — Real browser automation (chromedp)
+
+`internal/browser` gains a real, JavaScript-capable browser backend.
+Previously it was HTTP-only with an `InteractiveClient` that merely
+*described* the click/type/submit it would perform; now those actions
+drive an actual headless Chrome/Chromium via chromedp (pure Go, no
+CGO).
+
+- **`browser.ChromeClient`** (new `chrome.go`) — manages one persistent
+  headless-Chrome session over the DevTools Protocol: `Navigate`,
+  `Click`, `Fill`, `SelectOption`, `Submit`, `ReadText`, `Screenshot`,
+  `EnsureOn` (state-preserving re-navigation), `Close`. Calls are
+  serialized; the browser is launched lazily and tied to the
+  persistent context so multi-step flows (navigate → fill → click →
+  submit) share live page state.
+- **Interactive tools now execute for real.** `browser.click` /
+  `browser.type` / `browser.select` / `browser.submit` perform live
+  actions when a Chrome binary is present. All existing security
+  pre-checks still run identically in both modes: cross-domain
+  blocking, never-type-into-password-fields, and submit confirmation.
+- **`browser.read_page`** (new tool) — loads a URL in the live browser
+  (executing JavaScript) and returns the rendered title + visible
+  text, for JS-heavy pages where `browser.navigate` (static HTTP
+  fetch) returns little. `browser.navigate` and `browser.extract_links`
+  stay HTTP-only and fast.
+- **`browser.screenshot` is now real** — returns a base64 PNG data URI
+  of the rendered page when Chrome is available.
+
+### Graceful degradation
+
+Chrome/Chromium is an external runtime dependency. `ChromeClient`
+detects the binary across platform-standard locations; when none is
+found, `Available()` is false, the interactive tools fall back to the
+pre-v0.4.3 validated-description behaviour, and `browser.read_page` /
+`browser.screenshot` return a clear "install Chrome" error rather than
+crashing. The single-static-binary build is unchanged — Chrome is only
+needed at runtime for the live features.
+
+### Dependencies
+
+- Adds `github.com/chromedp/chromedp` (pure Go, no CGO) and its
+  transitive tree. The zero-CGO single-binary commitment is preserved;
+  cross-compiles verified for linux/arm64 and windows/amd64.
+  `govulncheck` reports no vulnerabilities in the new dependency tree.
+
+### Tests
+
+6 live integration tests (real headless Chrome) covering navigate +
+title/text, JavaScript rendering, fill+click reflecting on the live
+DOM, PNG screenshot, the interactive live-click path, and the HTTP
+client's `RenderText`. They skip automatically on hosts without a
+browser (e.g. CI), so the suite stays green everywhere. Existing
+HTTP-only + description-fallback tests are unchanged.
+
+---
+
 ## [0.4.2] — 2026-06-15
 
 ### Security — Tier 2 executor allowlist hardening
@@ -774,3 +832,4 @@ dashboard panel is read-only by design.
 [0.4.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.0
 [0.4.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.1
 [0.4.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.2
+[0.4.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.3

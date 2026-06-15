@@ -8,22 +8,48 @@ import (
 	"strings"
 )
 
-// InteractiveClient provides browser automation command descriptions.
-// Since we cannot add browser automation dependencies (no Rod/CDP), this
-// validates inputs and returns structured responses describing the intended
-// action. This is a capability framework ready for real browser integration later.
+// InteractiveClient performs browser interactions — click, type, select,
+// submit — with input validation, cross-domain blocking, and a
+// never-handle-passwords guard applied to every call.
+//
+// Execution mode depends on whether a ChromeClient is attached (via
+// SetChrome) and a Chrome/Chromium binary is present:
+//
+//   - With a live Chrome: actions are executed for real against a headless
+//     browser, and the result describes what was done on the live page.
+//   - Without Chrome: the validation still runs, and the method returns a
+//     structured DESCRIPTION of the intended action (the pre-v0.4.3
+//     behaviour). This lets the tools degrade gracefully on hosts with no
+//     browser installed rather than failing outright.
+//
+// The security pre-checks (cross-domain, password-field refusal, submit
+// confirmation) run identically in both modes.
 type InteractiveClient struct {
 	// lastDomain tracks the domain of the last navigation to enforce cross-domain blocking.
 	lastDomain string
+	// chrome, when non-nil AND Available(), enables real execution.
+	chrome *ChromeClient
 }
 
-// NewInteractiveClient creates a new interactive browser client.
+// NewInteractiveClient creates a new interactive browser client with no
+// Chrome backend — actions return validated descriptions. Attach a real
+// browser with SetChrome.
 func NewInteractiveClient() *InteractiveClient {
 	return &InteractiveClient{}
 }
 
+// SetChrome attaches a ChromeClient. When it reports Available(), the
+// interactive methods execute against the live browser instead of
+// returning descriptions.
+func (ic *InteractiveClient) SetChrome(c *ChromeClient) { ic.chrome = c }
+
+// live reports whether real browser execution is wired and available.
+func (ic *InteractiveClient) live() bool {
+	return ic.chrome != nil && ic.chrome.Available()
+}
+
 // Click describes clicking an element by CSS selector on the given URL.
-func (ic *InteractiveClient) Click(_ context.Context, pageURL, selector string) (string, error) {
+func (ic *InteractiveClient) Click(ctx context.Context, pageURL, selector string) (string, error) {
 	if pageURL == "" {
 		return "", fmt.Errorf("browser.click: url is required")
 	}
@@ -33,12 +59,21 @@ func (ic *InteractiveClient) Click(_ context.Context, pageURL, selector string) 
 	if err := ic.checkCrossDomain(pageURL); err != nil {
 		return "", err
 	}
+	if ic.live() {
+		if err := ic.chrome.EnsureOn(ctx, pageURL); err != nil {
+			return "", fmt.Errorf("browser.click: navigate: %w", err)
+		}
+		if err := ic.chrome.Click(ctx, selector); err != nil {
+			return "", fmt.Errorf("browser.click: %w", err)
+		}
+		return fmt.Sprintf("Clicked element matching selector %q on %s", selector, pageURL), nil
+	}
 	return fmt.Sprintf("Action: click element matching selector %q on %s", selector, pageURL), nil
 }
 
 // Type describes typing text into an input field.
 // Refuses to type into password fields for safety.
-func (ic *InteractiveClient) Type(_ context.Context, pageURL, selector, text string) (string, error) {
+func (ic *InteractiveClient) Type(ctx context.Context, pageURL, selector, text string) (string, error) {
 	if pageURL == "" {
 		return "", fmt.Errorf("browser.type: url is required")
 	}
@@ -58,11 +93,20 @@ func (ic *InteractiveClient) Type(_ context.Context, pageURL, selector, text str
 		return "", fmt.Errorf("browser.type: refused — cannot type into password fields for security reasons")
 	}
 
+	if ic.live() {
+		if err := ic.chrome.EnsureOn(ctx, pageURL); err != nil {
+			return "", fmt.Errorf("browser.type: navigate: %w", err)
+		}
+		if err := ic.chrome.Fill(ctx, selector, text); err != nil {
+			return "", fmt.Errorf("browser.type: %w", err)
+		}
+		return fmt.Sprintf("Typed %q into element matching selector %q on %s", text, selector, pageURL), nil
+	}
 	return fmt.Sprintf("Action: type %q into element matching selector %q on %s", text, selector, pageURL), nil
 }
 
 // Select describes selecting a dropdown option.
-func (ic *InteractiveClient) Select(_ context.Context, pageURL, selector, value string) (string, error) {
+func (ic *InteractiveClient) Select(ctx context.Context, pageURL, selector, value string) (string, error) {
 	if pageURL == "" {
 		return "", fmt.Errorf("browser.select: url is required")
 	}
@@ -75,6 +119,15 @@ func (ic *InteractiveClient) Select(_ context.Context, pageURL, selector, value 
 	if err := ic.checkCrossDomain(pageURL); err != nil {
 		return "", err
 	}
+	if ic.live() {
+		if err := ic.chrome.EnsureOn(ctx, pageURL); err != nil {
+			return "", fmt.Errorf("browser.select: navigate: %w", err)
+		}
+		if err := ic.chrome.SelectOption(ctx, selector, value); err != nil {
+			return "", fmt.Errorf("browser.select: %w", err)
+		}
+		return fmt.Sprintf("Selected value %q in element matching selector %q on %s", value, selector, pageURL), nil
+	}
 	return fmt.Sprintf("Action: select value %q in element matching selector %q on %s", value, selector, pageURL), nil
 }
 
@@ -86,7 +139,7 @@ type SubmitResult struct {
 }
 
 // Submit describes submitting a form. Requires a second call with confirmed=true.
-func (ic *InteractiveClient) Submit(_ context.Context, pageURL, selector string, confirmed bool) (string, error) {
+func (ic *InteractiveClient) Submit(ctx context.Context, pageURL, selector string, confirmed bool) (string, error) {
 	if pageURL == "" {
 		return "", fmt.Errorf("browser.submit: url is required")
 	}
@@ -102,6 +155,22 @@ func (ic *InteractiveClient) Submit(_ context.Context, pageURL, selector string,
 			Status:      "confirmation_required",
 			Description: fmt.Sprintf("Confirmation required: submit form matching selector %q on %s. Call again with confirmed=true to proceed.", selector, pageURL),
 			Confirmed:   false,
+		}
+		out, _ := json.Marshal(result)
+		return string(out), nil
+	}
+
+	if ic.live() {
+		if err := ic.chrome.EnsureOn(ctx, pageURL); err != nil {
+			return "", fmt.Errorf("browser.submit: navigate: %w", err)
+		}
+		if err := ic.chrome.Submit(ctx, selector); err != nil {
+			return "", fmt.Errorf("browser.submit: %w", err)
+		}
+		result := SubmitResult{
+			Status:      "submitted",
+			Description: fmt.Sprintf("Submitted form matching selector %q on %s", selector, pageURL),
+			Confirmed:   true,
 		}
 		out, _ := json.Marshal(result)
 		return string(out), nil

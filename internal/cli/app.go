@@ -161,6 +161,7 @@ type App struct {
 	// Channels, Media, Voice + Agent Mesh
 	WhatsApp       *wapkg.Client
 	BrowserClient  *browser.Client
+	BrowserChrome  *browser.ChromeClient
 	ElevenLabs     *elevenlabs.Client
 	Deepgram       *deepgram.Client
 	Piper          *piper.Executor
@@ -643,8 +644,15 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// 6j. Register channel/media/voice tools using the funcToolRegistry adapter.
 	ftReg := &funcToolRegistry{reg: app.Tools}
 
-	// Browser tools (always available).
+	// Browser tools (always available). A single ChromeClient is shared
+	// between the HTTP client (for live JS-rendered reads + real
+	// screenshots) and the interactive client (for click/type/submit).
+	// It locates a Chrome/Chromium binary on the host; when none is
+	// found the browser tools degrade gracefully to HTTP-only /
+	// description behaviour rather than failing.
 	app.BrowserClient = browser.NewClient()
+	app.BrowserChrome = browser.NewChromeClient()
+	app.BrowserClient.SetChrome(app.BrowserChrome)
 	browser.RegisterBrowserTools(ftReg, app.BrowserClient)
 
 	// WhatsApp tools (only when access token is configured).
@@ -927,8 +935,13 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		log.Println("nostr: tools registered")
 	}
 
-	// Interactive browser tools (always available).
+	// Interactive browser tools (always available). Share the same
+	// ChromeClient as the HTTP browser client so click/type/submit drive
+	// a live headless browser when one is installed.
 	app.InteractiveBrowser = browser.NewInteractiveClient()
+	if app.BrowserChrome != nil {
+		app.InteractiveBrowser.SetChrome(app.BrowserChrome)
+	}
 	browser.RegisterInteractiveBrowserTools(ftReg, app.InteractiveBrowser)
 
 	// Transaction engine (spending limits default to zero — no spend without config).
