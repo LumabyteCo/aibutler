@@ -7,7 +7,11 @@
 //
 // Security model:
 //
-//   - Allowlist by exact shortcut name — empty allowlist denies everything.
+//   - Allowlist by shortcut name, ASCII-case-insensitive — empty allowlist
+//     denies everything. Name matching folds only ASCII A-Z (hardened in
+//     v0.4.2); it deliberately avoids Unicode case folding, which treats
+//     confusables like U+212A (KELVIN SIGN) as 'k' and would let a
+//     look-alike name spoof an allowlisted shortcut.
 //   - Bounded execution timeout.
 //   - Capped output size.
 //   - Capability gating via tool.shortcuts.run at the dispatcher layer.
@@ -122,12 +126,31 @@ func (r *Runner) run(ctx context.Context, name, input string) (string, error) {
 }
 
 func (r *Runner) inAllowlist(name string) bool {
+	n := asciiFold(name)
 	for _, allowed := range r.allowlist {
-		if strings.EqualFold(allowed, name) {
+		if asciiFold(allowed) == n {
 			return true
 		}
 	}
 	return false
+}
+
+// asciiFold lowercases ONLY ASCII A-Z, leaving every other byte
+// untouched. It deliberately does NOT use strings.EqualFold / Unicode
+// case folding: Go's Unicode folding treats confusables like U+212A
+// (KELVIN SIGN) as equal to ASCII 'k', so an attacker could pass a
+// shortcut name that the allowlist accepts as "Backup" yet `shortcuts
+// run` resolves to a DIFFERENT, attacker-created shortcut. Folding only
+// ASCII means non-ASCII bytes must match exactly, closing that spoof
+// while preserving ordinary ASCII case-insensitivity (BACKUP == backup).
+func asciiFold(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 // recordAction emits one Action row for the just-completed Run when a

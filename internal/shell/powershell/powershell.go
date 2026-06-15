@@ -1,4 +1,17 @@
 // Package powershell provides a PowerShell command executor.
+//
+// Security model: allowlist-by-first-cmdlet (empty allowlist denies all),
+// bounded timeout, capped output, capability gating via
+// tool.powershell.exec at the dispatcher layer.
+//
+// Because `pwsh -Command` runs the entire submitted string, the executor
+// rejects statement chaining and sub-expressions (`;`, `|`, `&`, backtick,
+// `$(...)`, `@(...)`, newlines) BEFORE the allowlist check — hardened in
+// v0.4.2. The allowlist validates only the first cmdlet, so this enforces
+// one-cmdlet-per-call and closes the chaining bypass where an allowlisted
+// producer cmdlet smuggles arbitrary downstream stages. The guard is
+// deliberately conservative (it also rejects those metacharacters inside
+// quoted strings) — it fails closed.
 package powershell
 
 import (
@@ -63,6 +76,20 @@ func (e *Executor) Execute(ctx context.Context, command string) (string, error) 
 }
 
 func (e *Executor) execute(ctx context.Context, command string) (string, error) {
+	// Reject statement chaining and sub-expressions BEFORE the allowlist
+	// check. The allowlist validates only the first cmdlet (firstWord),
+	// but `pwsh -Command` runs the ENTIRE string — so a single allowlisted
+	// producer cmdlet could otherwise smuggle arbitrary downstream stages
+	// via `;`, `|`, `&`, backtick, `$(...)`, `@(...)`, or a newline. The
+	// allowlist model is one-cmdlet-per-call; enforce that here. This is
+	// deliberately conservative: a `;`/`|`/`&` that happens to sit inside
+	// a quoted string is also rejected (fail closed) rather than risk a
+	// parser-confusion bypass.
+	if sep := statementChainingChar(command); sep != "" {
+		return "", fmt.Errorf(
+			"shell.powershell: statement chaining/sub-expressions are not permitted "+
+				"(found %q) — submit a single cmdlet invocation", sep)
+	}
 	if !e.inAllowlist(command) {
 		return "", fmt.Errorf("shell.powershell: command not in allowlist: %q", firstWord(command))
 	}
@@ -139,6 +166,32 @@ func (e *Executor) inAllowlist(command string) bool {
 		}
 	}
 	return false
+}
+
+// statementChainingChars are the PowerShell metacharacters that begin a
+// new statement, pipeline stage, sub-expression, call, or line — any of
+// which lets a command reach beyond the single allowlisted first cmdlet.
+var statementChainingChars = []string{
+	";",   // statement separator
+	"|",   // pipeline
+	"&",   // call operator / background (covers && too)
+	"`",   // backtick: line continuation / escape, can hide separators
+	"$(",  // sub-expression
+	"@(",  // array sub-expression
+	"\n",  // newline statement separator
+	"\r",  // carriage-return separator
+	"\x00", // NUL — defensive
+}
+
+// statementChainingChar returns the first chaining metacharacter found
+// in the command, or "" if the command is a single simple statement.
+func statementChainingChar(command string) string {
+	for _, c := range statementChainingChars {
+		if strings.Contains(command, c) {
+			return c
+		}
+	}
+	return ""
 }
 
 // firstWord extracts the first word (command name) from a command string.

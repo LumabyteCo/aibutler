@@ -7,7 +7,7 @@
 //
 // This package mirrors the security model of internal/shell/powershell:
 //
-//   - Allowlist-by-first-word — empty allowlist denies everything.
+//   - Allowlist-by-verb — empty allowlist denies everything.
 //   - Bounded execution timeout.
 //   - Capped output size.
 //   - Capability gating via tool.applescript.exec at the dispatcher layer.
@@ -15,6 +15,16 @@
 // AppleScript first-word grammar covers most real scripts: tell, set, get,
 // display, do, run, return, on, of, repeat, if. Allowlisting these keywords
 // is coarse but matches the existing PowerShell executor's posture.
+//
+// Whole-script validation (hardened in v0.4.2): because osascript runs the
+// ENTIRE submitted script, the allowlist check inspects the whole script,
+// not just the first statement. Specifically it (a) normalizes all
+// statement separators (CR, CRLF, U+2028/U+2029) to LF; (b) requires EVERY
+// `tell application/process "X"` target in the script to be allowlisted,
+// not merely the first; and (c) denies `do shell script` / `do script`
+// (arbitrary shell / arbitrary AppleScript) unless an explicit
+// "do shell script" allowlist entry opts in. This closes multi-statement
+// and do-shell-script allowlist bypasses.
 //
 // For `tell`-style scripts the allowlist also supports a target-application
 // pattern: an entry like `tell:Mail` grants ONLY scripts of the form
@@ -190,24 +200,111 @@ func (e *Executor) recordAction(ctx context.Context, script, language, result st
 }
 
 func (e *Executor) inAllowlist(script string) bool {
+	// Normalize statement separators FIRST. AppleScript treats CR (\r),
+	// CRLF, and the Unicode line/paragraph separators as statement
+	// terminators just like LF; without normalizing, a `\r`-separated
+	// second statement hides from any newline-based reasoning below.
+	script = normalizeSeparators(script)
+
 	cmd := firstWord(script)
 	if cmd == "" {
 		return false
 	}
 
-	// For tell-style scripts, also extract the target app/process name so
-	// the matcher can compare against `tell:Target` allowlist entries.
-	var target string
-	if strings.EqualFold(cmd, "tell") {
-		target = extractTellTarget(script)
+	// `do shell script` / `do script` run an arbitrary shell command or
+	// arbitrary AppleScript text — they escape the app-scoped allowlist
+	// model entirely. They may appear ANYWHERE in the script (inside a
+	// tell block, after an allowed leading statement, etc.), so scan the
+	// whole script. Permit them ONLY if an explicit allowlist entry opts
+	// in (e.g. "do shell script"). Otherwise deny outright.
+	isDoShell := scriptContainsDoShell(script)
+	if isDoShell && !e.allowsDoShell() {
+		return false
 	}
 
+	// For tell-style scripts, every tell target in the script must be
+	// allowlisted — not just the first. osascript runs the entire script,
+	// so an allowed leading `tell` must not smuggle a second tell to a
+	// denied target. Scripts with zero parseable tell targets fall
+	// through to the first-word matcher (covers un-quoted targets, which
+	// only a bare-verb entry can permit).
+	if strings.EqualFold(cmd, "tell") {
+		targets := extractAllTellTargets(script)
+		if len(targets) > 0 {
+			for _, tgt := range targets {
+				if !e.targetAllowed(cmd, tgt) {
+					return false
+				}
+			}
+			return true
+		}
+		// No parseable target — only a bare-verb "tell" entry can allow it.
+		return e.targetAllowed(cmd, "")
+	}
+
+	// A top-level do-shell script reaches here with cmd=="do". It already
+	// cleared the explicit opt-in gate above, so the opt-in entry IS the
+	// grant — the verb matcher below would miss it (firstWord is "do",
+	// the entry is "do shell script").
+	if isDoShell {
+		return true
+	}
+
+	// Non-tell first word. The allowlist is keyed by verb; match it.
+	for _, allowed := range e.allowlist {
+		if matchAllowlistEntry(allowed, cmd, "") {
+			return true
+		}
+	}
+	return false
+}
+
+// targetAllowed reports whether some allowlist entry permits the given
+// verb + target.
+func (e *Executor) targetAllowed(cmd, target string) bool {
 	for _, allowed := range e.allowlist {
 		if matchAllowlistEntry(allowed, cmd, target) {
 			return true
 		}
 	}
 	return false
+}
+
+// allowsDoShell reports whether the allowlist explicitly opts in to
+// `do shell script` / `do script` via a dedicated entry. The entry is
+// matched case-insensitively against "do shell script" or "do script".
+func (e *Executor) allowsDoShell() bool {
+	for _, allowed := range e.allowlist {
+		a := strings.TrimSpace(strings.ToLower(allowed))
+		if a == "do shell script" || a == "do script" {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeSeparators converts every AppleScript statement-separator
+// variant to a plain LF so downstream parsing sees a single line-ending
+// convention. Covers CRLF, bare CR, and the Unicode line (U+2028) and
+// paragraph (U+2029) separators.
+func normalizeSeparators(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.ReplaceAll(s, "\u2028", "\n") // Unicode line separator
+	s = strings.ReplaceAll(s, "\u2029", "\n") // Unicode paragraph separator
+	return s
+}
+
+// doShellRegex matches a `do shell script` or `do script` command
+// anywhere in the (separator-normalized) script. The leading boundary
+// is start-of-line or whitespace so it won't false-match an identifier
+// like `mydo shell script`.
+var doShellRegex = regexp.MustCompile(`(?im)(^|\s)do\s+(shell\s+)?script\b`)
+
+// scriptContainsDoShell reports whether the script invokes do[ shell]
+// script anywhere.
+func scriptContainsDoShell(script string) bool {
+	return doShellRegex.MatchString(script)
 }
 
 // matchAllowlistEntry checks whether `entry` permits the script's first
@@ -258,17 +355,37 @@ func matchTargetPattern(pattern, target string) bool {
 // AppleScript is case-insensitive on these keywords. Quoted target name is
 // the most common form; un-quoted identifiers (rare) are not parsed —
 // callers using those should use a bare-verb allowlist entry.
-var tellTargetRegex = regexp.MustCompile(`(?i)^\s*tell\s+(?:application|app|process)\s+"([^"]+)"`)
+//
+// The (?m) flag makes `^` match at every line start, so FindAll picks up
+// a `tell` at the head of ANY statement, not just the first — closing
+// the multi-tell bypass where a denied second target rides on an allowed
+// first one.
+var tellTargetRegex = regexp.MustCompile(`(?im)^\s*tell\s+(?:application|app|process)\s+"([^"]+)"`)
 
-// extractTellTarget returns the target application/process name from a
-// tell-style script, or "" if the script doesn't match the expected
-// `tell application "Name"` shape.
+// extractTellTarget returns the FIRST target application/process name
+// from a tell-style script, or "" if the script doesn't match the
+// expected `tell application "Name"` shape. Used by the audit recorder
+// for a human-readable summary; allowlist enforcement uses
+// extractAllTellTargets so every target is checked.
 func extractTellTarget(script string) string {
-	m := tellTargetRegex.FindStringSubmatch(script)
+	m := tellTargetRegex.FindStringSubmatch(normalizeSeparators(script))
 	if len(m) < 2 {
 		return ""
 	}
 	return m[1]
+}
+
+// extractAllTellTargets returns every tell target in the script, in
+// order. The caller passes an already-separator-normalized script.
+func extractAllTellTargets(script string) []string {
+	ms := tellTargetRegex.FindAllStringSubmatch(script, -1)
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		if len(m) >= 2 {
+			out = append(out, m[1])
+		}
+	}
+	return out
 }
 
 // firstWord extracts the first word (keyword) from an AppleScript / JXA script.

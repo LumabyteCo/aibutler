@@ -103,3 +103,30 @@ func TestExecuteTool_InvalidJSON(t *testing.T) {
 		t.Fatal("expected error for malformed JSON input")
 	}
 }
+
+// --- Unicode case-fold bypass regression test (v0.4.2 hardening) ---
+
+// TestBypass_UnicodeCaseFold confirms that a Unicode confusable cannot
+// spoof an allowlisted shortcut name. Go's strings.EqualFold folds
+// U+212A (KELVIN SIGN) to ASCII 'k', so the old matcher accepted
+// "Bac<U+212A>up" as "Backup" while `shortcuts run` would resolve a
+// different shortcut. ASCII-only folding closes this. (Confirmed HIGH.)
+func TestBypass_UnicodeCaseFold(t *testing.T) {
+	r := shortcuts.NewRunner([]string{"Backup"})
+
+	kelvin := "BacKup" // third-from-last rune is KELVIN SIGN, not ASCII 'k'
+	if r.InAllowlist(kelvin) {
+		t.Errorf("unicode case-fold bypass: %q (with U+212A) spoofed the allowlisted %q", kelvin, "Backup")
+	}
+
+	// Ordinary ASCII case-insensitivity must still work.
+	for _, ok := range []string{"Backup", "backup", "BACKUP", "BackUp"} {
+		if !r.InAllowlist(ok) {
+			t.Errorf("ASCII case variant %q should match allowlisted 'Backup'", ok)
+		}
+	}
+	// A genuinely different name is still denied.
+	if r.InAllowlist("Restore") {
+		t.Error("unrelated name 'Restore' should be denied")
+	}
+}

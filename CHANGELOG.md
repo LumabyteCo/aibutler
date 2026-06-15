@@ -353,6 +353,70 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.4.2] — 2026-06-15
+
+### Security — Tier 2 executor allowlist hardening
+
+A multi-agent adversarial audit of the Tier 2 native-automation
+executors (shipped in v0.2.0) surfaced and fixed **10 confirmed
+allowlist bypasses**. The shared root cause across most: the allowlist
+validated only the *first* token/statement while the OS interpreter ran
+the *entire* submitted script. No public exploitation is known; these
+are hardening fixes. All 10 have dedicated regression tests.
+
+**AppleScript (`internal/shell/applescript`)** — 4 fixes:
+- The matcher now validates the WHOLE script, not just the first
+  statement. Every `tell application/process "X"` target must be
+  allowlisted (closes the multi-`tell` bypass where an allowed first
+  `tell` smuggled a second `tell` to a denied target).
+- `do shell script` / `do script` (arbitrary shell / arbitrary
+  AppleScript) are denied unless an explicit `"do shell script"`
+  allowlist entry opts in — previously they rode through any
+  bare-verb or allowed-leading-statement script.
+- Statement separators are normalized (CR, CRLF, U+2028, U+2029 → LF)
+  before parsing, closing the `\r`-separator variant.
+
+**PowerShell (`internal/shell/powershell`)** — 3 fixes:
+- Statement chaining and sub-expressions (`;`, `|`, `&`, backtick,
+  `$(...)`, `@(...)`, newlines) are rejected before the allowlist
+  check. The allowlist validates only the first cmdlet but
+  `pwsh -Command` runs the whole string, so an allowlisted producer
+  cmdlet could otherwise smuggle arbitrary downstream stages. The
+  guard fails closed (also rejects these metacharacters inside quoted
+  strings).
+
+**D-Bus (`internal/shell/dbus`)** — 2 fixes:
+- The bus kind is now part of the allowlist match: a session-bus grant
+  no longer authorizes a privileged system-bus call. Legacy 4-part
+  entries are session-bus-only; system-bus calls require an explicit
+  `system:`-prefixed 5-part entry. **Behavior change:** existing
+  4-part allowlist entries that were relied upon for system-bus calls
+  must add a `system:` prefix.
+- Trailing-`*` wildcards on the dot-separated service/interface and
+  slash-separated object path are now segment-bounded, so
+  `org.freedesktop.login1*` no longer leaks into the sibling service
+  `org.freedesktop.login1Manager`. Method-name wildcards stay plain
+  prefixes (`Get*` still matches `GetAll`).
+
+**Shortcuts (`internal/shell/shortcuts`)** — 1 fix:
+- Name matching folds only ASCII A-Z instead of using Unicode case
+  folding. Go's `EqualFold` treats confusables like U+212A (KELVIN
+  SIGN) as ASCII `k`, which let a look-alike name pass the allowlist
+  as "Backup" while `shortcuts run` could resolve a different,
+  attacker-created shortcut.
+
+### Notes
+
+- The audit was run as an adversarial find→verify workflow: per-executor
+  finders proposed candidate bypasses with concrete exploit inputs, and
+  independent skeptical verifiers traced each through the real matcher
+  to confirm or refute. 13 candidates → 10 verified real → 3 rejected.
+- No new dependencies; all fixes are pure-Go and preserve the zero-CGO
+  single-binary build. Cross-compiles verified for linux/arm64,
+  windows/amd64, darwin/arm64.
+
+---
+
 ## [0.4.1] — 2026-06-15
 
 ### Added — Replanning under parallel dispatch
@@ -709,3 +773,4 @@ dashboard panel is read-only by design.
 [0.3.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.1
 [0.4.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.0
 [0.4.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.1
+[0.4.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.2

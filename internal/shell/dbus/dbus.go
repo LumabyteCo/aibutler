@@ -9,16 +9,27 @@
 // This package wraps github.com/godbus/dbus/v5 with the same security model
 // as the other native-script executors:
 //
-//   - Allowlist of `service:object_path:interface:method` patterns (with
-//     `*` wildcards). Empty allowlist denies everything.
+//   - Allowlist of `[bus:]service:object_path:interface:method` patterns
+//     (with `*` wildcards). Empty allowlist denies everything.
 //   - Bounded call timeout.
 //   - Capability gating via tool.dbus.call at the dispatcher layer.
+//
+// Bus-scoped matching (hardened in v0.4.2): the bus kind is part of the
+// match so a session-bus grant cannot authorize a privileged system-bus
+// call. A 5-part entry `bus:service:path:interface:method` matches the
+// named bus ("session"/"system"/"*"). A legacy 4-part entry (no bus
+// prefix) is scoped to the SESSION bus ONLY — system-bus calls now
+// require an explicit `system:`-prefixed entry. Trailing-`*` wildcards on
+// the dot-separated service/interface and slash-separated object path are
+// segment-bounded, so `org.freedesktop.login1*` does not leak into the
+// sibling service `org.freedesktop.login1Manager`; method-name wildcards
+// remain plain prefixes.
 //
 // Allowlist examples:
 //
 //	org.mpris.MediaPlayer2.spotify:/org/mpris/MediaPlayer2:org.mpris.MediaPlayer2.Player:Play
 //	org.mpris.MediaPlayer2.*:*:org.mpris.MediaPlayer2.Player:*
-//	org.freedesktop.Notifications:/org/freedesktop/Notifications:org.freedesktop.Notifications:Notify
+//	system:org.freedesktop.login1:/org/freedesktop/login1:org.freedesktop.login1.Manager:Reboot
 package dbus
 
 import (
@@ -121,8 +132,8 @@ func (c *Client) call(ctx context.Context, bus BusKind, service, objectPath, ifa
 	if bus == "" {
 		bus = BusSession
 	}
-	key := fmt.Sprintf("%s:%s:%s:%s", service, objectPath, iface, method)
-	if !c.inAllowlist(service, objectPath, iface, method) {
+	key := fmt.Sprintf("%s:%s:%s:%s:%s", bus, service, objectPath, iface, method)
+	if !c.inAllowlist(bus, service, objectPath, iface, method) {
 		return "", fmt.Errorf("shell.dbus: call not in allowlist: %q", key)
 	}
 
@@ -148,36 +159,107 @@ func (c *Client) call(ctx context.Context, bus BusKind, service, objectPath, ifa
 	return string(body), nil
 }
 
-func (c *Client) inAllowlist(service, objectPath, iface, method string) bool {
+func (c *Client) inAllowlist(bus BusKind, service, objectPath, iface, method string) bool {
 	for _, allowed := range c.allowlist {
-		if matchAllowlistEntry(allowed, service, objectPath, iface, method) {
+		if matchAllowlistEntry(allowed, bus, service, objectPath, iface, method) {
 			return true
 		}
 	}
 	return false
 }
 
-// matchAllowlistEntry compares a 4-part allowlist entry (with `*` wildcards)
-// against the call's service:object_path:interface:method.
-func matchAllowlistEntry(entry, service, objectPath, iface, method string) bool {
-	parts := strings.SplitN(entry, ":", 4)
-	if len(parts) != 4 {
+// matchAllowlistEntry compares an allowlist entry against a call. The bus
+// kind is part of the match so a session-bus grant cannot authorize a
+// privileged system-bus call (and vice-versa).
+//
+// Entry forms:
+//
+//   - 5-part "bus:service:object_path:interface:method" — the bus
+//     component matches the call's bus ("session" / "system" / "*").
+//   - 4-part "service:object_path:interface:method" — legacy form,
+//     scoped to the SESSION bus only (the safe default). System-bus
+//     calls require an explicit 5-part entry with bus=system or *.
+//
+// D-Bus service names, interfaces, methods, and object paths never
+// contain ':', so colons are unambiguous separators.
+func matchAllowlistEntry(entry string, bus BusKind, service, objectPath, iface, method string) bool {
+	parts := strings.Split(entry, ":")
+	switch len(parts) {
+	case 4:
+		// Legacy 4-part entry: session bus only. A session-scoped grant
+		// must not silently authorize a system-bus call.
+		if bus != BusSession {
+			return false
+		}
+		return matchName(parts[0], service) &&
+			matchPath(parts[1], objectPath) &&
+			matchName(parts[2], iface) &&
+			matchMethod(parts[3], method)
+	case 5:
+		if !matchBus(parts[0], bus) {
+			return false
+		}
+		return matchName(parts[1], service) &&
+			matchPath(parts[2], objectPath) &&
+			matchName(parts[3], iface) &&
+			matchMethod(parts[4], method)
+	default:
 		return false
 	}
-	return matchPart(parts[0], service) &&
-		matchPart(parts[1], objectPath) &&
-		matchPart(parts[2], iface) &&
-		matchPart(parts[3], method)
 }
 
-// matchPart supports exact match, full wildcard `*`, and trailing-`*` prefix wildcard.
-func matchPart(pattern, value string) bool {
+// matchBus matches an allowlist bus component ("session" / "system" /
+// "*") against the call's bus, case-insensitively.
+func matchBus(pattern string, bus BusKind) bool {
+	if pattern == "*" {
+		return true
+	}
+	return strings.EqualFold(pattern, string(bus))
+}
+
+// matchName matches a dot-separated D-Bus name (service or interface).
+// Trailing-`*` is a segment-bounded prefix: it expands only at a `.`
+// boundary, so `org.freedesktop.login1*` does NOT match the sibling
+// `org.freedesktop.login1Manager`.
+func matchName(pattern, value string) bool { return matchPart(pattern, value, ".") }
+
+// matchPath matches a slash-separated D-Bus object path. Trailing-`*`
+// expands only at a `/` boundary.
+func matchPath(pattern, value string) bool { return matchPart(pattern, value, "/") }
+
+// matchMethod matches a D-Bus method name. Method names are not
+// hierarchical, so trailing-`*` is a plain (boundary-free) prefix —
+// `Get*` still matches `GetAll`.
+func matchMethod(pattern, value string) bool { return matchPart(pattern, value, "") }
+
+// matchPart supports exact match, full wildcard `*`, and trailing-`*`
+// prefix. When boundaries is non-empty, a trailing-`*` only matches if
+// the wildcard expands at a separator boundary (the prefix ends with a
+// boundary char, or the matched remainder starts with one) — closing
+// the sibling-namespace leak. When boundaries is "", trailing-`*` is a
+// plain byte prefix.
+func matchPart(pattern, value, boundaries string) bool {
 	if pattern == "*" {
 		return true
 	}
 	if strings.HasSuffix(pattern, "*") {
 		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(value, prefix)
+		if !strings.HasPrefix(value, prefix) {
+			return false
+		}
+		if boundaries == "" {
+			return true
+		}
+		rest := value[len(prefix):]
+		if rest == "" {
+			return true // exact prefix match
+		}
+		// Either the prefix already ends at a boundary, or the remainder
+		// begins at one.
+		if n := len(prefix); n > 0 && strings.IndexByte(boundaries, prefix[n-1]) >= 0 {
+			return true
+		}
+		return strings.IndexByte(boundaries, rest[0]) >= 0
 	}
 	return pattern == value
 }
