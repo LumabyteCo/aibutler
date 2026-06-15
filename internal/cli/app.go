@@ -15,6 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	a11ypkg "github.com/LumabyteCo/aibutler/internal/accessibility"
 	"github.com/LumabyteCo/aibutler/internal/action"
 	"github.com/LumabyteCo/aibutler/internal/agent"
 	"github.com/LumabyteCo/aibutler/internal/audit"
@@ -707,6 +708,16 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	dbusClient := dbuspkg.NewClient(dbusAllowlist)
 	dbusClient.SetRecorder(actionRecorder)
 	dbuspkg.RegisterDBusTool(ftReg, dbusClient)
+
+	// Tier 3 — accessibility-tree reader (read-only UI element queries).
+	// macOS-only in this revision; gated by an app-name allowlist.
+	a11yAllowlist := psAllowlist
+	if useDefaults {
+		a11yAllowlist = mergeAllowlists(a11ypkg.DefaultAllowlist(), psAllowlist)
+	}
+	a11yReader := a11ypkg.NewReader(a11yAllowlist)
+	a11yReader.SetRecorder(actionRecorder)
+	a11ypkg.RegisterAccessibilityTool(ftReg, a11yReader)
 
 	// Cross-OS dispatcher (shell.script). The agent supplies a per-OS
 	// payload; the dispatcher forwards the entry matching the running GOOS

@@ -353,6 +353,52 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.4.4] — 2026-06-15
+
+### Added — Tier 3 accessibility-tree reader
+
+A read-only view of an application's on-screen UI element hierarchy
+(buttons, fields, labels — their roles, names, and values). Tier 3
+sits between native scripting (Tier 2) and vision-driven input
+(Tier 4): it lets an agent understand what's on screen in a
+structured, deterministic way without screenshots or pixel reasoning,
+then act via Tier 2 scripting.
+
+- **`internal/accessibility` package** — new `Reader` with the same
+  security model as the Tier 2 executors: an app-name allowlist
+  (empty denies everything), bounded timeout, capped output, an
+  action recorder, and capability gating via `tool.accessibility.read`.
+- **`accessibility.read_ui` tool** — returns a depth-bounded (1–5),
+  indented, tab-delimited snapshot of a named application's front-window
+  UI tree.
+- **Zero-CGO, shell-out implementation.** On macOS the reader queries
+  the System Events accessibility bridge via `osascript` — no
+  Objective-C / CGO, so the single static binary is preserved. The
+  app name is validated to contain no quote/backslash/newline before
+  it's interpolated into the AppleScript, defending against script
+  injection on top of the allowlist.
+- **Honest cross-platform scoping.** Linux (AT-SPI over D-Bus) and
+  Windows (UIAutomation via PowerShell) readers are not yet
+  implemented; `accessibility.read_ui` returns a clear, actionable
+  error on those platforms pointing to the existing `shell.dbus` /
+  `shell.powershell` tools. Both have a zero-CGO path and are scoped
+  follow-ups.
+- A default app allowlist (Finder, System Events, Notes, Calendar,
+  Reminders, Mail, Safari, Music, TextEdit, Preview) is used when the
+  operator opts in to default allowlists; otherwise nothing is
+  inspectable.
+
+### Tests
+
+9 tests covering allowlist denial (including empty-allowlist
+deny-all), script-injection rejection, the non-macOS OS gate, the
+generated-AppleScript shape (depth → nested element walks), and tool
+registration / dispatch. Full repo `go test -race -count=1 ./...`
+passes across all 129 packages; cross-compiles clean for linux/arm64
+and windows/amd64 under `CGO_ENABLED=0`.
+
+---
+
 ## [0.4.3] — 2026-06-15
 
 ### Added — Real browser automation (chromedp)
@@ -846,3 +892,4 @@ dashboard panel is read-only by design.
 [0.4.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.1
 [0.4.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.2
 [0.4.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.3
+[0.4.4]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.4
