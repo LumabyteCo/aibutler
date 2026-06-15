@@ -353,6 +353,64 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.4.5] — 2026-06-15
+
+### Added — Tier 4 vision + input primitives
+
+The last-resort automation tier: screen capture and synthetic
+mouse/keyboard control, for when no Tier 0–3 path (native API, MCP,
+scripting, accessibility) can do the job. Completes the 5-tier
+automation framework.
+
+- **`internal/desktop` package** with a `Controller` and four tools:
+  - **`screen.capture`** — full-screen screenshot, returned as a
+    base64 PNG data URI. Gated by `tool.screen.capture`.
+  - **`input.click`** / **`input.type`** / **`input.key`** — synthetic
+    pointer click at coordinates, text entry, and named special keys
+    (return, tab, escape, arrows, etc.). Gated by `tool.input.control`.
+- **Zero-CGO, shell-out implementation.** macOS only in this revision:
+  `screencapture` for the screenshot, `osascript` / System Events for
+  mouse + keyboard — all built-in OS tools, no third-party install, no
+  CGO. The single static binary is preserved. Linux (scrot/ImageMagick
+  + xdotool) and Windows (.NET + SendKeys) are scoped follow-ups; the
+  tools return a clear macOS-only error elsewhere.
+
+### Security
+
+Synthetic input is the highest-risk capability in the system — it can
+drive any application with no per-app scoping — so it carries **two
+independent gates**:
+
+1. The `tool.input.control` capability (opt-in grant), AND
+2. An explicit enable flag (`Controller.EnableInput`, default OFF),
+   wired in the CLI to the `AIBUTLER_ENABLE_SYNTHETIC_INPUT=1`
+   environment variable. Input stays dead even if the capability is
+   granted, until an operator deliberately turns it on.
+
+`input.type` escapes text for the AppleScript string literal and
+rejects embedded newlines (use `input.key "return"`); `input.click`
+rejects negative coordinates. Screen capture (read-only) uses the
+separate, lower-risk `tool.screen.capture` gate.
+
+### Tests
+
+7 tests covering input-disabled-by-default (both gates), the macOS-only
+OS gate for capture + input, unknown-key rejection, newline rejection,
+tool registration, and registry-level denial while input is disabled.
+Full repo `go test -race -count=1 ./...` passes across all 130
+packages; cross-compiles clean for linux/arm64 and windows/amd64 under
+`CGO_ENABLED=0`. No new dependencies.
+
+### Milestone
+
+With Tier 4 landed, the full **5-tier automation framework** (Tier 0
+native API · Tier 1 MCP · Tier 2 native scripting · Tier 3
+accessibility · Tier 4 vision+input) is in place — preferring the
+cheapest, most deterministic tier and falling back to vision-driven
+input only as a last resort.
+
+---
+
 ## [0.4.4] — 2026-06-15
 
 ### Added — Tier 3 accessibility-tree reader
@@ -893,3 +951,4 @@ dashboard panel is read-only by design.
 [0.4.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.2
 [0.4.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.3
 [0.4.4]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.4
+[0.4.5]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.5

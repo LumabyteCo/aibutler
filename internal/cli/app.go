@@ -18,6 +18,7 @@ import (
 	a11ypkg "github.com/LumabyteCo/aibutler/internal/accessibility"
 	"github.com/LumabyteCo/aibutler/internal/action"
 	"github.com/LumabyteCo/aibutler/internal/agent"
+	desktoppkg "github.com/LumabyteCo/aibutler/internal/desktop"
 	"github.com/LumabyteCo/aibutler/internal/audit"
 	"github.com/LumabyteCo/aibutler/internal/backup"
 	"github.com/LumabyteCo/aibutler/internal/browser"
@@ -718,6 +719,17 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	a11yReader := a11ypkg.NewReader(a11yAllowlist)
 	a11yReader.SetRecorder(actionRecorder)
 	a11ypkg.RegisterAccessibilityTool(ftReg, a11yReader)
+
+	// Tier 4 — vision (screen capture) + synthetic input. screen.capture
+	// is gated by tool.screen.capture. The input tools (input.click /
+	// type / key) are the highest-risk capability in the system, so they
+	// carry a SECOND gate beyond tool.input.control: synthetic input is
+	// off unless the operator sets AIBUTLER_ENABLE_SYNTHETIC_INPUT=1.
+	// macOS-only in this revision.
+	desktopCtl := desktoppkg.NewController()
+	desktopCtl.SetRecorder(actionRecorder)
+	desktopCtl.EnableInput(os.Getenv("AIBUTLER_ENABLE_SYNTHETIC_INPUT") == "1")
+	desktoppkg.RegisterDesktopTools(ftReg, desktopCtl)
 
 	// Cross-OS dispatcher (shell.script). The agent supplies a per-OS
 	// payload; the dispatcher forwards the entry matching the running GOOS
