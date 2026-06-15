@@ -195,13 +195,27 @@ func (m *Manager) Replan(ctx context.Context, missionID, fromStepID string, newS
 
 	now := m.now()
 
-	// Supersede every un-started step that comes after the failed one.
-	// Only state=created steps are touched — running/completed/failed
-	// stay as they are. (In sequential mode there are no concurrent
-	// running steps; parallel replan is deferred.)
+	// Supersede every un-started (state=created) step — the replan
+	// replaces the rest of the plan wholesale. running / completed /
+	// failed / cancelled steps are left untouched.
+	//
+	// Position relative to the failed step does not matter: in
+	// SEQUENTIAL mode every step before the failure is already
+	// completed, so "all created steps" is exactly "the steps after
+	// the failure" — behaviour is unchanged. In PARALLEL mode an
+	// unstarted step can sit *before* the failed step in created_at
+	// order (e.g. it was blocked on a dependency that hadn't resolved
+	// when the failure landed); superseding by state rather than by
+	// index ensures those are replaced too rather than left orphaned
+	// to deadlock the post-replan DAG. The failedIdx lookup above is
+	// retained as a validity check on fromStepID.
+	_ = failedIdx
 	supersededIDs := []string{}
-	for i := failedIdx + 1; i < len(existing); i++ {
+	for i := range existing {
 		st := existing[i]
+		if st.ID == fromStepID {
+			continue // the failed step itself stays failed (audit trail)
+		}
 		if st.State != StateCreated {
 			continue
 		}

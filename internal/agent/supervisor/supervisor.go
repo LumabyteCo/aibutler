@@ -404,28 +404,13 @@ func (s *Supervisor) runParallel(
 	missionCtx, missionCancel := context.WithCancel(ctx)
 	defer missionCancel()
 
-	// Step pointers for fast in-place updates while iterating.
-	byID := make(map[string]*mission.Step, len(steps))
-	for i := range steps {
-		byID[steps[i].ID] = &steps[i]
-	}
+	// Build the dispatch-tracking state from the plan. Re-derived from
+	// scratch after a successful replan (steps is reassigned below, so
+	// the byID pointers must be rebuilt against the new slice).
+	byID, completed, inFlight, stepStarts := buildParallelState(steps)
 
-	completed := make(map[string]bool, len(steps))
-	failed := make(map[string]bool, len(steps))
-	inFlight := make(map[string]bool, len(steps))
-
-	// Pre-seed completed/failed from any resume-after-restart state.
-	for _, st := range steps {
-		switch st.State {
-		case mission.StateCompleted:
-			completed[st.ID] = true
-		case mission.StateFailed:
-			failed[st.ID] = true
-		}
-	}
-
-	stepStarts := make(map[string]time.Time, len(steps))
-	var firstFailure string // empty until set
+	replanCount := 0
+	var firstFailure string // step ID of the first failure; empty until set
 
 	for {
 		// External-interrupt + deadline check at the top of every loop.
@@ -436,7 +421,7 @@ func (s *Supervisor) runParallel(
 		// Identify ready-to-dispatch steps.
 		var ready []*mission.Step
 		if firstFailure == "" {
-			ready = readyForDispatch(steps, byID, completed, failed, inFlight)
+			ready = readyForDispatch(steps, byID, completed, inFlight)
 		}
 
 		// Dispatch every ready step via PublishCompeting — each lands
@@ -482,26 +467,66 @@ func (s *Supervisor) runParallel(
 
 		// Termination conditions.
 		if len(inFlight) == 0 {
-			// Nothing to wait for. The mission is either fully done,
-			// failed with remaining in-flight drained, or deadlocked on
-			// dependencies that can never resolve.
+			// Nothing left in flight. The mission is either failed (with
+			// all peers now drained), fully done, or deadlocked.
 			if firstFailure != "" {
+				// All in-flight peers have drained — their results are
+				// recorded. Now decide: replan or fail. Replanning waits
+				// for this drain point so the Replanner sees a consistent
+				// snapshot (no steps mid-execution).
+				failedStep := byID[firstFailure]
+				stepErr := errors.New(failedStep.Error)
+
+				if s.Replanner != nil && replanCount < s.maxReplans() {
+					refreshed, replanErr := s.tryReplan(ctx, missionID, failedStep, stepErr, steps, replanCount)
+					if replanErr == nil {
+						replanCount++
+						steps = refreshed
+						// Re-hydrate sub-steps (a no-op for LLM-produced
+						// leaf replacements, but correct if a future
+						// Replanner emits grouped steps) and rebuild the
+						// dispatch-tracking state against the new slice.
+						if mi, mErr := s.store.GetMission(ctx, missionID); mErr == nil {
+							hydrateSubSteps(steps, mission.PlanFromJSON(mi.PlanJSON))
+						}
+						byID, completed, inFlight, stepStarts = buildParallelState(steps)
+						firstFailure = ""
+						continue
+					}
+					if !errors.Is(replanErr, ErrReplanRejected) {
+						// Replanner implementation/persistence error —
+						// surface it but don't burn a replan attempt.
+						stepErr = fmt.Errorf("%w (replan also failed: %v)", stepErr, replanErr)
+					}
+					// ErrReplanRejected → fall through to fail with the
+					// original step error as the cause.
+				}
+
 				_ = s.mgr.Fail(ctx, missionID,
-					fmt.Sprintf("step %s failed; parallel mission terminated", firstFailure))
-				return fmt.Errorf("supervisor: step %s: failed", firstFailure)
+					fmt.Sprintf("step %s failed; parallel mission terminated: %v", firstFailure, stepErr))
+				return fmt.Errorf("supervisor: parallel step %s: %w", firstFailure, stepErr)
 			}
-			allDone := true
+			// No active failure (firstFailure == ""). Done when every
+			// step has reached a terminal state. Reaching this point
+			// with a terminal-but-failed step means that failure was
+			// already superseded by a replan (the failed step is kept
+			// as an audit relic) — so completed / cancelled / failed
+			// all count as "settled." Only a non-terminal step with no
+			// ready peers and nothing in flight is a genuine deadlock.
+			allSettled := true
+			completedCount := 0
 			for _, st := range steps {
-				if !completed[st.ID] {
-					allDone = false
-					break
+				if st.State == mission.StateCompleted {
+					completedCount++
+				} else if !st.State.IsTerminal() {
+					allSettled = false
 				}
 			}
-			if allDone {
+			if allSettled {
 				return s.mgr.Complete(ctx, missionID,
-					fmt.Sprintf("%d steps completed (parallel)", len(steps)))
+					fmt.Sprintf("%d steps completed (parallel)", completedCount))
 			}
-			// Deadlock — no ready steps, no in-flight, not done.
+			// Deadlock — no ready steps, no in-flight, not all settled.
 			_ = s.mgr.Fail(ctx, missionID, "deadlock: unsatisfiable dependencies")
 			return errors.New("supervisor: parallel deadlock — step DependsOn cannot be satisfied")
 		}
@@ -547,7 +572,6 @@ func (s *Supervisor) runParallel(
 		} else {
 			step.State = mission.StateFailed
 			step.Error = res.Error
-			failed[step.ID] = true
 			if firstFailure == "" {
 				firstFailure = step.ID
 			}
@@ -559,17 +583,45 @@ func (s *Supervisor) runParallel(
 	}
 }
 
+// buildParallelState derives the dispatch-tracking maps for runParallel
+// from a steps slice. Called once at entry and again after every
+// successful replan (when the slice is replaced wholesale). The
+// returned byID holds pointers into the passed slice, so callers must
+// keep using that exact slice for in-place state updates. inFlight and
+// stepStarts come back empty — nothing is dispatched at build time.
+func buildParallelState(steps []mission.Step) (
+	byID map[string]*mission.Step,
+	completed, inFlight map[string]bool,
+	stepStarts map[string]time.Time,
+) {
+	byID = make(map[string]*mission.Step, len(steps))
+	completed = make(map[string]bool, len(steps))
+	inFlight = make(map[string]bool, len(steps))
+	stepStarts = make(map[string]time.Time, len(steps))
+	for i := range steps {
+		byID[steps[i].ID] = &steps[i]
+		if steps[i].State == mission.StateCompleted {
+			completed[steps[i].ID] = true
+		}
+	}
+	return
+}
+
 // readyForDispatch returns the steps that are ready to dispatch — not
 // already terminal, not already in flight, and whose DependsOn entries
 // are all in `completed`.
 func readyForDispatch(
 	steps []mission.Step, byID map[string]*mission.Step,
-	completed, failed, inFlight map[string]bool,
+	completed, inFlight map[string]bool,
 ) []*mission.Step {
 	ready := []*mission.Step{}
 	for i := range steps {
 		st := &steps[i]
-		if completed[st.ID] || failed[st.ID] || inFlight[st.ID] {
+		// Skip any terminal step by its authoritative State field
+		// (completed / failed / cancelled). Reading State rather than
+		// the maps means superseded-by-replan steps (cancelled, and
+		// absent from completed/failed) are also correctly skipped.
+		if st.State.IsTerminal() || inFlight[st.ID] {
 			continue
 		}
 		allOK := true

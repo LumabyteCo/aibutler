@@ -353,6 +353,62 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.4.1] — 2026-06-15
+
+### Added — Replanning under parallel dispatch
+
+LLM-driven replanning (shipped in v0.3.0 for sequential missions) now
+works in parallel mode too. A failing step in a `SetPlanParallel`
+mission no longer terminates the whole mission when a `Replanner` is
+configured — instead the supervisor recovers.
+
+- **Parallel replan in the supervisor.** When a step fails in
+  `runParallel`, the supervisor lets any in-flight peer steps drain
+  (records their results) and then, at that settled point, consults
+  the configured `Replanner` exactly as the sequential path does. On
+  success it persists the replacement via `Manager.Replan`, rebuilds
+  the parallel dispatch state from the refreshed plan, and continues
+  the DAG loop. `ErrReplanRejected` or an exhausted `MaxReplans` cap
+  fails the mission as before. The cap is per-mission across both
+  dispatch modes.
+- **`Manager.Replan` supersede generalized.** Replanning now
+  supersedes *every* still-`created` step (marking it `cancelled`,
+  "superseded by replan"), regardless of its position relative to the
+  failed step. In sequential mode this is unchanged (all unstarted
+  steps already follow the failure). In parallel mode it correctly
+  catches steps that were blocked on a dependency and sit *earlier* in
+  created-order than the failure — which would otherwise orphan the
+  post-replan DAG into a false deadlock.
+
+### Changed
+
+- **`runParallel` skips terminal steps by authoritative `State`**
+  rather than by tracking a separate `failed` map (now removed as
+  dead state). The DAG-completion check treats completed, cancelled,
+  and superseded-failed steps all as "settled," so a post-replan plan
+  with an audit-relic failed step completes cleanly instead of
+  tripping the deadlock guard. New `buildParallelState` helper
+  re-derives the dispatch-tracking maps at entry and after each
+  replan.
+
+### Fixed
+
+- **Toolchain bumped to go1.26.4** (carried from the v0.4.0 release
+  commit) — resolves stdlib CVEs GO-2026-5039 (net/textproto) and
+  GO-2026-5037 (crypto/x509). `govulncheck ./...` reports clean.
+
+### Notes
+
+- Parallel replan waits for the in-flight drain so the Replanner sees
+  a consistent snapshot (no steps mid-execution). The replacement
+  steps replace the entire unstarted remainder of the plan.
+- An LLM `Replanner` emits leaf steps; if a future Replanner emits
+  grouped steps (with `SubSteps`), the supervisor re-hydrates them
+  from the rewritten `PlanJSON` after the replan, so the manager tier
+  composes with replanning.
+
+---
+
 ## [0.4.0] — 2026-06-02
 
 ### Added — Manager tier (3-level hierarchy)
@@ -652,3 +708,4 @@ dashboard panel is read-only by design.
 [0.3.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.0
 [0.3.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.1
 [0.4.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.0
+[0.4.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.1

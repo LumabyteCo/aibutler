@@ -263,10 +263,13 @@ calling `mission.create`.
   Multiple steps can be in flight at once. Steps with an empty
   `DependsOn` list are ready immediately (no implicit chain).
 
-Failure policy is the same in both modes: the first step that fails
-terminates the mission. In parallel mode, peer steps that were
-already in flight before the failure get to publish their result;
-no new work is dispatched after the failure is observed.
+Failure policy is the same in both modes. The first step that fails
+stops new dispatches; in parallel mode, peer steps already in flight
+before the failure get to publish their result first (they drain).
+Then, if a `Replanner` is configured, recovery is attempted (see
+*Replanning on step failure* below) — this now works in **both**
+sequential and parallel modes. Without a `Replanner`, the failure
+terminates the mission.
 
 A plan with a dangling `DependsOn` reference (the named step
 doesn't exist) is detected as a deadlock and fails the mission with
@@ -339,12 +342,20 @@ rt := missionruntime.New(mgr, store, b, missionruntime.Options{
 Existing missions without a configured Replanner keep the previous
 "fail on first failure" behaviour — no flag flips, no migrations.
 
+Replanning works in **both** sequential and parallel dispatch modes.
+
+- In **sequential** mode the Replanner is consulted the moment a step
+  fails.
+- In **parallel** mode (`SetPlanParallel`) the supervisor first lets
+  any peer steps that were already in flight drain (records their
+  results), then consults the Replanner against that settled snapshot.
+  The replacement steps supersede *all* still-unstarted steps —
+  including any that were blocked on a dependency and sit earlier in
+  the plan — so the post-replan DAG has no orphaned steps. The
+  `MaxReplans` cap is per-mission across both modes.
+
 Scope notes:
 
-- Replanning is **sequential mode only** in this revision. Parallel
-  dispatch (`SetPlanParallel`) still fails the whole mission on the
-  first failure; in-flight peers complete naturally but no replan
-  attempt is made.
 - The Replanner sees prior completed step outputs but does NOT see
   the mission's running event log or per-step telemetry. The signal it
   gets is the same signal the supervisor has: goal + completed + failed
@@ -399,11 +410,6 @@ the supervisor's outer loop, ahead of the replan branch.
 Several capabilities were considered for the initial release but
 intentionally deferred:
 
-- **Replanning in parallel mode.** Sequential mode replanning ships
-  in this revision (above); the parallel-DAG path still fails the
-  whole mission on the first step failure. Replanning under parallel
-  dispatch is its own design problem (what to do with in-flight peers
-  whose results are already partway done) and is a follow-up.
 - **Recursive manager nesting.** The manager tier (above) supports one
   level of delegation: supervisor → manager → worker. A sub-step
   cannot itself carry sub-steps, so deeper trees (manager → manager →

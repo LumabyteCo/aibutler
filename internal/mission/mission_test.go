@@ -838,3 +838,59 @@ func TestManager_Replan_RejectsEmptyNewSteps(t *testing.T) {
 		t.Fatal("expected error for empty new step list")
 	}
 }
+
+// TestManager_Replan_SupersedesCreatedStepsBeforeFailure validates the
+// v0.4.1 generalization: replanning supersedes EVERY still-created step,
+// not just those positioned after the failed step. In parallel mode an
+// unstarted step (blocked on a dependency) can sit before the failed
+// step in created_at order; it must be superseded too, or it would
+// orphan the post-replan DAG.
+func TestManager_Replan_SupersedesCreatedStepsBeforeFailure(t *testing.T) {
+	mgr, store := newTestManager(t)
+	ctx := context.Background()
+
+	m, _ := mgr.Create(ctx, "parallel replan supersede", "", 0)
+	_ = mgr.SetPlanParallel(ctx, m.ID, []Step{
+		{Task: "A-still-created"}, // earlier in created order, never started
+		{Task: "B-completed"},
+		{Task: "C-failed"}, // the failure trigger, LAST in created order
+	})
+	_ = mgr.Start(ctx, m.ID)
+
+	steps, _ := store.GetSteps(ctx, m.ID)
+	aID := steps[0].ID
+	// A stays created (simulating a step blocked on a dependency).
+	steps[1].State = StateCompleted
+	steps[1].Output = "did B"
+	_ = store.UpdateStep(ctx, steps[1])
+	steps[2].State = StateFailed
+	steps[2].Error = "C blew up"
+	_ = store.UpdateStep(ctx, steps[2])
+	failedID := steps[2].ID
+
+	if err := mgr.Replan(ctx, m.ID, failedID, []Step{{Task: "RECOVER"}}, "C failed"); err != nil {
+		t.Fatalf("Replan: %v", err)
+	}
+
+	got, _ := store.GetSteps(ctx, m.ID)
+	byID := map[string]Step{}
+	for _, st := range got {
+		byID[st.ID] = st
+	}
+	// A (created, BEFORE the failed step) must be superseded → cancelled.
+	if byID[aID].State != StateCancelled {
+		t.Errorf("A state = %s, want cancelled (superseded even though it precedes the failed step)", byID[aID].State)
+	}
+	if byID[aID].Error != "superseded by replan" {
+		t.Errorf("A error = %q, want 'superseded by replan'", byID[aID].Error)
+	}
+	// The failed step stays failed (audit relic).
+	if byID[failedID].State != StateFailed {
+		t.Errorf("failed step state = %s, want failed (unchanged)", byID[failedID].State)
+	}
+	// Parallel flag preserved across the replan.
+	mi, _ := store.GetMission(ctx, m.ID)
+	if !PlanFromJSON(mi.PlanJSON).Parallel {
+		t.Error("Parallel flag lost across replan")
+	}
+}

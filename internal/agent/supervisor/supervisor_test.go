@@ -1437,3 +1437,237 @@ func TestRun_ManagerTier_GroupSubStepFailure_FailsMission(t *testing.T) {
 		t.Errorf("group step state = %s, want failed", steps[0].State)
 	}
 }
+
+// --- Parallel-mode replanning tests (v0.4.1) ---
+
+// TestRun_Parallel_ReplanRecovers verifies that a failing step in a
+// parallel mission triggers a replan (after in-flight peers drain) and
+// the replacement step lets the mission complete.
+func TestRun_Parallel_ReplanRecovers(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "parallel recover", "sup-1", 0)
+	// Three independent steps. "bad" fails on first attempt; the replan
+	// replaces it (and any remaining unstarted steps) with "RECOVER".
+	if err := mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
+		{ID: "ok1", Task: "ok1"},
+		{ID: "bad", Task: "FAIL-ME"},
+		{ID: "ok2", Task: "ok2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	b := bus.New()
+	var failCount atomic.Int32
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		if task.Task == "FAIL-ME" {
+			failCount.Add(1)
+			return "", errFail
+		}
+		return "did:" + task.Task, nil
+	}
+	// Three workers so the independent steps genuinely run in parallel.
+	for i := 0; i < 3; i++ {
+		w := worker.New(b, "w", executor)
+		wctx, wcancel := context.WithCancel(ctx)
+		defer wcancel()
+		go func() { _ = w.Run(wctx, m.ID) }()
+	}
+	time.Sleep(80 * time.Millisecond)
+
+	replanner := &stubReplanner{
+		respond: func(req supervisor.ReplanRequest) ([]mission.Step, error) {
+			return []mission.Step{{Task: "RECOVER"}}, nil
+		},
+	}
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+	s.Replanner = replanner
+
+	if err := s.Run(ctx, m.ID); err != nil {
+		t.Fatalf("parallel Run with replan: %v", err)
+	}
+
+	if got := replanner.callCount(); got != 1 {
+		t.Fatalf("Replanner called %d times, want 1", got)
+	}
+	// The replan request should have seen the failed step and the
+	// completed peers (which drained before the replan).
+	call := replanner.lastCall()
+	if call.FailedStep.ID != "bad" {
+		t.Errorf("FailedStep.ID = %q, want bad", call.FailedStep.ID)
+	}
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("mission state = %s, want completed", got.State)
+	}
+
+	// The "bad" step stays failed (audit trail); a RECOVER step
+	// completed; ok1/ok2 completed.
+	steps, _ := store.GetSteps(ctx, m.ID)
+	var failedCount, completedCount, recovered int
+	for _, st := range steps {
+		switch st.State {
+		case mission.StateFailed:
+			failedCount++
+		case mission.StateCompleted:
+			completedCount++
+			if st.Task == "RECOVER" {
+				recovered++
+			}
+		}
+	}
+	if failedCount != 1 {
+		t.Errorf("failed step count = %d, want 1 (the original 'bad')", failedCount)
+	}
+	if recovered != 1 {
+		t.Errorf("RECOVER step completed count = %d, want 1", recovered)
+	}
+}
+
+// TestRun_Parallel_ReplanRejected_FailsMission verifies that
+// ErrReplanRejected in parallel mode fails the mission without
+// consuming retries.
+func TestRun_Parallel_ReplanRejected_FailsMission(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "parallel reject", "sup-1", 0)
+	_ = mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
+		{ID: "ok1", Task: "ok1"},
+		{ID: "bad", Task: "FAIL-ME"},
+	})
+
+	b := bus.New()
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		if task.Task == "FAIL-ME" {
+			return "", errFail
+		}
+		return "ok", nil
+	}
+	for i := 0; i < 2; i++ {
+		w := worker.New(b, "w", executor)
+		wctx, wcancel := context.WithCancel(ctx)
+		defer wcancel()
+		go func() { _ = w.Run(wctx, m.ID) }()
+	}
+	time.Sleep(80 * time.Millisecond)
+
+	replanner := &stubReplanner{
+		respond: func(req supervisor.ReplanRequest) ([]mission.Step, error) {
+			return nil, supervisor.ErrReplanRejected
+		},
+	}
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+	s.Replanner = replanner
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error after ErrReplanRejected in parallel mode")
+	}
+	if got := replanner.callCount(); got != 1 {
+		t.Errorf("Replanner called %d times, want 1 (rejection, no retry)", got)
+	}
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}
+
+// TestRun_Parallel_MaxReplansExhausted verifies the per-mission replan
+// cap applies in parallel mode: a step that keeps failing across
+// replans eventually fails the mission after MaxReplans attempts.
+func TestRun_Parallel_MaxReplansExhausted(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "parallel exhaust", "sup-1", 0)
+	_ = mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
+		{ID: "bad", Task: "FAIL-ALWAYS"},
+	})
+
+	b := bus.New()
+	// Every task fails — including the replan replacements.
+	executor := func(_ context.Context, _ worker.Task) (string, error) {
+		return "", errFail
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	time.Sleep(80 * time.Millisecond)
+
+	replanner := &stubReplanner{
+		respond: func(req supervisor.ReplanRequest) ([]mission.Step, error) {
+			return []mission.Step{{Task: "FAIL-ALSO"}}, nil
+		},
+	}
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+	s.Replanner = replanner
+	s.MaxReplans = 2
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error after parallel replan attempts exhausted")
+	}
+	if got := replanner.callCount(); got != 2 {
+		t.Errorf("Replanner called %d times, want 2 (MaxReplans)", got)
+	}
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}
+
+// TestRun_Parallel_NoReplanner_StillFailsFast verifies backwards
+// compatibility: with no Replanner, a parallel step failure fails the
+// mission exactly as in v0.3.x/v0.4.0.
+func TestRun_Parallel_NoReplanner_StillFailsFast(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "parallel no-replanner", "sup-1", 0)
+	_ = mgr.SetPlanParallel(ctx, m.ID, []mission.Step{
+		{ID: "ok1", Task: "ok1"},
+		{ID: "bad", Task: "FAIL-ME"},
+	})
+
+	b := bus.New()
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		if task.Task == "FAIL-ME" {
+			return "", errFail
+		}
+		return "ok", nil
+	}
+	for i := 0; i < 2; i++ {
+		w := worker.New(b, "w", executor)
+		wctx, wcancel := context.WithCancel(ctx)
+		defer wcancel()
+		go func() { _ = w.Run(wctx, m.ID) }()
+	}
+	time.Sleep(80 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+	// Replanner intentionally nil.
+
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error from failed parallel step (no replanner)")
+	}
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+}
