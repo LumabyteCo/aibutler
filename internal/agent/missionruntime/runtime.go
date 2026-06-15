@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent/bus"
+	"github.com/LumabyteCo/aibutler/internal/agent/manager"
 	"github.com/LumabyteCo/aibutler/internal/agent/supervisor"
 	"github.com/LumabyteCo/aibutler/internal/agent/worker"
 	"github.com/LumabyteCo/aibutler/internal/mission"
@@ -276,24 +277,40 @@ func (r *Runtime) spawn(parentCtx context.Context, missionID string) {
 		s.MaxReplans = r.opts.MaxReplans
 	}
 
-	r.logf("mission runtime: spawning supervisor+worker for %s", missionID)
+	// Manager (middle tier). It subscribes to the mission's
+	// manager_dispatch topic and only does work when the supervisor
+	// routes a grouped step (one carrying SubSteps) to it. For plans
+	// with no grouped steps it sits idle — spawning it unconditionally
+	// keeps the spawn path simple and costs one parked goroutine.
+	// Local name `mgrAgent` to avoid colliding with r.mgr, which is
+	// the *persistence* mission.Manager.
+	mgrAgent := manager.New(r.bus, "manager-"+short)
 
-	// Worker first so it's listening when the supervisor dispatches.
+	r.logf("mission runtime: spawning supervisor+manager+worker for %s", missionID)
+
+	// Worker + manager first so both are listening before the
+	// supervisor dispatches.
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
 		_ = w.Run(runCtx, missionID)
 	}()
-	// Tiny delay to ensure worker.Run has called SubscribeReliable
-	// before the supervisor publishes. Without this, the first dispatch
-	// could hit ErrNoSubscribers and have to retry — correct, but
-	// noisy in the audit log. Belt and braces.
+	managerDone := make(chan struct{})
+	go func() {
+		defer close(managerDone)
+		_ = mgrAgent.Run(runCtx, missionID)
+	}()
+	// Tiny delay to ensure worker.Run and manager.Run have called
+	// their Subscribe* before the supervisor publishes. Without this,
+	// the first dispatch could hit ErrNoSubscribers and have to retry
+	// — correct, but noisy in the audit log. Belt and braces.
 	time.Sleep(20 * time.Millisecond)
 
 	go func() {
 		defer func() {
 			cancel()
 			<-workerDone
+			<-managerDone
 			r.mu.Lock()
 			delete(r.running, missionID)
 			r.mu.Unlock()

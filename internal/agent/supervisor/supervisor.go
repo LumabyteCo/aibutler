@@ -140,8 +140,18 @@ func (s *Supervisor) Run(ctx context.Context, missionID string) error {
 	// could publish before the supervisor is listening.
 	eventsTopic := "mission." + missionID + ".events"
 	dispatchTopic := "mission." + missionID + ".dispatch"
+	managerTopic := "mission." + missionID + ".manager_dispatch"
 	events := s.bus.SubscribeReliable(eventsTopic)
 	defer s.bus.UnsubscribeReliable(eventsTopic, events)
+
+	// Hydrate Step.SubSteps from PlanJSON onto the steps loaded from
+	// the store. The mission_steps table doesn't carry a sub_steps
+	// column (avoiding a migration in v0.4.0) — PlanJSON is the
+	// authoritative source for plan structure, mission_steps is the
+	// authoritative source for runtime state. We merge them here once
+	// at Run entry so downstream code can branch on step.SubSteps
+	// uniformly.
+	hydrateSubSteps(steps, mission.PlanFromJSON(mi.PlanJSON))
 
 	// Only fire Start on a fresh (planned) mission — a re-Run after
 	// Resume is already in `running` state, and re-Starting would
@@ -157,9 +167,33 @@ func (s *Supervisor) Run(ctx context.Context, missionID string) error {
 	// in mission.PlanJSON.
 	plan := mission.PlanFromJSON(mi.PlanJSON)
 	if plan.Parallel {
-		return s.runParallel(ctx, missionID, steps, stepTimeout, dispatchTopic, events)
+		return s.runParallel(ctx, missionID, steps, stepTimeout, dispatchTopic, managerTopic, events)
 	}
-	return s.runSequential(ctx, missionID, steps, stepTimeout, dispatchTopic, events)
+	return s.runSequential(ctx, missionID, steps, stepTimeout, dispatchTopic, managerTopic, events)
+}
+
+// hydrateSubSteps copies the SubSteps slice from each plan-step into
+// the matching runtime step (matched by ID). Plan-steps that don't
+// match any runtime step are ignored; runtime steps that don't match
+// any plan-step keep their existing (empty) SubSteps.
+func hydrateSubSteps(runtimeSteps []mission.Step, plan mission.Plan) {
+	if len(plan.Steps) == 0 {
+		return
+	}
+	bySubID := make(map[string][]mission.Step, len(plan.Steps))
+	for _, ps := range plan.Steps {
+		if len(ps.SubSteps) > 0 {
+			bySubID[ps.ID] = ps.SubSteps
+		}
+	}
+	if len(bySubID) == 0 {
+		return
+	}
+	for i := range runtimeSteps {
+		if subs, ok := bySubID[runtimeSteps[i].ID]; ok {
+			runtimeSteps[i].SubSteps = subs
+		}
+	}
 }
 
 // runSequential drives the mission one step at a time, in plan-order.
@@ -181,7 +215,7 @@ func (s *Supervisor) Run(ctx context.Context, missionID string) error {
 func (s *Supervisor) runSequential(
 	ctx context.Context, missionID string,
 	steps []mission.Step, stepTimeout time.Duration,
-	dispatchTopic string, events <-chan bus.ReliableMessage,
+	dispatchTopic, managerTopic string, events <-chan bus.ReliableMessage,
 ) error {
 	replanCount := 0
 	current := steps
@@ -226,7 +260,7 @@ func (s *Supervisor) runSequential(
 		}
 
 		stepCtx, cancel := context.WithTimeout(ctx, stepTimeout)
-		err := s.runStep(stepCtx, missionID, step, dispatchTopic, events)
+		err := s.runStep(stepCtx, missionID, step, dispatchTopic, managerTopic, events)
 		cancel()
 		if err == nil {
 			// Move on. The in-memory step state was already mutated by
@@ -363,7 +397,7 @@ func (s *Supervisor) tryReplan(
 func (s *Supervisor) runParallel(
 	ctx context.Context, missionID string,
 	steps []mission.Step, stepTimeout time.Duration,
-	dispatchTopic string, events <-chan bus.ReliableMessage,
+	dispatchTopic, managerTopic string, events <-chan bus.ReliableMessage,
 ) error {
 	// Per-mission ctx that cancels every step's inner deadline when the
 	// supervisor itself unwinds (e.g. on failure).
@@ -406,9 +440,9 @@ func (s *Supervisor) runParallel(
 		}
 
 		// Dispatch every ready step via PublishCompeting — each lands
-		// on exactly one worker. Buffer-of-1 + per-publish shuffle in
-		// the bus give fair distribution across the worker pool;
-		// busy workers fall through to peers via SendTimeout.
+		// on exactly one worker (or one manager, for grouped steps).
+		// Per-publish shuffle in the bus gives fair distribution across
+		// the pool; busy peers fall through via SendTimeout.
 		for _, step := range ready {
 			step.State = mission.StateRunning
 			now := time.Now()
@@ -418,15 +452,29 @@ func (s *Supervisor) runParallel(
 				return fmt.Errorf("supervisor: parallel update step running: %w", err)
 			}
 
+			// Route grouped steps to the manager topic with the sub-step
+			// list in Task.Input; leaf steps go to the worker topic.
+			targetTopic := dispatchTopic
+			taskInput := ""
+			if len(step.SubSteps) > 0 {
+				targetTopic = managerTopic
+				subJSON, err := json.Marshal(step.SubSteps)
+				if err != nil {
+					return fmt.Errorf("supervisor: parallel marshal sub-steps %s: %w", step.ID, err)
+				}
+				taskInput = string(subJSON)
+			}
+
 			taskPayload, err := json.Marshal(worker.Task{
 				StepID:    step.ID,
 				MissionID: missionID,
 				Task:      step.Task,
+				Input:     taskInput,
 			})
 			if err != nil {
 				return fmt.Errorf("supervisor: parallel marshal task: %w", err)
 			}
-			if err := s.bus.PublishCompeting(missionCtx, dispatchTopic, s.agentID, string(taskPayload), s.DispatchOpts); err != nil {
+			if err := s.bus.PublishCompeting(missionCtx, targetTopic, s.agentID, string(taskPayload), s.DispatchOpts); err != nil {
 				return fmt.Errorf("supervisor: parallel dispatch %s: %w", step.ID, err)
 			}
 			inFlight[step.ID] = true
@@ -628,7 +676,7 @@ func (s *Supervisor) handleParallelWaitErr(
 // runStep dispatches one step and waits for its matching result event.
 func (s *Supervisor) runStep(
 	ctx context.Context, missionID string, step *mission.Step,
-	dispatchTopic string, events <-chan bus.ReliableMessage,
+	dispatchTopic, managerTopic string, events <-chan bus.ReliableMessage,
 ) error {
 	now := time.Now()
 	step.State = mission.StateRunning
@@ -637,16 +685,35 @@ func (s *Supervisor) runStep(
 		return fmt.Errorf("update step running: %w", err)
 	}
 
-	// Dispatch via competing-consumer — lands on exactly one worker.
+	// Route grouped steps (those carrying SubSteps) to the manager
+	// dispatch topic; leaf steps go straight to a worker. The manager
+	// decomposes the sub-step list, runs each on the worker pool, and
+	// publishes a single aggregated Result for this parent step — the
+	// supervisor's wait loop below treats both paths identically (it's
+	// matching on step.ID either way).
+	targetTopic := dispatchTopic
+	taskInput := ""
+	if len(step.SubSteps) > 0 {
+		targetTopic = managerTopic
+		subJSON, err := json.Marshal(step.SubSteps)
+		if err != nil {
+			return fmt.Errorf("marshal sub-steps: %w", err)
+		}
+		taskInput = string(subJSON)
+	}
+
+	// Dispatch via competing-consumer — lands on exactly one worker (or
+	// one manager, for grouped steps).
 	taskPayload, err := json.Marshal(worker.Task{
 		StepID:    step.ID,
 		MissionID: missionID,
 		Task:      step.Task,
+		Input:     taskInput,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal task: %w", err)
 	}
-	if err := s.bus.PublishCompeting(ctx, dispatchTopic, s.agentID, string(taskPayload), s.DispatchOpts); err != nil {
+	if err := s.bus.PublishCompeting(ctx, targetTopic, s.agentID, string(taskPayload), s.DispatchOpts); err != nil {
 		return fmt.Errorf("dispatch: %w", err)
 	}
 

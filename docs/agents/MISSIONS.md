@@ -25,11 +25,46 @@ when there's real orchestration work to do.
 ### Supervisor
 
 Owns one mission end-to-end. Reads the plan, dispatches each step to a
-worker via the reliable bus, waits for the result event, persists step
-state, and transitions the mission through its state machine. On step
-failure, if a `Replanner` is configured the supervisor consults it for
-a recovery sequence (see *Replanning on step failure* below); otherwise
-the mission is marked `failed` and the supervisor stops.
+worker (or, for grouped steps, a manager) via the reliable bus, waits
+for the result event, persists step state, and transitions the mission
+through its state machine. On step failure, if a `Replanner` is
+configured the supervisor consults it for a recovery sequence (see
+*Replanning on step failure* below); otherwise the mission is marked
+`failed` and the supervisor stops.
+
+### Manager
+
+The middle tier of the 3-level hierarchy (supervisor → manager →
+worker). A Manager only does work when the plan contains a **grouped
+step** — a `mission.Step` carrying a non-empty `SubSteps` list. The
+supervisor routes such steps to the mission's `manager_dispatch` topic
+instead of the worker dispatch topic. The Manager then:
+
+1. Decomposes the sub-step list.
+2. Dispatches each sub-step to the same worker pool the supervisor uses
+   (sub-steps compete with any other worker traffic — the manager does
+   not own a separate pool).
+3. Awaits each sub-step's result on the events topic, running them
+   sequentially.
+4. Aggregates the sub-step outputs (one `sub_id: output` line each)
+   into a single parent-level `Result` and publishes it on the events
+   topic, so the supervisor sees one "group complete" result for the
+   parent step.
+
+A single failing sub-step terminates the group with a parent-level
+error, which the supervisor treats exactly like any other step
+failure (fail the mission, or replan if a `Replanner` is configured).
+
+Plans with no grouped steps never trigger a manager — every step
+dispatches directly to a worker, exactly as in v0.3.x. The
+`missionruntime` spawns one Manager per mission unconditionally; it
+parks idle on the `manager_dispatch` subscription and costs a single
+goroutine when no grouped steps exist.
+
+**Scope (v0.4.0):** sub-step execution within a group is sequential,
+and sub-steps are leaf-level — a sub-step cannot itself carry
+`SubSteps` (no recursive manager nesting). Parallel sub-step dispatch
+and deeper hierarchies are follow-ups.
 
 ### Worker
 
@@ -104,21 +139,34 @@ follow-up work.
 
 ## Bus protocol
 
-Two reliable topics per mission:
+Three reliable topics per mission:
 
-- **`mission.{id}.dispatch`** — supervisor → worker. Each message is a
-  `Task {step_id, mission_id, task, input}`. The worker acks on receipt
-  (delivery confirmation) and runs the task; the supervisor waits on
-  the events topic for completion.
-- **`mission.{id}.events`** — worker → supervisor. Each message is a
-  `Result {step_id, mission_id, worker_id, output, error, success}`.
-  The supervisor matches the `step_id` to the dispatched step, persists
-  output/error, and either continues or fails the mission.
+- **`mission.{id}.dispatch`** — supervisor/manager → worker. Each
+  message is a `Task {step_id, mission_id, task, input}`. The worker
+  acks on receipt (delivery confirmation) and runs the task; the
+  publisher waits on the events topic for completion. Both the
+  supervisor (leaf steps) and the manager (sub-steps) publish here.
+- **`mission.{id}.manager_dispatch`** — supervisor → manager. Each
+  message is a `Task` whose `input` field holds the JSON-encoded
+  sub-step list for a grouped step. The manager acks on receipt,
+  decomposes the sub-steps onto the worker dispatch topic, and
+  publishes one aggregated `Result` for the parent step on the events
+  topic. Only used when a plan contains grouped steps.
+- **`mission.{id}.events`** — worker/manager → supervisor. Each
+  message is a `Result {step_id, mission_id, worker_id, output,
+  error, success}`. The supervisor matches the `step_id` to the
+  dispatched step, persists output/error, and either continues or
+  fails the mission. (The manager also subscribes here to collect its
+  sub-steps' results; everyone filters by their own step IDs.)
 
-Both topics use the bus's at-least-once delivery (`PublishReliable` /
-`SubscribeReliable`) — neither dispatch nor result can be silently
-dropped on a slow consumer. Stable message IDs across retries let
-non-idempotent handlers detect duplicates.
+The `dispatch` and `manager_dispatch` topics use competing-consumer
+delivery (`PublishCompeting` / `SubscribeCompeting`) so each task
+reaches exactly one consumer in the pool. The `events` topic uses
+broadcast delivery (`PublishReliable` / `SubscribeReliable`) so both
+the supervisor and the manager can observe results. All three use the
+bus's at-least-once semantics — nothing is silently dropped on a slow
+consumer. Stable message IDs across retries let non-idempotent
+handlers detect duplicates.
 
 ## Mode and runtime
 
@@ -356,6 +404,11 @@ intentionally deferred:
   whole mission on the first step failure. Replanning under parallel
   dispatch is its own design problem (what to do with in-flight peers
   whose results are already partway done) and is a follow-up.
-- **Manager tier (3-level hierarchy).** Workers report directly to the
-  supervisor today. A manager layer between them, owning sub-domains,
-  is part of the eventual hierarchy.
+- **Recursive manager nesting.** The manager tier (above) supports one
+  level of delegation: supervisor → manager → worker. A sub-step
+  cannot itself carry sub-steps, so deeper trees (manager → manager →
+  worker) are not yet possible. Recursive dispatch is a follow-up.
+- **Parallel sub-step execution within a group.** A manager runs its
+  group's sub-steps sequentially. Lifting the supervisor's DAG
+  dispatch into the manager would let independent sub-steps run
+  concurrently; that's a follow-up.

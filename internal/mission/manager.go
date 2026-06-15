@@ -81,13 +81,14 @@ func (m *Manager) setPlan(ctx context.Context, missionID string, steps []Step, p
 		return fmt.Errorf("%w: %s → %s", ErrInvalidTransition, mission.State, StatePlanned)
 	}
 
-	planJSON, _ := json.Marshal(Plan{Steps: steps, Parallel: parallel})
-	mission.State = StatePlanned
-	mission.PlanJSON = string(planJSON)
-	if err := m.store.UpdateMission(ctx, mission); err != nil {
-		return err
-	}
-
+	// Allocate IDs and defaults BEFORE marshaling PlanJSON so the
+	// persisted plan and the mission_steps rows share identical IDs.
+	// This matters for the manager tier: the supervisor hydrates
+	// Step.SubSteps from PlanJSON and matches them onto mission_steps
+	// rows by ID — a mismatch would silently drop the sub-step
+	// structure and route grouped steps to workers instead of
+	// managers. Sub-steps get IDs too, since the manager dispatches
+	// them by ID and matches their results by ID.
 	for i := range steps {
 		if steps[i].ID == "" {
 			steps[i].ID = "step_" + randID(10)
@@ -96,6 +97,29 @@ func (m *Manager) setPlan(ctx context.Context, missionID string, steps []Step, p
 		if steps[i].State == "" {
 			steps[i].State = StateCreated
 		}
+		for j := range steps[i].SubSteps {
+			if steps[i].SubSteps[j].ID == "" {
+				steps[i].SubSteps[j].ID = "step_" + randID(10)
+			}
+			steps[i].SubSteps[j].MissionID = missionID
+			if steps[i].SubSteps[j].State == "" {
+				steps[i].SubSteps[j].State = StateCreated
+			}
+		}
+	}
+
+	planJSON, _ := json.Marshal(Plan{Steps: steps, Parallel: parallel})
+	mission.State = StatePlanned
+	mission.PlanJSON = string(planJSON)
+	if err := m.store.UpdateMission(ctx, mission); err != nil {
+		return err
+	}
+
+	// Persist one mission_steps row per top-level step. Sub-steps are
+	// NOT given their own rows — they live only in PlanJSON and are
+	// dispatched by the manager at run time. The parent (group) step's
+	// row carries the runtime state the supervisor tracks.
+	for i := range steps {
 		if err := m.store.AddStep(ctx, steps[i]); err != nil {
 			return err
 		}

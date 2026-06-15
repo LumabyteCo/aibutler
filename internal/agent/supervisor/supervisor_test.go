@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent/bus"
+	"github.com/LumabyteCo/aibutler/internal/agent/manager"
 	"github.com/LumabyteCo/aibutler/internal/agent/supervisor"
 	"github.com/LumabyteCo/aibutler/internal/agent/worker"
 	"github.com/LumabyteCo/aibutler/internal/capability"
@@ -1249,5 +1250,190 @@ func TestRun_ResumeAfterConfirmation_RunsPausedStep(t *testing.T) {
 		if st.State != mission.StateCompleted {
 			t.Errorf("step %d state = %s, want completed", i, st.State)
 		}
+	}
+}
+
+// --- Manager tier (3-level hierarchy) tests ---
+
+// TestRun_ManagerTier_GroupStepDelegatesAndAggregates verifies the
+// full 3-tier delegation cycle: a plan with one grouped step (carrying
+// SubSteps) plus one leaf step. The supervisor routes the grouped step
+// to a manager, the manager decomposes it across the worker pool and
+// aggregates, and the mission completes with the grouped step's output
+// holding every sub-step result.
+func TestRun_ManagerTier_GroupStepDelegatesAndAggregates(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "3-tier mission", "sup-1", 0)
+	// One grouped step (group-1, with three sub-steps) followed by a
+	// plain leaf step (leaf-1). Explicit IDs keep the assertions
+	// readable; SetPlan would otherwise allocate them.
+	if err := mgr.SetPlan(ctx, m.ID, []mission.Step{
+		{
+			ID:   "group-1",
+			Task: "do the group",
+			SubSteps: []mission.Step{
+				{ID: "sub-a", Task: "alpha"},
+				{ID: "sub-b", Task: "beta"},
+				{ID: "sub-c", Task: "gamma"},
+			},
+		},
+		{ID: "leaf-1", Task: "final leaf"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	b := bus.New()
+
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		return "done:" + task.Task, nil
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+
+	mgrAgent := manager.New(b, "mgr-1")
+	mgctx, mgcancel := context.WithCancel(ctx)
+	defer mgcancel()
+	go func() { _ = mgrAgent.Run(mgctx, m.ID) }()
+
+	time.Sleep(80 * time.Millisecond) // let worker + manager subscribe
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+
+	if err := s.Run(ctx, m.ID); err != nil {
+		t.Fatalf("supervisor Run: %v", err)
+	}
+	wcancel()
+	mgcancel()
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("mission state = %s, want completed", got.State)
+	}
+
+	steps, _ := store.GetSteps(ctx, m.ID)
+	if len(steps) != 2 {
+		t.Fatalf("step count = %d, want 2 (group-1, leaf-1 — sub-steps don't get rows)", len(steps))
+	}
+	byID := map[string]mission.Step{}
+	for _, st := range steps {
+		byID[st.ID] = st
+	}
+	group := byID["group-1"]
+	if group.State != mission.StateCompleted {
+		t.Errorf("group step state = %s, want completed", group.State)
+	}
+	for _, want := range []string{"sub-a: done:alpha", "sub-b: done:beta", "sub-c: done:gamma"} {
+		if !strings.Contains(group.Output, want) {
+			t.Errorf("group output missing %q; got:\n%s", want, group.Output)
+		}
+	}
+	if byID["leaf-1"].State != mission.StateCompleted {
+		t.Errorf("leaf step state = %s, want completed", byID["leaf-1"].State)
+	}
+	if !strings.Contains(byID["leaf-1"].Output, "done:final leaf") {
+		t.Errorf("leaf output = %q, want 'done:final leaf'", byID["leaf-1"].Output)
+	}
+}
+
+// TestRun_ManagerTier_NoGroupSteps_NoManagerNeeded verifies backwards
+// compatibility: a plan with only leaf steps completes normally even
+// when no manager is running, because the supervisor never routes to
+// the manager topic without SubSteps.
+func TestRun_ManagerTier_NoGroupSteps_NoManagerNeeded(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "leaf-only", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{
+		{ID: "a", Task: "alpha"},
+		{ID: "b", Task: "beta"},
+	})
+
+	b := bus.New()
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		return "done:" + task.Task, nil
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+	// Note: NO manager spawned. Leaf-only plans must not need one.
+	time.Sleep(50 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 2 * time.Second
+	if err := s.Run(ctx, m.ID); err != nil {
+		t.Fatalf("supervisor Run: %v", err)
+	}
+	wcancel()
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateCompleted {
+		t.Errorf("mission state = %s, want completed (leaf-only plan, no manager)", got.State)
+	}
+}
+
+// TestRun_ManagerTier_GroupSubStepFailure_FailsMission verifies that a
+// failing sub-step inside a group propagates up: the manager reports a
+// failed parent Result, the supervisor marks the group step failed,
+// and the mission fails.
+func TestRun_ManagerTier_GroupSubStepFailure_FailsMission(t *testing.T) {
+	store, mgr := newTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+
+	m, _ := mgr.Create(ctx, "group-failure", "sup-1", 0)
+	_ = mgr.SetPlan(ctx, m.ID, []mission.Step{
+		{
+			ID:   "group-1",
+			Task: "doomed group",
+			SubSteps: []mission.Step{
+				{ID: "sub-ok", Task: "fine"},
+				{ID: "sub-boom", Task: "BOOM"},
+			},
+		},
+	})
+
+	b := bus.New()
+	executor := func(_ context.Context, task worker.Task) (string, error) {
+		if task.Task == "BOOM" {
+			return "", errFail
+		}
+		return "ok", nil
+	}
+	w := worker.New(b, "w-1", executor)
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() { _ = w.Run(wctx, m.ID) }()
+
+	mgrAgent := manager.New(b, "mgr-1")
+	mgctx, mgcancel := context.WithCancel(ctx)
+	defer mgcancel()
+	go func() { _ = mgrAgent.Run(mgctx, m.ID) }()
+	time.Sleep(80 * time.Millisecond)
+
+	s := supervisor.New(mgr, store, b, "sup-1")
+	s.StepTimeout = 3 * time.Second
+	err := s.Run(ctx, m.ID)
+	if err == nil {
+		t.Fatal("expected error when a group sub-step fails")
+	}
+	wcancel()
+	mgcancel()
+
+	got, _ := store.GetMission(ctx, m.ID)
+	if got.State != mission.StateFailed {
+		t.Errorf("mission state = %s, want failed", got.State)
+	}
+	steps, _ := store.GetSteps(ctx, m.ID)
+	if steps[0].State != mission.StateFailed {
+		t.Errorf("group step state = %s, want failed", steps[0].State)
 	}
 }

@@ -353,6 +353,65 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.4.0] — 2026-06-02
+
+### Added — Manager tier (3-level hierarchy)
+
+The mission engine grows a middle tier: supervisor → manager → worker.
+Previously every plan step dispatched directly to a worker; now a step
+can carry a list of sub-steps and be delegated to a manager that
+decomposes and aggregates them.
+
+- **`mission.Step.SubSteps []Step`.** A step carrying a non-empty
+  `SubSteps` list is a "grouped step." It rides in the mission's
+  `PlanJSON` (no schema migration — the `mission_steps` table is
+  unchanged; sub-steps live only in the plan blob and are dispatched
+  at run time). `omitempty` keeps existing plans parsing identically.
+- **`internal/agent/manager` package.** A `Manager` subscribes to the
+  new `mission.{id}.manager_dispatch` topic via competing-consumer.
+  On receiving a grouped step it decomposes the sub-step list,
+  dispatches each sub-step to the same worker pool the supervisor
+  uses, awaits each result, and aggregates the outputs (one
+  `sub_id: output` line each) into a single parent-level `Result`
+  published on the events topic. A single failing sub-step terminates
+  the group with a parent-level error.
+- **Supervisor routing.** `runStep` (sequential) and the parallel
+  dispatch loop now route grouped steps to `manager_dispatch` with the
+  sub-step list JSON-encoded in `Task.Input`; leaf steps still go
+  straight to a worker. A new `hydrateSubSteps` helper merges the
+  `SubSteps` structure from `PlanJSON` onto the runtime steps loaded
+  from the store (matched by ID). The supervisor's result-wait loop is
+  unchanged — it matches the parent step ID whether the result came
+  from a worker or a manager.
+- **`missionruntime` spawns a Manager per mission** alongside the
+  supervisor + worker. It parks idle on the `manager_dispatch`
+  subscription for plans with no grouped steps (one goroutine), so the
+  spawn path stays uniform and leaf-only missions behave exactly as in
+  v0.3.x.
+
+### Fixed
+
+- **`mission.Manager.setPlan` now allocates step IDs before marshaling
+  `PlanJSON`.** Previously IDs were allocated *after* the plan blob was
+  serialised, so a caller passing steps with empty IDs got a `PlanJSON`
+  with blank IDs that didn't match the allocated `mission_steps` row
+  IDs. Harmless for leaf-only plans, but it would have silently broken
+  the manager tier's `hydrateSubSteps` (which matches by ID). Sub-steps
+  now get IDs allocated too, since the manager dispatches and matches
+  them by ID.
+
+### Notes
+
+- **Scope:** one level of delegation (supervisor → manager → worker).
+  Sub-steps are leaf-level — a sub-step cannot itself carry `SubSteps`
+  (no recursive manager nesting). Sub-step execution within a group is
+  sequential. Both are follow-ups.
+- Fully backwards compatible: plans with no grouped steps dispatch
+  every step directly to a worker, exactly as before. No config flag,
+  no migration.
+
+---
+
 ## [0.3.1] — 2026-06-02
 
 ### Added — Mission dashboard panel in webchat
@@ -592,3 +651,4 @@ dashboard panel is read-only by design.
 [0.2.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.3
 [0.3.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.0
 [0.3.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.3.1
+[0.4.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.0

@@ -70,11 +70,31 @@ type Mission struct {
 }
 
 // Step is one task within a mission's plan.
+//
+// SubSteps marks this step as a "group task" delegated to a manager
+// rather than a leaf-level worker. When SubSteps is non-empty:
+//
+//   - The supervisor dispatches the parent Step (with the sub-step list
+//     embedded in the dispatch payload) to the mission's
+//     manager_dispatch topic instead of the worker dispatch topic.
+//   - A Manager (internal/agent/manager) consumes that dispatch,
+//     decomposes the sub-step list, dispatches each sub-step to the
+//     same worker dispatch topic the supervisor would have used, awaits
+//     results, and aggregates the sub-step outputs into a single
+//     parent-step Result.
+//
+// When SubSteps is empty (the default) the step routes directly to a
+// worker exactly as in v0.3.x — fully backwards compatible.
+//
+// Recursive nesting (sub-steps of sub-steps) is intentionally not
+// supported in v0.4.0; the manager dispatches sub-steps only to
+// workers, not to other managers. Deeper hierarchies are a follow-up.
 type Step struct {
 	ID               string     `json:"id"`
 	MissionID        string     `json:"mission_id"`
 	Task             string     `json:"task"`
 	DependsOn        []string   `json:"depends_on,omitempty"`
+	SubSteps         []Step     `json:"sub_steps,omitempty"`
 	AssignedWorkerID string     `json:"assigned_worker_id,omitempty"`
 	State            State      `json:"state"`
 	Output           string     `json:"output,omitempty"`
