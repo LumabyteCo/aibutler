@@ -504,18 +504,39 @@ func TestCompeting_ExactlyOneSubscriberPerMessage(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	total := int32(0)
+	covered := 0 // subscribers that received at least one message
+	maxOne := int32(0)
 	for i := 0; i < N; i++ {
-		total += counts[i].Load()
+		c := counts[i].Load()
+		total += c
+		if c > 0 {
+			covered++
+		}
+		if c > maxOne {
+			maxOne = c
+		}
 	}
+	// The core invariant: each message reaches EXACTLY ONE subscriber,
+	// so 12 publishes => 12 total deliveries. This is deterministic
+	// (PublishCompeting blocks until ack, so every publish has been
+	// counted by the time the loop above runs).
 	if total != 12 {
 		t.Errorf("total deliveries = %d, want 12 (exactly one per message)", total)
 	}
-	// Fair distribution: each subscriber should have at least one
-	// message (shuffle on every publish).
-	for i := 0; i < N; i++ {
-		if counts[i].Load() == 0 {
-			t.Errorf("subscriber %d received 0 messages; shuffle did not distribute fairly", i)
-		}
+	// Distribution: the per-publish shuffle should spread load, not
+	// funnel everything to one subscriber. We assert a ROBUST form —
+	// that delivery isn't degenerate (more than one subscriber was
+	// used, and no single subscriber took all 12) — rather than the
+	// flaky "every subscriber got >=1": shuffle-first-ready delivery
+	// does NOT guarantee universal coverage, since a goroutine that is
+	// consistently slower to re-enter its receive (common under CI
+	// load) can legitimately receive zero. A broken shuffle (always the
+	// same subscriber) is still caught here.
+	if covered < 2 {
+		t.Errorf("only %d/%d subscribers received any message; shuffle looks degenerate", covered, N)
+	}
+	if maxOne == 12 {
+		t.Error("one subscriber received all 12 messages; shuffle did not distribute")
 	}
 }
 

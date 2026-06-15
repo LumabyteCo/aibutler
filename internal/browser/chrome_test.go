@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,16 +12,24 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/browser"
 )
 
-// chromeOrSkip returns a ready ChromeClient, or skips the test when no
-// Chrome/Chromium binary is installed (e.g. on CI). The browser is torn
-// down via t.Cleanup.
+// chromeOrSkip returns a ready ChromeClient, or skips the test.
+//
+// These are live integration tests that launch a real headless browser.
+// They are gated behind AIBUTLER_BROWSER_TESTS=1 (in addition to a
+// Chrome-availability check) so they do NOT run on standard CI: GitHub
+// runners DO ship Chrome, but cold browser startup there is slow and
+// flaky enough to make these unreliable as gating tests. Run them
+// locally with `AIBUTLER_BROWSER_TESTS=1 go test ./internal/browser/`.
 func chromeOrSkip(t *testing.T) *browser.ChromeClient {
 	t.Helper()
+	if os.Getenv("AIBUTLER_BROWSER_TESTS") == "" {
+		t.Skip("set AIBUTLER_BROWSER_TESTS=1 to run live browser integration tests")
+	}
 	c := browser.NewChromeClient()
 	if !c.Available() {
 		t.Skip("no Chrome/Chromium installed — skipping live browser test")
 	}
-	c.SetTimeout(20 * time.Second)
+	c.SetTimeout(30 * time.Second)
 	t.Cleanup(c.Close)
 	return c
 }

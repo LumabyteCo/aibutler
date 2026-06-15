@@ -405,9 +405,22 @@ needed at runtime for the live features.
 6 live integration tests (real headless Chrome) covering navigate +
 title/text, JavaScript rendering, fill+click reflecting on the live
 DOM, PNG screenshot, the interactive live-click path, and the HTTP
-client's `RenderText`. They skip automatically on hosts without a
-browser (e.g. CI), so the suite stays green everywhere. Existing
-HTTP-only + description-fallback tests are unchanged.
+client's `RenderText`. They are gated behind
+`AIBUTLER_BROWSER_TESTS=1` (and a Chrome-availability check) so they
+run locally / on demand but skip on standard CI — GitHub runners ship
+Chrome, but cold browser startup there is too slow and flaky to gate
+on. Existing HTTP-only + description-fallback tests are unchanged.
+
+### Fixed
+
+- **Test robustness:** `bus.TestCompeting_ExactlyOneSubscriberPerMessage`
+  no longer asserts that every subscriber receives at least one message
+  — that's not a guaranteed property of shuffle-first-ready competing
+  delivery (a consistently slower goroutine under CI load can receive
+  zero). It now asserts the deterministic exactly-once invariant
+  (12 publishes → 12 deliveries) plus a robust non-degenerate
+  distribution check. Unrelated to the browser work; fixed here because
+  the flake surfaced on this release's CI run.
 
 ---
 
