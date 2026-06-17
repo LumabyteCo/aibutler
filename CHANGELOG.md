@@ -353,6 +353,39 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [Unreleased]
+
+### Changed — SQLite dependency upgrade (go-sqlite3 v0.35 / wasm v3)
+
+Upgrades the SQLite stack and picks up grouped dependency bumps that
+Dependabot proposed but could not land safely on its own:
+
+- `github.com/ncruces/go-sqlite3` 0.34.2 → 0.35.0
+- `github.com/ncruces/go-sqlite3-wasm` v2 → v3 (major)
+- `golang.org/x/crypto` 0.51.0 → 0.53.0, `golang.org/x/text`
+  0.37.0 → 0.38.0 (plus indirect `x/sys`, `x/term`)
+
+### Fixed
+
+- **FTS5 registration for go-sqlite3 v0.35 / wasm v3.** As of this
+  release FTS5 is no longer compiled into the default WASM build and
+  must be registered per connection via the new
+  `github.com/ncruces/go-sqlite3/ext/fts5` extension. The bare version
+  bump (as Dependabot proposed) broke the memory layer — every
+  `CREATE VIRTUAL TABLE ... USING fts5(...)` failed with
+  "no such module: fts5", taking down ~11 database-backed tests. The
+  fix registers FTS5 in the existing `driver.Open` connection hook
+  (`internal/db`), alongside the pure-Go vector functions.
+- Removed the now-deprecated `github.com/ncruces/go-sqlite3/embed`
+  blank imports (3 sites). The package is a no-op in v0.35 and printed
+  a "you're unnecessarily importing embed" line on every run.
+
+Full repo `go test -race -count=1 ./...` passes (130 packages);
+cross-compiles clean for linux/arm64 + windows/amd64 under
+`CGO_ENABLED=0`; `govulncheck` reports no vulnerabilities.
+
+---
+
 ## [0.4.5] — 2026-06-15
 
 ### Added — Tier 4 vision + input primitives
