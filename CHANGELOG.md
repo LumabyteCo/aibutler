@@ -353,7 +353,7 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
-## [Unreleased]
+## [0.4.6] — 2026-06-17
 
 ### Changed — SQLite dependency upgrade (go-sqlite3 v0.35 / wasm v3)
 
@@ -985,3 +985,4 @@ dashboard panel is read-only by design.
 [0.4.3]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.3
 [0.4.4]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.4
 [0.4.5]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.5
+[0.4.6]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.6
