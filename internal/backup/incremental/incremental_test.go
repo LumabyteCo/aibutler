@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/ncruces/go-sqlite3"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // createTestDB creates a temp SQLite database with a test table.

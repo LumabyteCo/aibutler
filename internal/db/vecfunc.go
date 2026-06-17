@@ -5,11 +5,24 @@ import (
 	"math"
 
 	"github.com/ncruces/go-sqlite3"
+	"github.com/ncruces/go-sqlite3/ext/fts5"
 )
 
-// registerVecFunctions registers pure Go vector distance SQL functions on a connection.
-// These run natively in Go (not WASM), so they work with any ncruces version.
+// registerVecFunctions is the per-connection init hook passed to
+// driver.Open. It registers the pure-Go vector distance SQL functions
+// AND the FTS5 full-text-search extension.
+//
+// FTS5 registration is required as of go-sqlite3 v0.35 / wasm v3: FTS5 is
+// no longer compiled into the default WASM build and must be registered
+// per connection via ext/fts5. Earlier versions bundled it implicitly.
+// Without this, `CREATE VIRTUAL TABLE ... USING fts5(...)` (memory
+// migration 6) fails with "no such module: fts5".
 func registerVecFunctions(conn *sqlite3.Conn) error {
+	// Enable FTS5 on this connection before anything queries it.
+	if err := fts5.Register(conn); err != nil {
+		return err
+	}
+
 	// vec_distance_cosine(a BLOB, b BLOB) → REAL
 	// Returns cosine distance (1 - cosine_similarity). Range: 0 (identical) to 2 (opposite).
 	if err := conn.CreateFunction("vec_distance_cosine", 2,
