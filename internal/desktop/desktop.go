@@ -36,8 +36,13 @@
 // with scrot + xdotool installed — a real capture and real input
 // injection). The Windows backend is unit-tested for command
 // construction, key mapping, and escaping; its real on-device behaviour
-// (SendKeys / CopyFromScreen need an interactive desktop session) awaits
-// validation on a real Windows desktop.
+// (SendKeys / CopyFromScreen need an interactive desktop session) cannot
+// be validated in containers or standard CI and awaits a manual run on a
+// real Windows desktop.
+//
+// The full validation story — the per-OS matrix, the Docker+Xvfb recipe
+// for Linux, why Windows can't be containerized, and the manual Windows
+// runbook — is documented in docs/computer-use/TIER4-VALIDATION.md.
 package desktop
 
 import (

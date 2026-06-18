@@ -368,6 +368,12 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
   linux/arm64: scrot produced a 17 KB PNG and xdotool injected input
   cleanly.) The Windows backend still awaits validation on a real
   interactive desktop session.
+- **Docs:** added `docs/computer-use/TIER4-VALIDATION.md` — the per-OS
+  validation matrix, the Docker + Xvfb recipe for Linux, why the Windows
+  backend can't be validated in containers (no Windows containers on
+  non-Windows hosts; no interactive `winsta0` session inside containers)
+  or reliably in standard CI, and a manual runbook to validate Windows
+  on a real desktop.
 
 ---
 
