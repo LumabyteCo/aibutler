@@ -30,11 +30,14 @@
 //     System.Drawing for capture; SendKeys + user32 for input). No
 //     third-party install.
 //
-// Validation note: the macOS backends are exercised by live tests; the
-// Linux and Windows backends are unit-tested for command construction,
-// key mapping, and escaping, but their real on-device behaviour awaits
-// validation on those platforms (they shell out to standard tools, so
-// the risk is mainly tool-presence and edge-case key handling).
+// Validation note: the macOS backends are exercised by live tests. The
+// Linux backends are validated end-to-end in CI (the "Desktop Tier 4
+// (Linux live)" job runs the live tests against an Xvfb virtual display
+// with scrot + xdotool installed — a real capture and real input
+// injection). The Windows backend is unit-tested for command
+// construction, key mapping, and escaping; its real on-device behaviour
+// (SendKeys / CopyFromScreen need an interactive desktop session) awaits
+// validation on a real Windows desktop.
 package desktop
 
 import (

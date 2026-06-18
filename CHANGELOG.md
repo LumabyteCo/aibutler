@@ -353,6 +353,24 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [Unreleased]
+
+### Testing — Linux Tier 4 validated end-to-end in CI
+
+- Added live desktop tests (`internal/desktop/live_test.go`, gated by
+  `AIBUTLER_DESKTOP_TESTS=1`) that exercise the real backends against a
+  live display: a genuine screen capture (asserts PNG) and real
+  synthetic input (click / type / named keys).
+- New CI job **"Desktop Tier 4 (Linux live)"** runs them on an Xvfb
+  virtual display with `scrot` + `xdotool` installed — so the Linux
+  screen-capture and input backends are now validated on every push,
+  not just unit-tested. (Verified locally first via Docker + Xvfb on
+  linux/arm64: scrot produced a 17 KB PNG and xdotool injected input
+  cleanly.) The Windows backend still awaits validation on a real
+  interactive desktop session.
+
+---
+
 ## [0.5.0] — 2026-06-17
 
 ### Added — Cross-OS Tier 4 (Linux + Windows vision + input)
