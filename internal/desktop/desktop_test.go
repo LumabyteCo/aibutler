@@ -43,18 +43,26 @@ func TestInputDisabledByDefault(t *testing.T) {
 	}
 }
 
-// TestInputEnabled_OSGate: once enabled, non-macOS still blocks at the
-// OS gate with a clear message; macOS proceeds to osascript.
-func TestInputEnabled_OSGate(t *testing.T) {
+// TestInputEnabled_DispatchesPerOS: once enabled, the call dispatches to
+// the running OS's backend. On a supported OS it may fail on a missing
+// tool (e.g. xdotool) or permission, but it must NOT report the OS as
+// unsupported. On an unsupported OS it reports exactly that.
+func TestInputEnabled_DispatchesPerOS(t *testing.T) {
 	c := desktop.NewController()
 	c.EnableInput(true)
 	err := c.KeyPress(context.Background(), "return")
-	if runtime.GOOS != "darwin" {
-		if err == nil || !strings.Contains(err.Error(), "macOS") {
-			t.Errorf("non-macOS should report a macOS-only error, got: %v", err)
+	switch runtime.GOOS {
+	case "darwin", "linux", "freebsd", "windows":
+		if err != nil && strings.Contains(err.Error(), "unsupported OS") {
+			t.Errorf("supported OS %q reported unsupported: %v", runtime.GOOS, err)
+		}
+	default:
+		if err == nil || !strings.Contains(err.Error(), "unsupported") {
+			t.Errorf("unsupported OS should say so, got: %v", err)
 		}
 	}
-	// On darwin this may succeed or fail on permissions; not asserted.
+	// Real success/failure depends on the environment (tool presence,
+	// display, permission) and is not asserted here.
 }
 
 func TestKeyPress_UnknownKey(t *testing.T) {
@@ -69,9 +77,8 @@ func TestKeyPress_UnknownKey(t *testing.T) {
 }
 
 func TestTypeText_RejectsNewlines(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("newline rejection happens after the macOS OS gate")
-	}
+	// The newline check runs before per-OS dispatch, so it's enforced on
+	// every platform.
 	c := desktop.NewController()
 	c.EnableInput(true)
 	err := c.TypeText(context.Background(), "line1\nline2")
@@ -80,15 +87,23 @@ func TestTypeText_RejectsNewlines(t *testing.T) {
 	}
 }
 
-func TestScreenshot_OSGate(t *testing.T) {
+func TestScreenshot_DispatchesPerOS(t *testing.T) {
 	c := desktop.NewController()
 	_, err := c.Screenshot(context.Background())
-	if runtime.GOOS != "darwin" {
-		if err == nil || !strings.Contains(err.Error(), "macOS") {
-			t.Errorf("non-macOS screenshot should report macOS-only, got: %v", err)
+	switch runtime.GOOS {
+	case "darwin", "linux", "freebsd", "windows":
+		// Supported OS: may capture, or fail on a missing tool / no
+		// display / permission — but never "unsupported OS".
+		if err != nil && strings.Contains(err.Error(), "unsupported OS") {
+			t.Errorf("supported OS %q reported unsupported: %v", runtime.GOOS, err)
+		}
+	default:
+		if err == nil || !strings.Contains(err.Error(), "unsupported") {
+			t.Errorf("unsupported OS should say so, got: %v", err)
 		}
 	}
-	// On darwin it may capture or fail on permission; not asserted here.
+	// Real capture success/failure depends on the environment and is not
+	// asserted here.
 }
 
 func TestRegisterDesktopTools(t *testing.T) {

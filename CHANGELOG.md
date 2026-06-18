@@ -353,6 +353,64 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.5.0] — 2026-06-17
+
+### Added — Cross-OS Tier 4 (Linux + Windows vision + input)
+
+Tier 4 (screen capture + synthetic mouse/keyboard) shipped macOS-only
+in v0.4.5. It now works on **Linux and Windows** too, all via zero-CGO
+shell-out to standard tools — so the single static binary is unchanged.
+
+- **Screen capture** (`screen.capture`):
+  - macOS — `screencapture` (unchanged)
+  - Linux/FreeBSD — first available of `grim` (Wayland),
+    `gnome-screenshot`, `spectacle` (KDE), `scrot`, `maim`, or
+    ImageMagick's `import`; a clear "install one of …" error when none
+    is present
+  - Windows — PowerShell + .NET `System.Drawing` (`CopyFromScreen`)
+- **Synthetic input** (`input.click` / `input.type` / `input.key`):
+  - macOS — `osascript` / System Events (unchanged)
+  - Linux/FreeBSD — `xdotool` (X11); a clear "install xdotool" error
+    when absent, noting Wayland needs a compositor-specific tool
+  - Windows — PowerShell: `user32` `SetCursorPos` + `mouse_event` for
+    clicks, `SendKeys` for typing and named keys
+
+### Internals
+
+- `internal/desktop` refactored to a per-OS dispatch model
+  (`desktop.go` + new `capture.go` + `input.go`), all backends compiled
+  on every platform (runtime-dispatched, no build tags) so cross-
+  compilation and clear "unsupported OS" errors both work.
+- A single cross-OS key table maps friendly names (return, tab, arrows,
+  …) to each backend's representation: macOS virtual key codes, X11
+  keysyms, and Windows `SendKeys` tokens.
+
+### Security
+
+The two-gate model is unchanged and applies on every OS: synthetic
+input requires both the `tool.input.control` capability AND the
+explicit `AIBUTLER_ENABLE_SYNTHETIC_INPUT=1` enable flag (default off).
+Each backend escapes injected text for its own tool — AppleScript
+literal escaping (macOS), `--`-terminated exec args with no shell
+(`xdotool` type), and `SendKeys` metacharacter brace-escaping with the
+text passed as a positional arg, never interpolated into the script
+(Windows). Coordinates are validated non-negative; newlines in typed
+text are rejected (use `input.key "return"`).
+
+### Tests + validation
+
+New unit tests cover the `SendKeys` escaper, key-table completeness
+(every supported key resolves on all three backends), the Linux
+capture-tool preference order, and per-OS dispatch (a supported OS
+never reports "unsupported"). The macOS backends are exercised live;
+the Linux and Windows backends are unit-tested for command
+construction / escaping / key mapping, with real on-device behaviour
+to be validated on those platforms. Full repo `go test -race -count=1
+./...` passes (130 packages); cross-compiles clean for
+darwin/linux/windows amd64 + linux/arm64 under `CGO_ENABLED=0`.
+
+---
+
 ## [0.4.6] — 2026-06-17
 
 ### Changed — SQLite dependency upgrade (go-sqlite3 v0.35 / wasm v3)
@@ -986,3 +1044,4 @@ dashboard panel is read-only by design.
 [0.4.4]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.4
 [0.4.5]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.5
 [0.4.6]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.6
+[0.5.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.5.0

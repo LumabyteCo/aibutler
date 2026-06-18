@@ -15,15 +15,26 @@
 // Screen capture is lower-risk (read-only) and guarded by the separate
 // tool.screen.capture capability.
 //
-// Zero-CGO posture. Everything shells out to built-in OS tools rather
-// than linking native frameworks, preserving the single static binary:
+// Zero-CGO posture. Everything shells out to built-in / standard OS
+// tools rather than linking native frameworks, preserving the single
+// static binary. Per-OS backends (capture.go, input.go):
 //
 //   - macOS — screencapture (screenshot) and osascript / System Events
-//     (mouse + keyboard). Both ship with the OS; no third-party install.
-//   - Linux / Windows — not implemented in this revision. The tools
-//     return a clear, actionable error. Zero-CGO paths exist (scrot /
-//     ImageMagick + xdotool on Linux; .NET + SendKeys on Windows) and
-//     are scoped follow-ups.
+//     (mouse + keyboard). Both ship with the OS.
+//   - Linux / FreeBSD — screenshot via the first available of grim
+//     (Wayland), gnome-screenshot, spectacle, scrot, maim, or
+//     ImageMagick's import; input via xdotool (X11). These are common
+//     but not guaranteed present — the tools return a clear "install X"
+//     error when a backend is missing.
+//   - Windows — screenshot and input via PowerShell (.NET
+//     System.Drawing for capture; SendKeys + user32 for input). No
+//     third-party install.
+//
+// Validation note: the macOS backends are exercised by live tests; the
+// Linux and Windows backends are unit-tested for command construction,
+// key mapping, and escaping, but their real on-device behaviour awaits
+// validation on those platforms (they shell out to standard tools, so
+// the risk is mainly tool-presence and edge-case key handling).
 package desktop
 
 import (
@@ -92,14 +103,27 @@ func (c *Controller) Screenshot(ctx context.Context) ([]byte, error) {
 }
 
 func (c *Controller) screenshot(ctx context.Context) ([]byte, error) {
-	if runtime.GOOS != "darwin" {
-		return nil, fmt.Errorf(
-			"screen.capture: only macOS is supported in this revision (you're on %s); "+
-				"Linux (scrot/ImageMagick) and Windows (.NET) capture are planned follow-ups", runtime.GOOS)
+	// Per-OS dispatch. All backends shell out to built-in / standard
+	// tools (zero CGO) and write a PNG to a server-side temp file, which
+	// is then read back — the temp path is never user input.
+	switch runtime.GOOS {
+	case "darwin":
+		return c.screenshotDarwin(ctx)
+	case "linux", "freebsd":
+		return c.screenshotLinux(ctx)
+	case "windows":
+		return c.screenshotWindows(ctx)
+	default:
+		return nil, fmt.Errorf("screen.capture: unsupported OS %q", runtime.GOOS)
 	}
+}
+
+// captureToTempPNG runs cmd (which must write a PNG to path), then reads
+// and returns the bytes. Shared by the per-OS screenshot backends.
+func (c *Controller) captureToTempPNG(ctx context.Context, label string, build func(path string) *exec.Cmd, permHint string) ([]byte, error) {
 	tmp, err := os.CreateTemp("", "aibutler-shot-*.png")
 	if err != nil {
-		return nil, fmt.Errorf("screen.capture: temp file: %w", err)
+		return nil, fmt.Errorf("%s: temp file: %w", label, err)
 	}
 	path := tmp.Name()
 	_ = tmp.Close()
@@ -107,30 +131,28 @@ func (c *Controller) screenshot(ctx context.Context) ([]byte, error) {
 
 	execCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	// -x: no capture sound. -t png: PNG. The path is a server-side temp
-	// file, not user input — no injection surface.
-	cmd := exec.CommandContext(execCtx, "screencapture", "-x", "-t", "png", path) //nolint:gosec
+	cmd := build(path)
 	var stderr bytes.Buffer
 	cmd.Stderr = &limitWriter{w: &stderr, remaining: maxOutputBytes}
 	if err := cmd.Run(); err != nil {
 		if execCtx.Err() != nil {
-			return nil, fmt.Errorf("screen.capture: timeout after %s", c.timeout)
+			return nil, fmt.Errorf("%s: timeout after %s", label, c.timeout)
 		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
 		}
-		if strings.Contains(strings.ToLower(msg), "permission") || strings.Contains(msg, "not authorized") {
-			return nil, fmt.Errorf("screen.capture: AI Butler lacks Screen Recording permission — grant it in System Settings ▸ Privacy & Security ▸ Screen Recording")
+		if permHint != "" && (strings.Contains(strings.ToLower(msg), "permission") || strings.Contains(msg, "not authorized")) {
+			return nil, fmt.Errorf("%s: %s", label, permHint)
 		}
-		return nil, fmt.Errorf("screen.capture: %s", msg)
+		return nil, fmt.Errorf("%s: %s", label, msg)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("screen.capture: read capture: %w", err)
+		return nil, fmt.Errorf("%s: read capture: %w", label, err)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("screen.capture: empty capture (likely a permission denial)")
+		return nil, fmt.Errorf("%s: empty capture (likely a permission denial)", label)
 	}
 	return data, nil
 }
@@ -152,8 +174,16 @@ func (c *Controller) click(ctx context.Context, x, y int) error {
 	if x < 0 || y < 0 {
 		return fmt.Errorf("input.click: coordinates must be non-negative")
 	}
-	script := fmt.Sprintf(`tell application "System Events" to click at {%d, %d}`, x, y)
-	return c.runOsascript(ctx, "input.click", script)
+	switch runtime.GOOS {
+	case "darwin":
+		return c.clickDarwin(ctx, x, y)
+	case "linux", "freebsd":
+		return c.clickLinux(ctx, x, y)
+	case "windows":
+		return c.clickWindows(ctx, x, y)
+	default:
+		return errInputUnsupported()
+	}
 }
 
 // TypeText types the given text via synthetic keystrokes. Requires input
@@ -172,16 +202,22 @@ func (c *Controller) typeText(ctx context.Context, text string) error {
 	if text == "" {
 		return fmt.Errorf("input.type: text is required")
 	}
-	// Escape for an AppleScript string literal: backslash then quote.
-	esc := strings.ReplaceAll(text, `\`, `\\`)
-	esc = strings.ReplaceAll(esc, `"`, `\"`)
-	// Reject embedded newlines/CR — keystroke of a literal newline is
-	// ambiguous; callers should use input.key "return" explicitly.
+	// Reject embedded newlines/CR — synthetic typing of a literal
+	// newline is ambiguous; callers should use input.key "return".
+	// Each per-OS backend does its own escaping for its tool.
 	if strings.ContainsAny(text, "\n\r") {
 		return fmt.Errorf("input.type: text must not contain newlines — use input.key \"return\" instead")
 	}
-	script := fmt.Sprintf(`tell application "System Events" to keystroke "%s"`, esc)
-	return c.runOsascript(ctx, "input.type", script)
+	switch runtime.GOOS {
+	case "darwin":
+		return c.typeDarwin(ctx, text)
+	case "linux", "freebsd":
+		return c.typeLinux(ctx, text)
+	case "windows":
+		return c.typeWindows(ctx, text)
+	default:
+		return errInputUnsupported()
+	}
 }
 
 // KeyPress presses a single named special key (return, tab, escape,
@@ -193,61 +229,41 @@ func (c *Controller) KeyPress(ctx context.Context, key string) error {
 	return err
 }
 
-// keyCodes maps friendly names to macOS virtual key codes.
-var keyCodes = map[string]int{
-	"return": 36, "enter": 36, "tab": 48, "space": 49,
-	"delete": 51, "backspace": 51, "escape": 53, "esc": 53,
-	"left": 123, "right": 124, "down": 125, "up": 126,
-	"home": 115, "end": 119, "pageup": 116, "pagedown": 121,
-}
-
 func (c *Controller) keyPress(ctx context.Context, key string) error {
 	if err := c.inputGate(); err != nil {
 		return err
 	}
-	code, ok := keyCodes[strings.ToLower(strings.TrimSpace(key))]
-	if !ok {
-		return fmt.Errorf("input.key: unknown key %q (supported: return, tab, space, delete, escape, up, down, left, right, home, end, pageup, pagedown)", key)
+	name := strings.ToLower(strings.TrimSpace(key))
+	if _, ok := keyAliases[name]; !ok {
+		return fmt.Errorf("input.key: unknown key %q (supported: %s)", key, supportedKeyList)
 	}
-	script := fmt.Sprintf(`tell application "System Events" to key code %d`, code)
-	return c.runOsascript(ctx, "input.key", script)
+	switch runtime.GOOS {
+	case "darwin":
+		return c.keyDarwin(ctx, name)
+	case "linux", "freebsd":
+		return c.keyLinux(ctx, name)
+	case "windows":
+		return c.keyWindows(ctx, name)
+	default:
+		return errInputUnsupported()
+	}
 }
 
-// inputGate enforces the OS + enable-flag preconditions shared by every
-// synthetic-input action. (The capability gate runs separately at the
-// dispatcher layer.)
+// inputGate enforces the enable-flag precondition shared by every
+// synthetic-input action — the second, operator-controlled gate beyond
+// the tool.input.control capability (which is checked at the dispatcher
+// layer). OS support is handled per-action in the dispatch switches.
 func (c *Controller) inputGate() error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf(
-			"synthetic input: only macOS is supported in this revision (you're on %s); "+
-				"Linux (xdotool) and Windows (.NET SendKeys) input are planned follow-ups", runtime.GOOS)
-	}
 	if !c.enableInput {
 		return fmt.Errorf("synthetic input is disabled — an operator must explicitly enable it (highest-risk capability); it is off by default even when the capability is granted")
 	}
 	return nil
 }
 
-func (c *Controller) runOsascript(ctx context.Context, label, script string) error {
-	execCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-	cmd := exec.CommandContext(execCtx, "osascript", "-e", script) //nolint:gosec
-	var stderr bytes.Buffer
-	cmd.Stderr = &limitWriter{w: &stderr, remaining: maxOutputBytes}
-	if err := cmd.Run(); err != nil {
-		if execCtx.Err() != nil {
-			return fmt.Errorf("%s: timeout after %s", label, c.timeout)
-		}
-		msg := strings.TrimSpace(stderr.String())
-		if strings.Contains(msg, "not allowed assistive") || strings.Contains(msg, "osascript is not allowed") {
-			return fmt.Errorf("%s: AI Butler lacks Accessibility permission — grant it in System Settings ▸ Privacy & Security ▸ Accessibility", label)
-		}
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("%s: %s", label, msg)
-	}
-	return nil
+// errInputUnsupported is returned for synthetic input on an OS with no
+// backend.
+func errInputUnsupported() error {
+	return fmt.Errorf("synthetic input: unsupported OS %q", runtime.GOOS)
 }
 
 func (c *Controller) record(ctx context.Context, typ, target string, err error, dur time.Duration) {
@@ -278,7 +294,7 @@ func (c *Controller) record(ctx context.Context, typ, target string, err error, 
 func RegisterDesktopTools(registry toolRegistry, c *Controller) {
 	registry.Register(
 		"screen.capture",
-		"Capture the full screen and return a base64 PNG data URI. macOS only in this revision; requires Screen Recording permission.",
+		"Capture the full screen and return a base64 PNG data URI. Works on macOS (screencapture), Linux (grim/gnome-screenshot/scrot/ImageMagick), and Windows (PowerShell .NET). macOS requires Screen Recording permission.",
 		`{"type":"object","properties":{}}`,
 		"tool.screen.capture",
 		func(ctx context.Context, _ string) (string, error) {
@@ -295,7 +311,7 @@ func RegisterDesktopTools(registry toolRegistry, c *Controller) {
 
 	registry.Register(
 		"input.click",
-		"Move the pointer to screen coordinates (x,y) and click. HIGHEST-RISK: synthetic input drives any app. Disabled unless an operator explicitly enables it. macOS only.",
+		"Move the pointer to screen coordinates (x,y) and click. HIGHEST-RISK: synthetic input drives any app. Disabled unless an operator explicitly enables it. macOS (System Events), Linux (xdotool), Windows (PowerShell).",
 		`{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"}},"required":["x","y"]}`,
 		"tool.input.control",
 		func(ctx context.Context, input string) (string, error) {
@@ -315,7 +331,7 @@ func RegisterDesktopTools(registry toolRegistry, c *Controller) {
 
 	registry.Register(
 		"input.type",
-		"Type text via synthetic keystrokes into the focused field. HIGHEST-RISK. Disabled unless explicitly enabled. macOS only.",
+		"Type text via synthetic keystrokes into the focused field. HIGHEST-RISK. Disabled unless explicitly enabled. macOS / Linux (xdotool) / Windows (PowerShell SendKeys).",
 		`{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}`,
 		"tool.input.control",
 		func(ctx context.Context, input string) (string, error) {
@@ -335,7 +351,7 @@ func RegisterDesktopTools(registry toolRegistry, c *Controller) {
 
 	registry.Register(
 		"input.key",
-		"Press a single named special key (return, tab, escape, space, delete, up, down, left, right, home, end, pageup, pagedown). HIGHEST-RISK. Disabled unless explicitly enabled. macOS only.",
+		"Press a single named special key (return, tab, escape, space, delete, up, down, left, right, home, end, pageup, pagedown). HIGHEST-RISK. Disabled unless explicitly enabled. macOS / Linux / Windows.",
 		`{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}`,
 		"tool.input.control",
 		func(ctx context.Context, input string) (string, error) {
