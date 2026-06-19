@@ -41,11 +41,13 @@ func TestSearchWithVector(t *testing.T) {
 	// Insert an entity.
 	entityStore.SaveOrUpdate(ctx, entity.TypePerson, "Sarah", "", nil)
 
-	// Enable vector search with fake results.
+	// Enable vector search with fake results. Vector hits are fused on rank and
+	// canonicalized to their underlying source type (no "vector:" prefix); a hit
+	// that also matches FTS merges into one result rather than duplicating.
 	fakeVec := &fakeVectorSearcher{
 		results: []vector.SearchResult{
-			{SourceType: "thought", SourceID: 1, Distance: 0.2},  // cosine distance 0.2 → score 0.9
-			{SourceType: "transcript", SourceID: 5, Distance: 0.8}, // cosine distance 0.8 → score 0.6
+			{SourceType: "thought", SourceID: 1, Distance: 0.2},
+			{SourceType: "transcript", SourceID: 5, Distance: 0.8},
 		},
 	}
 	s.SetVectorSearch(fakeVec, fakeEmbedFunc)
@@ -55,21 +57,23 @@ func TestSearchWithVector(t *testing.T) {
 		t.Fatalf("search: %v", err)
 	}
 
-	// Should have results from all three sources: FTS, entity (won't match "Go patterns"), and vector.
+	// Should have results from FTS plus the vector-only transcript hit.
 	if len(results) < 2 {
 		t.Fatalf("got %d results, want >= 2 (FTS + vector)", len(results))
 	}
 
-	// Check that vector results are present.
+	// The transcript hit (id 5) can only originate from the vector backend —
+	// nothing was inserted into session_transcripts — so its presence proves
+	// vector results are fused into the output.
 	hasVector := false
 	for _, r := range results {
-		if r.Source == "vector:thought" || r.Source == "vector:transcript" {
+		if r.Source == "transcript" && r.ID == 5 {
 			hasVector = true
 			break
 		}
 	}
 	if !hasVector {
-		t.Error("expected vector results in hybrid search output")
+		t.Error("expected the vector-only transcript hit (id 5) in fused output")
 	}
 
 	// Results should be sorted by score descending.
@@ -102,12 +106,14 @@ func TestSearchVectorOnly(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
-	if results[0].Source != "vector:thought" {
-		t.Errorf("source = %q, want vector:thought", results[0].Source)
+	// Vector hits canonicalize to their underlying type; no "vector:" prefix.
+	if results[0].Source != "thought" {
+		t.Errorf("source = %q, want thought", results[0].Source)
 	}
-	// Distance 0.1 → score = 1.0 - 0.1/2.0 = 0.95
-	if results[0].Score < 0.94 || results[0].Score > 0.96 {
-		t.Errorf("score = %f, want ~0.95", results[0].Score)
+	// Single backend, rank 1 → RRF score 1/(k+1) with k=60.
+	want := 1.0 / (60.0 + 1.0)
+	if results[0].Score < want-1e-9 || results[0].Score > want+1e-9 {
+		t.Errorf("score = %f, want %f (RRF, k=60, rank 1)", results[0].Score, want)
 	}
 }
 
@@ -135,9 +141,9 @@ func TestSearchVectorDisabledWithoutEmbed(t *testing.T) {
 		t.Fatalf("search: %v", err)
 	}
 
-	// Should only have FTS results, no vector results.
+	// Should only have FTS results; the vector-only id (99) must not appear.
 	for _, r := range results {
-		if r.Source == "vector:thought" {
+		if r.ID == 99 {
 			t.Error("vector results should not appear when embed function is nil")
 		}
 	}
@@ -159,10 +165,12 @@ func TestSearchThreeSourcesCombined(t *testing.T) {
 	// Entity source.
 	entityStore.SaveOrUpdate(ctx, entity.TypePerson, "Sarah", "", nil)
 
-	// Vector source.
+	// Vector source: a transcript hit, which no other backend can produce here
+	// (nothing was inserted into session_transcripts), so it uniquely proves the
+	// vector backend contributed to the fused output.
 	fakeVec := &fakeVectorSearcher{
 		results: []vector.SearchResult{
-			{SourceType: "thought", SourceID: 1, Distance: 0.3},
+			{SourceType: "transcript", SourceID: 7, Distance: 0.3},
 		},
 	}
 	s.SetVectorSearch(fakeVec, fakeEmbedFunc)
@@ -172,7 +180,7 @@ func TestSearchThreeSourcesCombined(t *testing.T) {
 		t.Fatalf("search: %v", err)
 	}
 
-	// Should have all three sources.
+	// All three backends should be represented (vector surfaces as "transcript").
 	sources := make(map[string]bool)
 	for _, r := range results {
 		sources[r.Source] = true
@@ -183,7 +191,7 @@ func TestSearchThreeSourcesCombined(t *testing.T) {
 	if !sources["entity"] {
 		t.Error("missing entity result")
 	}
-	if !sources["vector:thought"] {
-		t.Error("missing vector result")
+	if !sources["transcript"] {
+		t.Error("missing vector-contributed transcript result")
 	}
 }

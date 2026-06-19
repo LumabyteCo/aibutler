@@ -365,6 +365,10 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	hybridSearcher := hybrid.NewSearcher(ftsStore, app.EntityStore)
 	app.HybridSearcher = hybridSearcher
 	app.VectorStore = vectorStore
+	// Hydrate Content for vector-only hybrid hits (the embedding table stores no
+	// text). *memory.Store satisfies hybrid.ContentResolver; it's wired here
+	// rather than inside the hybrid package because memory imports hybrid.
+	hybridSearcher.SetContentResolver(app.MemStore)
 	// Vector search wired in resolveHandler() when an embedding provider is available.
 	memory.RegisterP2MemoryTools(app.Tools, memory.P2Deps{
 		FTS:    ftsStore,

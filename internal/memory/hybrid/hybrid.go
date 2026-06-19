@@ -1,5 +1,14 @@
 // Package hybrid provides combined FTS5 + entity + vector search for Living Memory.
-// Three-source hybrid search with reciprocal rank fusion (RRF).
+// Three-source retrieval fused with Reciprocal Rank Fusion (RRF): each backend
+// returns a ranked list, every hit contributes 1/(k+rank) to its item's score,
+// and contributions are summed across backends by a canonical (source, id) key.
+//
+// RRF fuses on RANK, not raw score, so the incompatible score scales of BM25
+// (lower-is-better, unbounded), cosine distance, and entity mention counts never
+// need to be reconciled. A side effect of summing by canonical key is dedup +
+// boosting: an item surfaced by more than one backend collapses to a single
+// result whose score is the sum of its per-backend contributions, so corroborated
+// hits rank above single-backend hits instead of appearing twice.
 package hybrid
 
 import (
@@ -11,6 +20,11 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/memory/vector"
 )
 
+// rrfK is the Reciprocal Rank Fusion constant. 60 is the value from the original
+// Cormack et al. RRF paper and the de-facto default across vector engines; it
+// damps the weight of top ranks so lower-ranked corroborating hits still matter.
+const rrfK = 60.0
+
 // VectorSearcher abstracts the vector store for embedding-based search.
 // This is optional — hybrid search works without it (FTS5 + entity only).
 type VectorSearcher interface {
@@ -20,21 +34,32 @@ type VectorSearcher interface {
 // EmbedFunc generates a query embedding. Nil means vector search is disabled.
 type EmbedFunc func(ctx context.Context, text string) ([]float32, error)
 
+// ContentResolver hydrates the text content of memory items by source type and
+// id. Vector hits carry only an id (the embedding table stores no text), so a
+// vector-only result would otherwise reach callers with empty Content and waste
+// a result slot. This is optional — when nil, vector-only hits keep empty
+// Content (no regression). Implemented by *memory.Store and wired in the cli
+// package, because memory imports hybrid (so hybrid must not import memory).
+type ContentResolver interface {
+	ResolveContent(ctx context.Context, sourceType string, ids []int64) (map[int64]string, error)
+}
+
 // Result represents a unified search result from hybrid search.
 type Result struct {
 	ID      int64   `json:"id"`
 	Content string  `json:"content"`
-	Score   float64 `json:"score"`   // Normalized 0-1 (higher = more relevant)
-	Source  string  `json:"source"`  // "thought", "transcript", "entity", or "vector"
-	Type    string  `json:"type"`    // Entity type if source=entity, empty otherwise
+	Score   float64 `json:"score"`  // RRF fused score (higher = more relevant; NOT 0-1 normalized)
+	Source  string  `json:"source"` // canonical: "thought", "transcript", or "entity" (vector hits map onto their underlying type)
+	Type    string  `json:"type"`   // entity type if source=entity, empty otherwise
 }
 
 // Searcher combines FTS5, entity, and vector search for unified results.
 type Searcher struct {
-	fts    *fts.Store
-	entity *entity.Store
-	vec    VectorSearcher
-	embed  EmbedFunc
+	fts     *fts.Store
+	entity  *entity.Store
+	vec     VectorSearcher
+	embed   EmbedFunc
+	content ContentResolver
 }
 
 // NewSearcher creates a hybrid searcher.
@@ -49,8 +74,22 @@ func (s *Searcher) SetVectorSearch(vec VectorSearcher, embed EmbedFunc) {
 	s.embed = embed
 }
 
-// Search performs a combined search across FTS5, entity, and vector stores.
-// Results are merged and ranked by normalized score.
+// SetContentResolver enables Content hydration for vector-only hits.
+// Optional; when unset, vector-only hits keep empty Content.
+func (s *Searcher) SetContentResolver(r ContentResolver) {
+	s.content = r
+}
+
+// dedupKey identifies one underlying memory item across backends. Vector hits
+// use their underlying source type (e.g. "thought"), so a thought surfaced by
+// both FTS and vector collapses to a single key and its RRF contributions sum.
+type dedupKey struct {
+	source string
+	id     int64
+}
+
+// Search performs a combined search across FTS5, entity, and vector stores,
+// fusing the per-backend ranked lists with Reciprocal Rank Fusion.
 func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]Result, error) {
 	if query == "" {
 		return nil, nil
@@ -59,140 +98,129 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]Resul
 		limit = 20
 	}
 
-	var results []Result
+	fused := make(map[dedupKey]*Result)
+	order := make([]dedupKey, 0)
 
-	// FTS5 search (BM25-ranked).
+	// fuse folds one backend hit (0-based rank) into the running fusion. The
+	// first writer of a key sets Source/Type/Content; later corroborating hits
+	// only add their RRF contribution and fill Content/Type if still missing.
+	fuse := func(source string, id int64, rank int, content, typ string) {
+		key := dedupKey{source: source, id: id}
+		r, ok := fused[key]
+		if !ok {
+			r = &Result{ID: id, Source: source, Type: typ, Content: content}
+			fused[key] = r
+			order = append(order, key)
+		}
+		r.Score += 1.0 / (rrfK + float64(rank+1)) // rank is 0-based → 1-based RRF
+		if r.Content == "" && content != "" {
+			r.Content = content
+		}
+		if r.Type == "" && typ != "" {
+			r.Type = typ
+		}
+	}
+
+	// FTS5 search (BM25-ranked; SearchAll returns best-first).
 	if s.fts != nil {
 		ftsResults, err := s.fts.SearchAll(ctx, query, limit)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, normalizeFTS(ftsResults)...)
+		for i, r := range ftsResults {
+			fuse(r.Source, r.ID, i, r.Content, "")
+		}
 	}
 
-	// Entity name search.
+	// Entity name search (ordered by mention_count desc, so rank reflects it).
 	if s.entity != nil {
 		entities, err := s.entity.Search(ctx, query, limit)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, normalizeEntities(entities)...)
+		for i, e := range entities {
+			fuse("entity", e.ID, i, formatEntity(e), string(e.Type))
+		}
 	}
 
-	// Vector semantic search (if embedding function available).
+	// Vector semantic search (best-first by cosine distance). Errors are
+	// non-fatal: FTS5 + entity recall still works without embeddings.
 	if s.vec != nil && s.embed != nil {
-		queryVec, err := s.embed(ctx, query)
-		if err == nil && len(queryVec) > 0 {
-			vecResults, err := s.vec.Search(ctx, queryVec, limit)
-			if err == nil {
-				results = append(results, normalizeVector(vecResults)...)
+		if queryVec, err := s.embed(ctx, query); err == nil && len(queryVec) > 0 {
+			if vecResults, err := s.vec.Search(ctx, queryVec, limit); err == nil {
+				for i, r := range vecResults {
+					fuse(r.SourceType, r.SourceID, i, "", "")
+				}
 			}
 		}
 	}
 
-	// Sort by score descending (higher = more relevant).
+	results := make([]Result, 0, len(order))
+	for _, k := range order {
+		results = append(results, *fused[k])
+	}
 	sortByScore(results)
 
 	if len(results) > limit {
 		results = results[:limit]
 	}
+
+	// Hydrate Content for the surviving vector-only hits (best-effort).
+	s.hydrate(ctx, results)
+
 	return results, nil
 }
 
-// normalizeFTS converts FTS5 BM25 ranks to 0-1 scores.
-// BM25 rank is negative (lower = more relevant). We normalize to 0-1 where 1 = most relevant.
-func normalizeFTS(ftsResults []fts.SearchResult) []Result {
-	if len(ftsResults) == 0 {
-		return nil
+// hydrate fills Content for results that have none (vector-only hits) using the
+// ContentResolver, if one is wired. Best-effort: resolution errors are skipped
+// so a content lookup never fails the whole search.
+func (s *Searcher) hydrate(ctx context.Context, results []Result) {
+	if s.content == nil {
+		return
 	}
-
-	// Find min/max ranks for normalization.
-	minRank := ftsResults[0].Rank
-	maxRank := ftsResults[0].Rank
-	for _, r := range ftsResults[1:] {
-		if r.Rank < minRank {
-			minRank = r.Rank
-		}
-		if r.Rank > maxRank {
-			maxRank = r.Rank
-		}
-	}
-
-	results := make([]Result, len(ftsResults))
-	for i, r := range ftsResults {
-		var score float64
-		if maxRank == minRank {
-			score = 1.0
-		} else {
-			// Invert: lower rank → higher score.
-			score = 1.0 - (r.Rank-minRank)/(maxRank-minRank)
-		}
-		results[i] = Result{
-			ID:      r.ID,
-			Content: r.Content,
-			Score:   score,
-			Source:  r.Source,
-		}
-	}
-	return results
-}
-
-// normalizeEntities converts entity matches to results with a relevance score.
-func normalizeEntities(entities []entity.Entity) []Result {
-	results := make([]Result, len(entities))
-	for i, e := range entities {
-		// Score based on mention count (more mentions = more relevant).
-		score := 0.5 // Base score for entity match.
-		if e.MentionCount > 1 {
-			// Logarithmic scaling: high mention counts give diminishing returns.
-			score = 0.5 + 0.5*(1.0-1.0/float64(e.MentionCount))
-		}
-
-		var parts []string
-		parts = append(parts, string(e.Type)+": "+e.Name)
-		if len(e.Attributes) > 0 {
-			var attrParts []string
-			for k, v := range e.Attributes {
-				attrParts = append(attrParts, k+"="+v)
+	need := make(map[string][]int64)
+	for i := range results {
+		if results[i].Content == "" {
+			switch results[i].Source {
+			case "thought", "transcript":
+				need[results[i].Source] = append(need[results[i].Source], results[i].ID)
 			}
-			parts = append(parts, strings.Join(attrParts, ", "))
-		}
-
-		results[i] = Result{
-			ID:      e.ID,
-			Content: strings.Join(parts, " — "),
-			Score:   score,
-			Source:  "entity",
-			Type:    string(e.Type),
 		}
 	}
-	return results
+	if len(need) == 0 {
+		return
+	}
+	for src, ids := range need {
+		resolved, err := s.content.ResolveContent(ctx, src, ids)
+		if err != nil {
+			continue
+		}
+		for i := range results {
+			if results[i].Content == "" && results[i].Source == src {
+				if c, ok := resolved[results[i].ID]; ok {
+					results[i].Content = c
+				}
+			}
+		}
+	}
 }
 
-// normalizeVector converts vector search distances to 0-1 scores.
-// Cosine distance range is [0, 2]; lower = more similar.
-func normalizeVector(vecResults []vector.SearchResult) []Result {
-	if len(vecResults) == 0 {
-		return nil
-	}
-
-	results := make([]Result, len(vecResults))
-	for i, r := range vecResults {
-		// Convert cosine distance [0,2] to similarity [0,1].
-		score := 1.0 - r.Distance/2.0
-		if score < 0 {
-			score = 0
+// formatEntity renders an entity match as a single display line.
+func formatEntity(e entity.Entity) string {
+	parts := []string{string(e.Type) + ": " + e.Name}
+	if len(e.Attributes) > 0 {
+		attrParts := make([]string, 0, len(e.Attributes))
+		for k, v := range e.Attributes {
+			attrParts = append(attrParts, k+"="+v)
 		}
-		results[i] = Result{
-			ID:     r.SourceID,
-			Score:  score,
-			Source: "vector:" + r.SourceType, // e.g. "vector:thought", "vector:transcript"
-		}
+		parts = append(parts, strings.Join(attrParts, ", "))
 	}
-	return results
+	return strings.Join(parts, " — ")
 }
 
-// sortByScore sorts results by score descending (higher = more relevant).
+// sortByScore sorts results by fused score descending (higher = more relevant).
+// Insertion sort with a strict comparison keeps it stable for equal scores,
+// preserving first-seen (best-rank) order; result counts here are small.
 func sortByScore(results []Result) {
 	for i := 1; i < len(results); i++ {
 		for j := i; j > 0 && results[j].Score > results[j-1].Score; j-- {
