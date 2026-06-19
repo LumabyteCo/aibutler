@@ -32,7 +32,7 @@ func (s *Store) SaveTranscript(ctx context.Context, sessionID, role, content str
 	if err != nil {
 		return 0, err
 	}
-	s.indexAsync(ctx, "transcript", id, content)
+	s.enqueueIndex("transcript", id, content)
 	return id, nil
 }
 
