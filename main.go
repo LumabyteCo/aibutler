@@ -104,33 +104,31 @@ func main() {
 }
 
 func runDefault() {
-	dataDir := cli.DefaultDataDir()
-	app, err := cli.Bootstrap(dataDir, "")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer app.Shutdown()
-
-	if err := cli.CmdRun(app, nil, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
+	runWithApp(func(app *cli.App) error {
+		return cli.CmdRun(app, nil, os.Stdout)
+	})
 }
 
 func runWithApp(fn func(app *cli.App) error) {
-	dataDir := cli.DefaultDataDir()
-	app, err := cli.Bootstrap(dataDir, "")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer app.Shutdown()
+	// Compute the exit code inside a closure so `defer app.Shutdown()` runs on
+	// the error path and on panic, then os.Exit afterwards. Calling os.Exit
+	// inline (the previous shape) skips deferreds, which would drop queued
+	// vector-index work and skip the rest of App.Shutdown's cleanup.
+	os.Exit(func() int {
+		dataDir := cli.DefaultDataDir()
+		app, err := cli.Bootstrap(dataDir, "")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		defer app.Shutdown()
 
-	if err := fn(app); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
+		if err := fn(app); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return 0
+	}())
 }
 
 func printUsage() {
