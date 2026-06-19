@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -232,12 +231,7 @@ func TestE2EHybridSearchWithOllama(t *testing.T) {
 
 	sources := map[string]bool{}
 	for _, r := range results {
-		// Normalize source prefix for checking.
-		src := r.Source
-		if strings.HasPrefix(src, "vector:") {
-			src = "vector"
-		}
-		sources[src] = true
+		sources[r.Source] = true
 	}
 
 	t.Logf("'Sarah' search: %d results, sources: %v", len(results), sources)
@@ -247,9 +241,10 @@ func TestE2EHybridSearchWithOllama(t *testing.T) {
 	if !sources["entity"] {
 		t.Error("expected 'entity' source in Sarah results")
 	}
-	if !sources["vector"] {
-		t.Error("expected 'vector' source in Sarah results")
-	}
+	// Vector hits now canonicalize to their underlying type ("thought") and fuse
+	// with the FTS hit for the same thought via RRF dedup, so there is no separate
+	// "vector" source. The vector backend's end-to-end contribution is asserted
+	// directly in Test 2 below, where FTS structurally cannot produce the match.
 
 	// Results should be sorted by score descending.
 	for i := 1; i < len(results); i++ {
@@ -271,6 +266,22 @@ func TestE2EHybridSearchWithOllama(t *testing.T) {
 	t.Logf("'database migration' search: %d results", len(results2))
 	for i, r := range results2 {
 		t.Logf("  [%d] score=%.4f source=%s content=%q", i, r.Score, r.Source, r.Content)
+	}
+
+	// End-to-end proof that the vector backend feeds hybrid results: sanitizeFTSQuery
+	// ANDs "database" + "migration", and the stored thought says "migrate the database
+	// to PostgreSQL" (no token "migration"), so FTS cannot match it; the entity name
+	// won't LIKE-match this query either. Thus the PostgreSQL thought (id 2) can only
+	// reach the fused output via vector semantic recall.
+	foundViaVector := false
+	for _, r := range results2 {
+		if r.Source == "thought" && r.ID == 2 {
+			foundViaVector = true
+			break
+		}
+	}
+	if !foundViaVector {
+		t.Error("expected the PostgreSQL thought (id 2) via vector semantic recall in 'database migration' results")
 	}
 
 	// --- Test 3: Search for "Go microservice" — should find the Go thought ---
