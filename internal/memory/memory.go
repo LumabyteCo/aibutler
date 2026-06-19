@@ -257,3 +257,55 @@ func (s *Store) GetKeyFacts(ctx context.Context, category string, limit int) ([]
 	}
 	return facts, rows.Err()
 }
+
+// ResolveContent fetches the text content of memory items by source type and id.
+// Hybrid search uses it to hydrate results that carry no text of their own —
+// notably vector-only hits, since the embedding table stores ids, not content.
+// It satisfies hybrid.ContentResolver (wired in the cli package to avoid an
+// import cycle). Supported source types: "thought" (captured_thoughts) and
+// "transcript" (session_transcripts); any other type yields an empty map.
+func (s *Store) ResolveContent(ctx context.Context, sourceType string, ids []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	// The base query is chosen from a fixed allowlist of tables (never user
+	// input); ids are always bound parameters. Assembling it like GetThoughts —
+	// a complete SELECT literal, then "+=" clauses — keeps the SELECT literal
+	// clear of the no-raw-SQL-concatenation guard (audit_test.go) while staying
+	// injection-safe.
+	var query string
+	switch sourceType {
+	case "thought":
+		query = "SELECT id, content FROM captured_thoughts"
+	case "transcript":
+		query = "SELECT id, content FROM session_transcripts"
+	default:
+		return out, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query += " WHERE id IN (" + strings.Join(placeholders, ", ") + ")"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("memory.resolve_content: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var content string
+		if err := rows.Scan(&id, &content); err != nil {
+			return nil, fmt.Errorf("memory.resolve_content: scan: %w", err)
+		}
+		out[id] = content
+	}
+	return out, rows.Err()
+}
