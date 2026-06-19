@@ -1313,6 +1313,9 @@ func (a *App) Shutdown() {
 	if a.Scheduler != nil {
 		a.Scheduler.Stop()
 	}
+	if a.MemStore != nil {
+		a.MemStore.Close() // drain the async vector indexer before the DB closes
+	}
 	if a.DB != nil {
 		a.DB.Close()
 	}

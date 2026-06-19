@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
@@ -58,35 +59,216 @@ type Store struct {
 
 	mu      sync.RWMutex
 	indexer VectorIndexer
+
+	// Async vector indexing. Embedding a saved item is a network round-trip to
+	// the embedding provider, so it must never block the save. Saves enqueue onto
+	// jobs; a single background worker (started lazily when an indexer is first
+	// wired) drains it using baseCtx — a store-owned context that outlives the
+	// per-request context (which is cancelled at turn end). All of these fields
+	// are guarded by mu; the counters below are atomic.
+	jobs       chan indexJob
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
+	closed     bool
+	startOnce  sync.Once
+	closeOnce  sync.Once
+	workerDone chan struct{} // closed by the worker goroutine when it exits
+
+	statQueued  atomic.Int64
+	statIndexed atomic.Int64
+	statFailed  atomic.Int64
+	statDropped atomic.Int64
 }
+
+// indexJob is a single unit of background embedding work.
+type indexJob struct {
+	source  string
+	id      int64
+	content string
+}
+
+// indexQueueSize bounds the embedding backlog held in memory. When the queue is
+// full, new items are dropped (and counted) rather than blocking saves — FTS5
+// keyword recall still works for a dropped item; semantic recall does not until
+// a backfill/reindex path exists (backlog M2.6). Bulk imports that outrun the
+// single worker therefore shed the tail — they must not rely on async indexing.
+const indexQueueSize = 256
+
+// indexJobTimeout bounds a single embedding call so one stuck provider request
+// cannot wedge the worker indefinitely. It is also the real upper bound on how
+// long an orphaned worker survives after Close gives up waiting on it.
+const indexJobTimeout = 60 * time.Second
+
+// shutdownDrainTimeout bounds the graceful drain in Close before it cancels
+// in-flight work; shutdownGraceTimeout then bounds the wait after cancellation
+// before Close orphans a still-stuck worker (which exits on its own within
+// indexJobTimeout). Close returns within roughly the sum of the two.
+const (
+	shutdownDrainTimeout = 5 * time.Second
+	shutdownGraceTimeout = 2 * time.Second
+)
 
 // NewStore creates a memory store.
 func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-// SetIndexer wires (or replaces) the vector indexer used by SaveThought and
-// SaveTranscript. Passing nil disables indexing. Safe to call concurrently
-// with reads/writes on the store.
-func (s *Store) SetIndexer(i VectorIndexer) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.indexer = i
+// IndexStats is a snapshot of the async vector-indexing pipeline. Pending is the
+// current queue depth; Dropped counts items shed because the queue was full.
+type IndexStats struct {
+	Queued  int64 `json:"queued"`
+	Indexed int64 `json:"indexed"`
+	Failed  int64 `json:"failed"`
+	Dropped int64 `json:"dropped"`
+	Pending int   `json:"pending"`
 }
 
-// indexAsync fires the indexer for a freshly saved item. Errors are logged
-// but never surfaced — a failed embedding call must never turn into a failed
-// save, because FTS5 + keyword recall still work without vectors.
-func (s *Store) indexAsync(ctx context.Context, source string, id int64, content string) {
+// IndexStats returns a snapshot of the async indexing counters, for surfacing
+// how much memory is (or isn't) embedded yet.
+func (s *Store) IndexStats() IndexStats {
 	s.mu.RLock()
-	idx := s.indexer
+	jobs := s.jobs
 	s.mu.RUnlock()
-	if idx == nil || content == "" {
+	pending := 0
+	if jobs != nil {
+		pending = len(jobs)
+	}
+	return IndexStats{
+		Queued:  s.statQueued.Load(),
+		Indexed: s.statIndexed.Load(),
+		Failed:  s.statFailed.Load(),
+		Dropped: s.statDropped.Load(),
+		Pending: pending,
+	}
+}
+
+// SetIndexer wires (or replaces) the vector indexer used by SaveThought and
+// SaveTranscript. A non-nil indexer lazily starts the background indexing
+// worker; passing nil disables future indexing (an already-running worker stays
+// up but idles). Safe to call concurrently with reads/writes on the store.
+func (s *Store) SetIndexer(i VectorIndexer) {
+	s.mu.Lock()
+	s.indexer = i
+	// Create the queue/context in the SAME critical section that publishes the
+	// indexer, so a concurrent save can never observe indexer != nil with
+	// jobs == nil (which would be a silent, uncounted drop). The goroutine itself
+	// is still spawned exactly once by startWorker.
+	if i != nil && s.jobs == nil {
+		s.jobs = make(chan indexJob, indexQueueSize)
+		s.workerDone = make(chan struct{})
+		s.baseCtx, s.baseCancel = context.WithCancel(context.Background())
+	}
+	s.mu.Unlock()
+	if i != nil {
+		s.startWorker()
+	}
+}
+
+// startWorker spins up the single background indexing goroutine exactly once,
+// over the queue/context/done channel SetIndexer created under the lock.
+func (s *Store) startWorker() {
+	s.startOnce.Do(func() {
+		s.mu.RLock()
+		jobs, ctx, done := s.jobs, s.baseCtx, s.workerDone
+		s.mu.RUnlock()
+		go s.indexWorker(jobs, ctx, done)
+	})
+}
+
+// indexWorker drains the queue until it is closed, embedding each item under a
+// per-job timeout derived from the store's background context. Errors are logged
+// and counted but never propagate — a failed embedding must not lose the
+// underlying memory, which stays searchable via FTS5. It closes done on exit so
+// Close can wait on it.
+func (s *Store) indexWorker(jobs <-chan indexJob, ctx context.Context, done chan struct{}) {
+	defer close(done)
+	for job := range jobs {
+		s.mu.RLock()
+		idx := s.indexer
+		s.mu.RUnlock()
+		if idx == nil {
+			// Indexer was cleared (SetIndexer(nil)) after this job was queued;
+			// count it so the job is accounted for rather than vanishing.
+			s.statDropped.Add(1)
+			continue
+		}
+		jctx, cancel := context.WithTimeout(ctx, indexJobTimeout)
+		err := idx.IndexContent(jctx, job.source, job.id, job.content)
+		cancel()
+		if err != nil {
+			s.statFailed.Add(1)
+			log.Printf("memory: vector index %s/%d failed: %v", job.source, job.id, err)
+			continue
+		}
+		s.statIndexed.Add(1)
+	}
+}
+
+// enqueueIndex schedules background embedding for a freshly saved item. It never
+// blocks the caller: a no-op when no indexer is wired, and on a full queue the
+// item is dropped (and counted) rather than stalling the save.
+func (s *Store) enqueueIndex(source string, id int64, content string) {
+	if content == "" {
 		return
 	}
-	if err := idx.IndexContent(ctx, source, id, content); err != nil {
-		log.Printf("memory: vector index %s/%d failed: %v", source, id, err)
+	// RLock pairs with Close's write lock: Close marks closed + closes the
+	// channel only after acquiring the write lock, which waits for every in-flight
+	// send below to finish — so no send can race a close (send-on-closed panic).
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.indexer == nil || s.jobs == nil || s.closed {
+		return
 	}
+	select {
+	case s.jobs <- indexJob{source: source, id: id, content: content}:
+		s.statQueued.Add(1)
+	default:
+		s.statDropped.Add(1)
+		log.Printf("memory: vector index queue full (cap %d), dropped %s/%d", indexQueueSize, source, id)
+	}
+}
+
+// Close stops the background indexer. It first lets the worker drain queued jobs
+// (up to shutdownDrainTimeout); if that runs long it cancels in-flight embedding
+// and waits a further shutdownGraceTimeout; if the worker is still stuck (e.g. a
+// provider that ignores context cancellation) Close orphans it and returns — the
+// worker then exits on its own within indexJobTimeout. Close therefore returns
+// within roughly shutdownDrainTimeout+shutdownGraceTimeout, and logs a summary if
+// anything was dropped or failed. Idempotent; safe even if indexing never started.
+func (s *Store) Close() {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		jobs := s.jobs
+		done := s.workerDone
+		cancel := s.baseCancel
+		if jobs == nil || s.closed {
+			s.mu.Unlock()
+			return
+		}
+		s.closed = true
+		s.mu.Unlock()
+
+		close(jobs) // worker drains the remaining buffered jobs, then exits + closes done
+
+		select {
+		case <-done:
+		case <-time.After(shutdownDrainTimeout):
+			if cancel != nil {
+				cancel() // unblock any in-flight embedding so the worker can exit
+			}
+			select {
+			case <-done:
+			case <-time.After(shutdownGraceTimeout):
+				log.Printf("memory: indexer worker did not stop within %v of cancel; orphaning it (it exits within %v)",
+					shutdownGraceTimeout, indexJobTimeout)
+			}
+		}
+
+		if st := s.IndexStats(); st.Dropped > 0 || st.Failed > 0 {
+			log.Printf("memory: indexer shutdown — indexed=%d failed=%d dropped=%d pending=%d",
+				st.Indexed, st.Failed, st.Dropped, st.Pending)
+		}
+	})
 }
 
 // SaveThought persists a captured thought.
@@ -112,7 +294,7 @@ func (s *Store) SaveThought(ctx context.Context, content, source, sessionID stri
 	if err != nil {
 		return 0, err
 	}
-	s.indexAsync(ctx, "thought", id, content)
+	s.enqueueIndex("thought", id, content)
 	return id, nil
 }
 
