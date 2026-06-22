@@ -38,10 +38,10 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 
 |   | What makes it different |
 |---|---|
-| 💬 **Works everywhere you chat** | 12 channels wired up — Telegram, WhatsApp, Slack, Discord, Teams, Google Chat, LINE, IRC, web chat, terminal, custom webhook, Nostr. One agent, shared memory, all platforms. |
-| 🧠 **Memory that actually works** | Knowledge graph + FTS5 full-text search + vector embeddings. Ask about something you mentioned weeks ago — it remembers. This is the **#1 differentiator** vs. every other AI chat tool. |
+| 💬 **Works everywhere you chat** | 12 channels — Telegram, WhatsApp, Slack, Discord, Teams, Google Chat, LINE, IRC, web chat, terminal, custom webhook, Nostr (web chat + terminal are production-ready; the other 10 are in beta — see the release table below). One agent, shared memory, all platforms. |
+| 🧠 **Memory that actually works** | Knowledge graph + FTS5 full-text search + vector embeddings, fused with reciprocal rank fusion. Ask about something you mentioned weeks ago — it remembers. A core strength of AI Butler: your memory stays local, is yours, and is never LLM-summarized. |
 | 🤖 **Any AI model** | Claude, GPT, Gemini, Grok, or fully local via Ollama, LM Studio, vLLM, Groq, DeepSeek. Bring your own key, swap models per-task, or run entirely offline. |
-| 🔗 **Agent ecosystem hub** | Full [Google A2A v2](https://github.com/google/A2A) protocol compliance. Built-in MCP client + MCP server. Subprocess bridges for wrapping any CLI tool. |
+| 🔗 **Agent ecosystem hub** | [Google A2A v2](https://github.com/google/A2A) (beta — handler works, conformance suite pending). Built-in MCP client + MCP server. Subprocess bridges for wrapping any CLI tool. |
 | 🛡️ **Security-first** | 59-pass internal security audit. RBAC, FIDO2/WebAuthn, OIDC SSO, capability-gated tools, WASM plugin sandbox, SSRF protection, shell allowlisting. |
 | 🖥️ **Clean built-in web UI** | 6-panel sidebar dashboard — chat, home, memories browser, connected apps, spending, settings. No framework, no build step, embedded in the binary. |
 | 💾 **Self-hosted & private** | Single Go binary. Your data stays on your machine. Runs from Raspberry Pi to cloud. Zero telemetry unless you explicitly opt in. |
