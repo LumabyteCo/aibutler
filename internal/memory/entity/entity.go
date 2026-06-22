@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -127,6 +128,139 @@ func (s *Store) SaveRelationship(ctx context.Context, fromID, toID int64, rel st
 		return 0, fmt.Errorf("entity.save_relationship: %w", err)
 	}
 	return result.LastInsertId()
+}
+
+// Relationship-strength constants for co-occurrence edges: a new edge starts at
+// relBaseConfidence and each repeated co-occurrence strengthens it by
+// relConfidenceStep up to relMaxConfidence ("fire together, wire together").
+const (
+	relBaseConfidence = 0.5
+	relConfidenceStep = 0.1
+	relMaxConfidence  = 1.0
+)
+
+// SaveOrStrengthenRelationship inserts a (from, to, relationship) edge, or — if
+// one already exists — strengthens its confidence toward relMaxConfidence and
+// refreshes its timestamp. entity_relationships has no UNIQUE constraint, so the
+// upsert is performed in Go. Returns the edge id.
+func (s *Store) SaveOrStrengthenRelationship(ctx context.Context, fromID, toID int64, rel, sessionID string) (int64, error) {
+	var id int64
+	var conf float64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, confidence FROM entity_relationships
+		 WHERE from_entity_id = ? AND to_entity_id = ? AND relationship = ? LIMIT 1`,
+		fromID, toID, rel).Scan(&id, &conf)
+	switch {
+	case err == nil:
+		newConf := conf + relConfidenceStep
+		if newConf > relMaxConfidence {
+			newConf = relMaxConfidence
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE entity_relationships SET confidence = ?, created_at = ? WHERE id = ?`,
+			newConf, time.Now().UTC().Format(time.RFC3339), id); err != nil {
+			return 0, fmt.Errorf("entity.strengthen_relationship: %w", err)
+		}
+		return id, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return s.SaveRelationship(ctx, fromID, toID, rel, relBaseConfidence, sessionID)
+	default:
+		return 0, fmt.Errorf("entity.strengthen_relationship: lookup: %w", err)
+	}
+}
+
+// EntityRef is a saved entity's id and type, used to link co-occurring entities.
+type EntityRef struct {
+	ID   int64
+	Type Type
+}
+
+// SaveExtracted persists every entity from an extraction (via SaveOrUpdate) and
+// links the ones that co-occurred in the same text with typed, deterministic
+// edges (zero LLM — see cooccurrenceEdge). It is the single path both the
+// runtime and import use, so the knowledge graph actually gets populated.
+// Returns the number of entities saved, edges created/strengthened, and errors.
+func (s *Store) SaveExtracted(ctx context.Context, ex Extracted, sessionID string) (entities, edges int, errs []string) {
+	var refs []EntityRef
+	save := func(typ Type, name string) {
+		id, err := s.SaveOrUpdate(ctx, typ, name, sessionID, nil)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("entity %s %q: %s", typ, name, err))
+			return
+		}
+		entities++
+		refs = append(refs, EntityRef{ID: id, Type: typ})
+	}
+	for _, n := range ex.People {
+		save(TypePerson, n)
+	}
+	for _, n := range ex.Projects {
+		save(TypeProject, n)
+	}
+	for _, d := range ex.Decisions {
+		save(TypeDecision, d)
+	}
+	for _, a := range ex.ActionItems {
+		save(TypeActionItem, a)
+	}
+	for _, i := range ex.Insights {
+		save(TypeInsight, i)
+	}
+
+	// Link every distinct co-occurring pair.
+	for i := 0; i < len(refs); i++ {
+		for j := i + 1; j < len(refs); j++ {
+			if refs[i].ID == refs[j].ID {
+				continue // same entity surfaced twice — no self-edge
+			}
+			fromID, toID, rel := cooccurrenceEdge(refs[i], refs[j])
+			if _, err := s.SaveOrStrengthenRelationship(ctx, fromID, toID, rel, sessionID); err != nil {
+				errs = append(errs, fmt.Sprintf("relationship %d->%d: %s", fromID, toID, err))
+				continue
+			}
+			edges++
+		}
+	}
+	return entities, edges, errs
+}
+
+// cooccurrenceEdge returns the directed edge (fromID, toID, relationship) for a
+// co-occurring pair. Directional pairings orient the actor (person / decision)
+// as the source; every other pair is symmetric and oriented by id so repeated
+// co-occurrences resolve to the same edge and dedup.
+func cooccurrenceEdge(a, b EntityRef) (int64, int64, string) {
+	if rel, ok := directionalRel(a.Type, b.Type); ok {
+		return a.ID, b.ID, rel
+	}
+	if rel, ok := directionalRel(b.Type, a.Type); ok {
+		return b.ID, a.ID, rel
+	}
+	rel := "mentioned_with"
+	if a.Type == TypePerson && b.Type == TypePerson {
+		rel = "knows"
+	}
+	if a.ID <= b.ID {
+		return a.ID, b.ID, rel
+	}
+	return b.ID, a.ID, rel
+}
+
+// directionalRel returns the relationship label when from->to is a known
+// directed entity-type pairing, else ("", false).
+func directionalRel(from, to Type) (string, bool) {
+	switch {
+	case from == TypePerson && to == TypeProject:
+		return "works_on", true
+	case from == TypePerson && to == TypeDecision:
+		return "decided", true
+	case from == TypePerson && to == TypeActionItem:
+		return "assigned_to", true
+	case from == TypeDecision && to == TypeProject:
+		return "decided_for", true
+	case from == TypeActionItem && to == TypeProject:
+		return "part_of", true
+	}
+	return "", false
 }
 
 // GetByType returns entities of a specific type.

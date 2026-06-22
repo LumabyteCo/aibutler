@@ -45,6 +45,7 @@ type ImportOpts struct {
 type ImportResult struct {
 	ThoughtsImported  int
 	EntitiesExtracted int
+	Relationships     int
 	Skipped           int
 	Errors            []string
 }
@@ -115,11 +116,12 @@ func (o *Orchestrator) Run(ctx context.Context, imp Importer, r io.Reader, opts 
 		}
 		result.ThoughtsImported++
 
-		// Extract entities — accumulate errors rather than swallowing.
+		// Extract entities and link co-occurring ones into the knowledge graph.
 		extracted := entity.Extract(content)
-		count, entityErrs := o.saveEntities(ctx, extracted)
-		result.EntitiesExtracted += count
-		result.Errors = append(result.Errors, entityErrs...)
+		entCount, edgeCount, entErrs := o.entity.SaveExtracted(ctx, extracted, "")
+		result.EntitiesExtracted += entCount
+		result.Relationships += edgeCount
+		result.Errors = append(result.Errors, entErrs...)
 
 		return nil
 	}
@@ -134,34 +136,6 @@ func (o *Orchestrator) Run(ctx context.Context, imp Importer, r io.Reader, opts 
 
 	o.recordComplete(ctx, importID, result, status, errMsg)
 	return result, parseErr
-}
-
-func (o *Orchestrator) saveEntities(ctx context.Context, extracted entity.Extracted) (int, []string) {
-	count := 0
-	var errs []string
-	save := func(typ entity.Type, name string) {
-		if _, err := o.entity.SaveOrUpdate(ctx, typ, name, "", nil); err != nil {
-			errs = append(errs, fmt.Sprintf("entity %s %q: %s", typ, name, err))
-		} else {
-			count++
-		}
-	}
-	for _, name := range extracted.People {
-		save(entity.TypePerson, name)
-	}
-	for _, name := range extracted.Projects {
-		save(entity.TypeProject, name)
-	}
-	for _, desc := range extracted.Decisions {
-		save(entity.TypeDecision, desc)
-	}
-	for _, item := range extracted.ActionItems {
-		save(entity.TypeActionItem, item)
-	}
-	for _, insight := range extracted.Insights {
-		save(entity.TypeInsight, insight)
-	}
-	return count, errs
 }
 
 func (o *Orchestrator) recordStart(ctx context.Context, source, filename string) (int64, error) {

@@ -97,6 +97,9 @@ func cmdMemoryImport(app *App, args []string, w io.Writer) error {
 	fmt.Fprintf(w, "Import complete (%s):\n", format)
 	fmt.Fprintf(w, "  Thoughts imported:  %d\n", result.ThoughtsImported)
 	fmt.Fprintf(w, "  Entities extracted: %d\n", result.EntitiesExtracted)
+	if result.Relationships > 0 {
+		fmt.Fprintf(w, "  Relationships:      %d\n", result.Relationships)
+	}
 	if result.Skipped > 0 {
 		fmt.Fprintf(w, "  Skipped (dupes):    %d\n", result.Skipped)
 	}

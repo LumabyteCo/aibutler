@@ -823,33 +823,13 @@ func (p *postRunProcessor) AfterAgentRun(ctx context.Context, sessionID, userMsg
 	}
 }
 
-// extractAndSaveEntities runs entity extraction on text and persists results.
+// extractAndSaveEntities runs entity extraction on text, persists the entities,
+// and links co-occurring ones into the knowledge graph (via SaveExtracted).
 func (p *postRunProcessor) extractAndSaveEntities(ctx context.Context, sessionID, text string) {
 	extracted := entity.Extract(text)
-	for _, name := range extracted.People {
-		if _, err := p.entities.SaveOrUpdate(ctx, entity.TypePerson, name, sessionID, nil); err != nil {
-			log.Printf("postrun: save entity person: %v", err)
-		}
-	}
-	for _, name := range extracted.Projects {
-		if _, err := p.entities.SaveOrUpdate(ctx, entity.TypeProject, name, sessionID, nil); err != nil {
-			log.Printf("postrun: save entity project: %v", err)
-		}
-	}
-	for _, text := range extracted.Decisions {
-		if _, err := p.entities.SaveOrUpdate(ctx, entity.TypeDecision, text, sessionID, nil); err != nil {
-			log.Printf("postrun: save entity decision: %v", err)
-		}
-	}
-	for _, text := range extracted.ActionItems {
-		if _, err := p.entities.SaveOrUpdate(ctx, entity.TypeActionItem, text, sessionID, nil); err != nil {
-			log.Printf("postrun: save entity action_item: %v", err)
-		}
-	}
-	for _, text := range extracted.Insights {
-		if _, err := p.entities.SaveOrUpdate(ctx, entity.TypeInsight, text, sessionID, nil); err != nil {
-			log.Printf("postrun: save entity insight: %v", err)
-		}
+	_, _, errs := p.entities.SaveExtracted(ctx, extracted, sessionID)
+	for _, e := range errs {
+		log.Printf("postrun: %s", e)
 	}
 }
 
