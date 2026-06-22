@@ -37,6 +37,7 @@ func CmdMemory(app *App, args []string, w io.Writer) error {
 		fmt.Fprintln(w, "")
 		fmt.Fprintln(w, "Subcommands:")
 		fmt.Fprintln(w, "  import <format> <file>   Import from claude|chatgpt|plaintext")
+		fmt.Fprintln(w, "  reindex                  Embed memory items missing a vector")
 		fmt.Fprintln(w, "  digest [type] [--topic=X] Generate a memory digest")
 		fmt.Fprintln(w, "  digests [type]            List existing digests")
 		return nil
@@ -45,6 +46,8 @@ func CmdMemory(app *App, args []string, w io.Writer) error {
 	switch args[0] {
 	case "import":
 		return cmdMemoryImport(app, args[1:], w)
+	case "reindex":
+		return cmdMemoryReindex(app, w)
 	case "digest":
 		return cmdMemoryDigest(app, args[1:], w)
 	case "digests":
@@ -86,7 +89,7 @@ func cmdMemoryImport(app *App, args []string, w io.Writer) error {
 	orch := migration.NewOrchestrator(conn, memStore, entityStore)
 
 	ctx := context.Background()
-	result, err := orch.Run(ctx, imp, f, migration.ImportOpts{Filename: filePath})
+	result, err := orch.Run(ctx, imp, f, migration.ImportOpts{Filename: filePath, Dedup: true})
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -95,10 +98,74 @@ func cmdMemoryImport(app *App, args []string, w io.Writer) error {
 	fmt.Fprintf(w, "  Thoughts imported:  %d\n", result.ThoughtsImported)
 	fmt.Fprintf(w, "  Entities extracted: %d\n", result.EntitiesExtracted)
 	if result.Skipped > 0 {
-		fmt.Fprintf(w, "  Skipped:            %d\n", result.Skipped)
+		fmt.Fprintf(w, "  Skipped (dupes):    %d\n", result.Skipped)
 	}
 	if len(result.Errors) > 0 {
 		fmt.Fprintf(w, "  Errors:             %d\n", len(result.Errors))
+	}
+
+	// Embed the imported (and any other un-embedded) items synchronously in
+	// batches so semantic search can find them. We use the backfiller rather than
+	// the live async indexer here so a bulk import can never shed embeddings the
+	// way the bounded async queue would.
+	fmt.Fprintln(w, "Embedding memory for semantic search (this also backfills any earlier un-embedded items)...")
+	bf, _, bfErr := runBackfill(ctx, app)
+	switch {
+	case bf == nil && bfErr == nil:
+		fmt.Fprintln(w, "  Embedded:           skipped — no embedding provider configured")
+	default:
+		embedded := 0
+		if bf != nil {
+			embedded = bf.Embedded
+		}
+		fmt.Fprintf(w, "  Embedded:           %d\n", embedded)
+		if bf != nil && bf.Failed > 0 {
+			fmt.Fprintf(w, "  Embed failures:     %d\n", bf.Failed)
+		}
+		if bfErr != nil {
+			fmt.Fprintf(w, "  Embed error:        %v\n", bfErr)
+		}
+	}
+	return nil
+}
+
+// runBackfill embeds every un-embedded memory item in batches. It returns a nil
+// result with no error when no embedding provider is configured, so callers can
+// distinguish "skipped" from "ran".
+func runBackfill(ctx context.Context, app *App) (*memory.BackfillResult, string, error) {
+	if app.VectorStore == nil {
+		return nil, "", nil
+	}
+	embedder, provider := resolveEmbedder(app)
+	if embedder == nil {
+		return nil, "", nil
+	}
+	bf := memory.NewBackfiller(app.DB.Conn(), app.VectorStore, embedder.EmbedBatch, provider)
+	res, err := bf.BackfillMissing(ctx)
+	return res, provider, err
+}
+
+// cmdMemoryReindex embeds any memory items that lack a vector — for backfilling
+// data imported before embeddings were wired, or items the live async indexer
+// dropped under load.
+func cmdMemoryReindex(app *App, w io.Writer) error {
+	bf, provider, err := runBackfill(context.Background(), app)
+	if bf == nil && err == nil {
+		return fmt.Errorf("no embedding provider configured (set up Ollama or an embeddings API key)")
+	}
+	fmt.Fprintf(w, "Re-indexed memory with %s.\n", provider)
+	if bf != nil {
+		fmt.Fprintf(w, "  Embedded: %d", bf.Embedded)
+		if bf.Failed > 0 {
+			fmt.Fprintf(w, " (%d failed)", bf.Failed)
+		}
+		fmt.Fprintln(w)
+		for src, n := range bf.BySource {
+			fmt.Fprintf(w, "  %s: %d\n", src, n)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("reindex: %w", err)
 	}
 	return nil
 }
