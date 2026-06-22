@@ -13,7 +13,9 @@ package hybrid
 
 import (
 	"context"
+	"math"
 	"strings"
+	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
 	"github.com/LumabyteCo/aibutler/internal/memory/fts"
@@ -44,6 +46,22 @@ type ContentResolver interface {
 	ResolveContent(ctx context.Context, sourceType string, ids []int64) (map[int64]string, error)
 }
 
+// RecencyResolver returns the timestamp of memory items by source type and id,
+// so search can down-weight older results. Implemented by *memory.Store and
+// wired in cli (memory imports hybrid). Optional — when unset, no recency decay.
+type RecencyResolver interface {
+	ResolveTimestamps(ctx context.Context, sourceType string, ids []int64) (map[int64]time.Time, error)
+}
+
+// defaultRecencyHalfLife is the age at which a result's relevance weight halves.
+// 90 days is gentle — long-horizon memory should still surface old-but-relevant
+// items; recency only breaks ties and nudges ordering.
+const defaultRecencyHalfLife = 90 * 24 * time.Hour
+
+// recencyFloor is the smallest recency weight, so even very old items stay
+// retrievable rather than decaying to zero.
+const recencyFloor = 0.1
+
 // Result represents a unified search result from hybrid search.
 type Result struct {
 	ID      int64   `json:"id"`
@@ -55,11 +73,13 @@ type Result struct {
 
 // Searcher combines FTS5, entity, and vector search for unified results.
 type Searcher struct {
-	fts     *fts.Store
-	entity  *entity.Store
-	vec     VectorSearcher
-	embed   EmbedFunc
-	content ContentResolver
+	fts      *fts.Store
+	entity   *entity.Store
+	vec      VectorSearcher
+	embed    EmbedFunc
+	content  ContentResolver
+	recency  RecencyResolver
+	halfLife time.Duration
 }
 
 // NewSearcher creates a hybrid searcher.
@@ -78,6 +98,16 @@ func (s *Searcher) SetVectorSearch(vec VectorSearcher, embed EmbedFunc) {
 // Optional; when unset, vector-only hits keep empty Content.
 func (s *Searcher) SetContentResolver(r ContentResolver) {
 	s.content = r
+}
+
+// SetRecencyDecay enables recency down-weighting of results. halfLife <= 0 uses
+// defaultRecencyHalfLife. Optional; when unset, scores are pure RRF relevance.
+func (s *Searcher) SetRecencyDecay(r RecencyResolver, halfLife time.Duration) {
+	s.recency = r
+	if halfLife <= 0 {
+		halfLife = defaultRecencyHalfLife
+	}
+	s.halfLife = halfLife
 }
 
 // dedupKey identifies one underlying memory item across backends. Vector hits
@@ -159,6 +189,9 @@ func (s *Searcher) Search(ctx context.Context, query string, limit int) ([]Resul
 	for _, k := range order {
 		results = append(results, *fused[k])
 	}
+
+	// Recency decay (before sort+truncate, so it affects which items survive).
+	s.applyRecency(ctx, results)
 	sortByScore(results)
 
 	if len(results) > limit {
@@ -203,6 +236,57 @@ func (s *Searcher) hydrate(ctx context.Context, results []Result) {
 			}
 		}
 	}
+}
+
+// applyRecency multiplies each result's RRF score by an exponential recency
+// weight (half-life decay, floored at recencyFloor so old items stay
+// retrievable), using timestamps from the RecencyResolver. Best-effort: if the
+// resolver is unset or a lookup fails, scores are left unchanged.
+func (s *Searcher) applyRecency(ctx context.Context, results []Result) {
+	if s.recency == nil || len(results) == 0 {
+		return
+	}
+	halfLife := s.halfLife
+	if halfLife <= 0 {
+		halfLife = defaultRecencyHalfLife
+	}
+
+	bySource := make(map[string][]int64)
+	for i := range results {
+		bySource[results[i].Source] = append(bySource[results[i].Source], results[i].ID)
+	}
+	ts := make(map[dedupKey]time.Time)
+	for src, ids := range bySource {
+		m, err := s.recency.ResolveTimestamps(ctx, src, ids)
+		if err != nil {
+			continue
+		}
+		for id, t := range m {
+			ts[dedupKey{source: src, id: id}] = t
+		}
+	}
+
+	now := time.Now().UTC()
+	for i := range results {
+		t, ok := ts[dedupKey{source: results[i].Source, id: results[i].ID}]
+		if !ok {
+			continue // no timestamp → leave score unchanged
+		}
+		results[i].Score *= recencyWeight(now.Sub(t), halfLife)
+	}
+}
+
+// recencyWeight returns 0.5^(age/halfLife), floored at recencyFloor. Zero or
+// negative (future) ages clamp to 1.0.
+func recencyWeight(age, halfLife time.Duration) float64 {
+	if age <= 0 || halfLife <= 0 {
+		return 1.0
+	}
+	w := math.Pow(0.5, float64(age)/float64(halfLife))
+	if w < recencyFloor {
+		return recencyFloor
+	}
+	return w
 }
 
 // formatEntity renders an entity match as a single display line.
