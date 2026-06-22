@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"io"
@@ -34,6 +35,10 @@ type ImportOpts struct {
 	Filename string
 	Tags     []string
 	DryRun   bool
+	// Dedup skips thoughts whose (source, content) already exists, making
+	// re-importing the same export idempotent and de-duplicating repeats within
+	// a single import.
+	Dedup bool
 }
 
 // ImportResult summarizes an import run.
@@ -70,10 +75,29 @@ func (o *Orchestrator) Run(ctx context.Context, imp Importer, r io.Reader, opts 
 		return nil, fmt.Errorf("migration: record start: %w", err)
 	}
 
+	// For idempotent re-import, load the keys of already-stored thoughts up front
+	// and skip anything we have seen (in the DB or earlier in this same import).
+	var seen map[string]struct{}
+	if opts.Dedup {
+		seen, err = o.loadThoughtKeys(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("migration: load existing thoughts: %w", err)
+		}
+	}
+
 	saver := func(ctx context.Context, content, source string, tags []string) error {
 		// Check context cancellation between items.
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+
+		if seen != nil {
+			key := thoughtKey(source, content)
+			if _, dup := seen[key]; dup {
+				result.Skipped++
+				return nil
+			}
+			seen[key] = struct{}{}
 		}
 
 		if opts.DryRun {
@@ -166,4 +190,34 @@ func nullString(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// thoughtKey is the dedup key for a thought: a hash of its normalized source and
+// content. It applies SaveThought's empty-source -> "user" normalization so keys
+// are stable between the saver and previously stored rows across re-imports.
+func thoughtKey(source, content string) string {
+	if source == "" {
+		source = "user"
+	}
+	h := sha256.Sum256([]byte(source + "\x00" + content))
+	return string(h[:])
+}
+
+// loadThoughtKeys returns the dedup keys of all stored thoughts, for idempotent
+// re-import. Keys are hashes, so memory is bounded regardless of content size.
+func (o *Orchestrator) loadThoughtKeys(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := o.db.QueryContext(ctx, `SELECT content, COALESCE(source, '') FROM captured_thoughts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := make(map[string]struct{})
+	for rows.Next() {
+		var content, source string
+		if err := rows.Scan(&content, &source); err != nil {
+			return nil, err
+		}
+		seen[thoughtKey(source, content)] = struct{}{}
+	}
+	return seen, rows.Err()
 }
