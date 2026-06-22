@@ -379,17 +379,19 @@ func (s *Store) SaveKeyFact(ctx context.Context, fact, category, sourceSession s
 	now := time.Now().UTC().Format(time.RFC3339)
 	canonical := entity.CanonicalFact(fact)
 
-	// Lookup by canonical form (whole-fact, case-insensitive, whitespace-
-	// normalized). Same category only — "Cairo" as a location and "Cairo"
-	// as a project name are legitimately distinct facts.
-	var existingID int64
-	lookupErr := s.db.QueryRowContext(ctx,
-		`SELECT id FROM key_facts
-		 WHERE LOWER(TRIM(fact)) = ? AND COALESCE(category, '') = COALESCE(?, '')
-		 LIMIT 1`,
-		canonical, category).Scan(&existingID)
-
-	if lookupErr == nil {
+	// Dedup on the canonical form within the same category. We compare canonical
+	// forms in Go because CanonicalFact (lowercasing + trailing-punctuation
+	// stripping + internal-whitespace collapsing) can't be expressed in SQL — the
+	// old `LOWER(TRIM(fact)) = ?` comparison stripped neither punctuation nor
+	// inner whitespace, so it silently failed to match whenever the *stored* fact
+	// carried punctuation or doubled spaces, letting duplicates accumulate. Dedup
+	// keeps each category small, so this scan stays bounded. Same category only —
+	// "Cairo" as a location and "Cairo" as a project name are distinct facts.
+	existingID, found, err := s.findCanonicalFact(ctx, canonical, category)
+	if err != nil {
+		return 0, err
+	}
+	if found {
 		// Already stored — bump the timestamp so "most recent" queries work.
 		if _, err := s.db.ExecContext(ctx,
 			`UPDATE key_facts SET extracted_at = ? WHERE id = ?`, now, existingID); err != nil {
@@ -405,6 +407,32 @@ func (s *Store) SaveKeyFact(ctx context.Context, fact, category, sourceSession s
 		return 0, fmt.Errorf("memory.save_key_fact: %w", err)
 	}
 	return result.LastInsertId()
+}
+
+// findCanonicalFact returns the id of an existing key fact in the same category
+// whose canonical form equals canonical, comparing canonical forms in Go (the
+// transform cannot be expressed in SQL).
+func (s *Store) findCanonicalFact(ctx context.Context, canonical, category string) (int64, bool, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, fact FROM key_facts WHERE COALESCE(category, '') = COALESCE(?, '')`, category)
+	if err != nil {
+		return 0, false, fmt.Errorf("memory.save_key_fact: lookup: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var stored string
+		if err := rows.Scan(&id, &stored); err != nil {
+			return 0, false, fmt.Errorf("memory.save_key_fact: scan: %w", err)
+		}
+		if entity.CanonicalFact(stored) == canonical {
+			return id, true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, false, fmt.Errorf("memory.save_key_fact: rows: %w", err)
+	}
+	return 0, false, nil
 }
 
 // GetKeyFacts retrieves key facts, optionally filtered by category.

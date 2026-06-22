@@ -66,33 +66,33 @@ func ExtractKeyFacts(text string) []ExtractionResult {
 	seen := make(map[string]bool)
 
 	for _, rule := range extractionRules {
-		matches := rule.pattern.FindStringSubmatch(text)
-		if matches == nil {
-			continue
-		}
-
-		var fact string
-		if rule.format == "" {
-			// Special case for "my favorite X is Y" (2 capture groups)
-			if len(matches) >= 3 {
-				fact = "User's favorite " + strings.TrimSpace(matches[1]) + " is " + strings.TrimSpace(matches[2])
+		// FindAll (not FindStringSubmatch) so a rule that matches several times in
+		// one text — e.g. "I like tea. I like coffee." — yields a fact per match
+		// instead of only the first.
+		for _, matches := range rule.pattern.FindAllStringSubmatch(text, -1) {
+			var fact string
+			if rule.format == "" {
+				// Special case for "my favorite X is Y" (2 capture groups)
+				if len(matches) >= 3 {
+					fact = "User's favorite " + strings.TrimSpace(matches[1]) + " is " + strings.TrimSpace(matches[2])
+				} else {
+					continue
+				}
 			} else {
-				continue
+				captured := strings.TrimSpace(matches[1])
+				if captured == "" {
+					continue
+				}
+				fact = strings.Replace(rule.format, "%s", captured, 1)
 			}
-		} else {
-			captured := strings.TrimSpace(matches[1])
-			if captured == "" {
-				continue
-			}
-			fact = strings.Replace(rule.format, "%s", captured, 1)
-		}
 
-		if !seen[fact] {
-			seen[fact] = true
-			results = append(results, ExtractionResult{
-				Fact:     fact,
-				Category: rule.category,
-			})
+			if !seen[fact] {
+				seen[fact] = true
+				results = append(results, ExtractionResult{
+					Fact:     fact,
+					Category: rule.category,
+				})
+			}
 		}
 	}
 
