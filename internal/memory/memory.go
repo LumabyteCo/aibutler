@@ -519,3 +519,62 @@ func (s *Store) ResolveContent(ctx context.Context, sourceType string, ids []int
 	}
 	return out, rows.Err()
 }
+
+// ResolveTimestamps fetches the timestamp of memory items by source type and id,
+// for recency-weighting search results. "thought"/"transcript" use created_at;
+// "entity" uses last_seen. Unknown types yield an empty map. Satisfies
+// hybrid.RecencyResolver (wired in cli to avoid an import cycle).
+func (s *Store) ResolveTimestamps(ctx context.Context, sourceType string, ids []int64) (map[int64]time.Time, error) {
+	out := make(map[int64]time.Time, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	// Base query chosen from a fixed allowlist of (table, column); ids are bound.
+	var query string
+	switch sourceType {
+	case "thought":
+		query = "SELECT id, created_at FROM captured_thoughts"
+	case "transcript":
+		query = "SELECT id, created_at FROM session_transcripts"
+	case "entity":
+		query = "SELECT id, last_seen FROM entities"
+	default:
+		return out, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query += " WHERE id IN (" + strings.Join(placeholders, ", ") + ")"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("memory.resolve_timestamps: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var tsStr string
+		if err := rows.Scan(&id, &tsStr); err != nil {
+			return nil, fmt.Errorf("memory.resolve_timestamps: scan: %w", err)
+		}
+		if t, ok := parseTimestamp(tsStr); ok {
+			out[id] = t
+		}
+	}
+	return out, rows.Err()
+}
+
+// parseTimestamp parses the timestamp formats stored in the memory tables:
+// RFC3339 (written by Go) and SQLite's datetime('now') default.
+func parseTimestamp(s string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}

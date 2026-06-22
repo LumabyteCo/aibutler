@@ -369,6 +369,7 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// text). *memory.Store satisfies hybrid.ContentResolver; it's wired here
 	// rather than inside the hybrid package because memory imports hybrid.
 	hybridSearcher.SetContentResolver(app.MemStore)
+	hybridSearcher.SetRecencyDecay(app.MemStore, 0) // recency down-weighting; 0 = default 90-day half-life
 	// Vector search wired in resolveHandler() when an embedding provider is available.
 	memory.RegisterP2MemoryTools(app.Tools, memory.P2Deps{
 		FTS:    ftsStore,
