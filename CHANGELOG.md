@@ -377,6 +377,68 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ---
 
+## [0.5.1] — 2026-06-23
+
+### Added — Cross-OS Tier 3 (Linux + Windows accessibility tree)
+
+Tier 3 (the read-only accessibility-tree reader, `accessibility.read_ui`)
+shipped macOS-only in v0.4.4. It now works on **Linux and Windows** too —
+completing the cross-platform automation story alongside the cross-OS
+Tier 4 in v0.5.0. All backends stay zero-CGO: macOS shells out to
+`osascript`, Windows to PowerShell, and Linux talks AT-SPI2 over D-Bus via
+`godbus` (already a dependency). The single static binary is unchanged.
+
+- **Read UI tree** (`accessibility.read_ui {app, depth}`):
+  - macOS — System Events via `osascript` (unchanged)
+  - Windows — PowerShell + .NET UIAutomation: walks the named process's
+    main-window `AutomationElement` tree (`pwsh` preferred, falls back to
+    `powershell.exe`)
+  - Linux/FreeBSD — AT-SPI2 over D-Bus: resolves the a11y bus address
+    (`org.a11y.Bus.GetAddress`), finds the application in the registry,
+    and recurses its element tree; a clear "install/enable at-spi2-core"
+    error when the a11y bus isn't available
+
+All three backends emit the same tab-delimited, indented
+`<indent>role\tname\tvalue` snapshot, so callers see one consistent shape
+regardless of OS.
+
+### Internals
+
+- `internal/accessibility` refactored to a per-OS dispatch model
+  (`accessibility.go` macOS + new `windows.go` + `linux.go`), all backends
+  compiled on every platform (runtime-dispatched, no build tags) so
+  cross-compilation and clear "unsupported OS" errors both work.
+- The Windows UIAutomation script passes the app name and depth as
+  positional args (never interpolated into the script body) and emits tabs
+  via `[char]9`, so there is no PowerShell injection surface and no
+  fragile raw-string escaping.
+
+### Security
+
+The Tier 2 security model is unchanged and applies on every OS: an
+allowlist of inspectable application names (empty allowlist denies
+everything — reading another app's UI is information disclosure, so it's
+gated even though it's read-only), an app-name injection guard
+(quote/backslash/newline rejected), a bounded execution timeout, capped
+output, and `tool.accessibility.read` capability gating at the dispatcher.
+
+### Tests + validation
+
+New unit tests cover the Windows UIAutomation script shape (positional-arg
+passing, no app-name interpolation, `[char]9` tabs, no stray backticks),
+the PowerShell resolver, the Linux AT-SPI property-variant formatter, and
+per-OS dispatch (a supported OS never reports "unsupported"). The Linux
+AT-SPI backend is now **validated end-to-end in CI** (`Accessibility
+Tier 3 (Linux AT-SPI live)` job): a private session D-Bus auto-activates
+at-spi2-core, an Xvfb display hosts a GTK app, and the env-gated live test
+(`AIBUTLER_ACCESSIBILITY_TESTS=1`) walks its real UI tree over godbus. The
+Windows backend awaits a real interactive desktop (UIAutomation can't run
+in containers) — runbook in `docs/computer-use/TIER3-VALIDATION.md`. Full
+repo `go test -race -count=1 ./...` passes; cross-compiles clean for
+darwin/linux/windows/freebsd under `CGO_ENABLED=0`.
+
+---
+
 ## [0.5.0] — 2026-06-17
 
 ### Added — Cross-OS Tier 4 (Linux + Windows vision + input)
@@ -1069,3 +1131,4 @@ dashboard panel is read-only by design.
 [0.4.5]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.5
 [0.4.6]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.4.6
 [0.5.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.5.0
+[0.5.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.5.1

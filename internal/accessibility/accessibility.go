@@ -8,16 +8,27 @@
 // without screenshots or pixel reasoning — so it can decide what to act
 // on. Acting itself is Tier 2 (scripting) or Tier 4 (synthetic input).
 //
-// Zero-CGO posture: this reader shells out to platform tools rather than
-// linking native accessibility APIs (which would require CGO / Objective-C
-// on macOS), preserving the single static binary.
+// Zero-CGO posture: this reader shells out to platform tools / talks D-Bus
+// rather than linking native accessibility APIs (which would require CGO /
+// Objective-C on macOS), preserving the single static binary. Per-OS
+// backends (accessibility.go = macOS, windows.go, linux.go):
 //
-//   - macOS — implemented. Queries the System Events accessibility bridge
-//     via `osascript`, dumping the UI element tree of a named process.
-//   - Linux (AT-SPI) and Windows (UIAutomation) — not yet implemented.
-//     ReadUI returns a clear, actionable error on those platforms. A
-//     zero-CGO path exists for both (AT-SPI over D-Bus; UIAutomation via
-//     PowerShell) and is a scoped follow-up.
+//   - macOS — System Events via `osascript`: dumps the UI element tree of
+//     a named process's front window.
+//   - Windows — PowerShell + .NET UIAutomation: walks the named process's
+//     main-window AutomationElement tree.
+//   - Linux / FreeBSD — AT-SPI2 over D-Bus (via godbus, already a dep):
+//     walks the accessibility registry to the named application and dumps
+//     its element tree. Requires an AT-SPI environment (at-spi2-core) and
+//     an accessibility-exposing toolkit (GTK/Qt) — returns a clear error
+//     when the a11y bus isn't available.
+//
+// Validation: the macOS backend is exercised live; Linux is validated in
+// CI against a headless AT-SPI environment (Xvfb + at-spi2-core); the
+// Windows backend is unit-tested for script/parse construction and awaits a
+// real Windows desktop (UIAutomation needs an interactive session). See
+// docs/computer-use/TIER3-VALIDATION.md for the validation matrix and
+// per-OS runbooks.
 //
 // Security model mirrors the Tier 2 executors:
 //
@@ -112,14 +123,16 @@ func (r *Reader) readUI(ctx context.Context, app string, depth int) (string, err
 		depth = 5
 	}
 
-	if runtime.GOOS != "darwin" {
-		return "", fmt.Errorf(
-			"accessibility.read: only macOS is supported in this revision "+
-				"(you're on %s). Linux AT-SPI and Windows UIAutomation readers "+
-				"are planned follow-ups; for now use shell.dbus (Linux) or "+
-				"shell.powershell (Windows) for direct app queries.", runtime.GOOS)
+	switch runtime.GOOS {
+	case "darwin":
+		return r.readMacOS(ctx, app, depth)
+	case "linux", "freebsd":
+		return r.readLinux(ctx, app, depth)
+	case "windows":
+		return r.readWindows(ctx, app, depth)
+	default:
+		return "", fmt.Errorf("accessibility.read: unsupported OS %q", runtime.GOOS)
 	}
-	return r.readMacOS(ctx, app, depth)
 }
 
 // readMacOS dumps the UI element tree via System Events / osascript.
@@ -243,7 +256,7 @@ func (r *Reader) record(ctx context.Context, app, result string, err error, dur 
 func RegisterAccessibilityTool(registry toolRegistry, reader *Reader) {
 	registry.Register(
 		"accessibility.read_ui",
-		"Read the on-screen UI element tree (roles, names, values) of a running application's front window. macOS only in this revision. Returns a tab-delimited, indented snapshot for deciding what to act on.",
+		"Read the on-screen UI element tree (roles, names, values) of a running application's front window. Works on macOS (System Events), Windows (UIAutomation), and Linux (AT-SPI). Returns a tab-delimited, indented snapshot for deciding what to act on.",
 		`{"type":"object","properties":{"app":{"type":"string","description":"Application/process name (e.g. \"Mail\")"},"depth":{"type":"integer","description":"Tree depth to walk, 1-5 (default 2)"}},"required":["app"]}`,
 		"tool.accessibility.read",
 		func(ctx context.Context, input string) (string, error) {

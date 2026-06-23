@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/LumabyteCo/aibutler/internal/accessibility"
+	"github.com/godbus/dbus/v5"
 )
 
 type mockRegistry struct {
@@ -68,21 +69,27 @@ func TestReadUI_InjectionRejected(t *testing.T) {
 func TestReadUI_AllowedApp_OSGate(t *testing.T) {
 	r := accessibility.NewReader([]string{"Mail"})
 	_, err := r.ReadUI(context.Background(), "Mail", 2)
-	if runtime.GOOS == "darwin" {
-		// On macOS the call proceeds to osascript; it may fail for
-		// environmental reasons (app not running, no a11y permission),
-		// but it must NOT fail with allowlist/validation errors.
-		if err != nil && strings.Contains(err.Error(), "not in allowlist") {
-			t.Errorf("allowed app wrongly denied: %v", err)
+
+	// macOS, Linux/FreeBSD, and Windows each have a real backend. The call
+	// passes validation + allowlist and dispatches to it. It will usually
+	// fail for environmental reasons (app not running, no a11y bus /
+	// permission), but it must NEVER fail with an allowlist, validation, or
+	// unsupported-OS error — those would mean the gate or dispatch is wrong.
+	switch runtime.GOOS {
+	case "darwin", "linux", "freebsd", "windows":
+		if err == nil {
+			return
 		}
-		return
-	}
-	// Non-darwin: passes validation, then hits the OS gate.
-	if err == nil {
-		t.Fatal("expected macOS-only error on non-darwin")
-	}
-	if !strings.Contains(err.Error(), "macOS") {
-		t.Errorf("error = %v, want a macOS-only message", err)
+		for _, gate := range []string{"not in allowlist", "illegal characters", "unsupported OS"} {
+			if strings.Contains(err.Error(), gate) {
+				t.Errorf("allowed app on %s hit a gate error (%q): %v", runtime.GOOS, gate, err)
+			}
+		}
+	default:
+		// Genuinely unsupported OS: must be refused at the dispatch gate.
+		if err == nil || !strings.Contains(err.Error(), "unsupported OS") {
+			t.Errorf("expected unsupported-OS error on %s, got: %v", runtime.GOOS, err)
+		}
 	}
 }
 
@@ -105,6 +112,67 @@ func TestBuildMacScript_InterpolatesSafely(t *testing.T) {
 	s1 := accessibility.BuildMacScript("Mail", 1)
 	if strings.Contains(s1, "repeat with e1") {
 		t.Error("depth=1 should not produce a level-1 loop")
+	}
+}
+
+// TestWinUIAScript_Shape verifies the Windows UIAutomation script is
+// well-formed: it loads the UIAutomation assemblies, takes the app name and
+// depth as positional args (never interpolated — so there is no injection
+// surface), and emits real tab characters via [char]9 rather than a
+// PowerShell backtick-escape that a Go raw string can't carry.
+func TestWinUIAScript_Shape(t *testing.T) {
+	s := accessibility.WinUIAScript
+	for _, want := range []string{
+		"Add-Type -AssemblyName UIAutomationClient",
+		"Add-Type -AssemblyName UIAutomationTypes",
+		"$args[0]",      // app name passed positionally
+		"$args[1]",      // depth passed positionally
+		"[char]9",       // tab separator (no backtick-escape)
+		"FromHandle",    // walks the main-window element tree
+		"ProgrammaticName",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("winUIAScript missing %q", want)
+		}
+	}
+	// The app name must never be baked into the script body.
+	if strings.Contains(s, "Mail") {
+		t.Error("winUIAScript should not interpolate any app name")
+	}
+	// A stray literal backtick would mean the raw-string/escape juggling
+	// regressed (PowerShell backtick-escapes can't live in a Go raw string).
+	if strings.Contains(s, "`") {
+		t.Error("winUIAScript should contain no backticks (use [char]9 for tab)")
+	}
+}
+
+func TestResolvePowerShell_NonEmpty(t *testing.T) {
+	if got := accessibility.ResolvePowerShell(); got == "" {
+		t.Error("resolvePowerShell returned empty string")
+	}
+}
+
+// TestVariantString covers the Linux AT-SPI property-variant formatter:
+// strings pass through, numbers drop trailing zeros, and a zero/absent
+// value renders empty so the value column stays clean.
+func TestVariantString(t *testing.T) {
+	cases := []struct {
+		name string
+		in   dbus.Variant
+		want string
+	}{
+		{"string", dbus.MakeVariant("hello"), "hello"},
+		{"empty string", dbus.MakeVariant(""), ""},
+		{"int float", dbus.MakeVariant(float64(42)), "42"},
+		{"fractional", dbus.MakeVariant(float64(3.5)), "3.5"},
+		{"zero float", dbus.MakeVariant(float64(0)), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := accessibility.VariantString(tc.in); got != tc.want {
+				t.Errorf("VariantString(%v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 

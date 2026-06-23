@@ -119,6 +119,39 @@ jobs:
           sleep 2
           go test -count=1 -run TestLive_ -v ./internal/desktop/...
 
+  accessibility-live:
+    name: Accessibility Tier 3 (Linux AT-SPI live)
+    runs-on: ubuntu-latest
+    needs: [lint]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Validate the Linux AT-SPI backend end-to-end against a real
+      # accessibility bus: a private session D-Bus auto-activates
+      # at-spi2-core, an Xvfb display hosts a GTK app (zenity), and the
+      # live test walks its real UI element tree over godbus. Gated by
+      # AIBUTLER_ACCESSIBILITY_TESTS so it only runs in this job.
+      - name: Install AT-SPI environment + a GTK app
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=120 update
+          sudo apt-get -o DPkg::Lock::Timeout=120 install -y xvfb dbus-x11 at-spi2-core zenity
+      - name: Live Tier 3 AT-SPI test
+        run: |
+          dbus-run-session -- bash -c '
+            Xvfb :99 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &
+            export DISPLAY=:99
+            sleep 2
+            export NO_AT_BRIDGE=0
+            zenity --info --title="ProbeWindow" --text="AI Butler AT-SPI probe" >/tmp/zenity.log 2>&1 &
+            sleep 4
+            AIBUTLER_ACCESSIBILITY_TESTS=1 AIBUTLER_A11Y_APP=zenity \
+              go test -count=1 -run TestLive_ReadUI -v ./internal/accessibility/...
+          '
+
   integration:
     name: Integration & Security
     runs-on: ubuntu-latest
