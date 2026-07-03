@@ -26,8 +26,8 @@ func TestMigrateUpAndDown(t *testing.T) {
 		t.Fatalf("apply schema: %v", err)
 	}
 	v, _ = database.SchemaVersion(ctx)
-	if v != 21 {
-		t.Fatalf("after up version = %d, want 21", v)
+	if v != 22 {
+		t.Fatalf("after up version = %d, want 22", v)
 	}
 
 	// Verify tables exist
@@ -37,9 +37,19 @@ func TestMigrateUpAndDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	// Through migration 020 = ~65 tables + migration 021 adds missions, mission_steps, mission_events = ~68
-	if count < 57 {
-		t.Errorf("table count = %d, want >= 57", count)
+	// Through migration 021 = ~68 tables + migration 022 adds memory_conflicts,
+	// agent_proposals, eval_runs, eval_results, agent_changes, checkpoints = ~74
+	if count < 70 {
+		t.Errorf("table count = %d, want >= 70", count)
+	}
+
+	// Migrate down (reverts migration 022 — Memory quality & measured learning)
+	if err := database.MigrateDown(ctx); err != nil {
+		t.Fatalf("migrate down 022: %v", err)
+	}
+	v, _ = database.SchemaVersion(ctx)
+	if v != 21 {
+		t.Fatalf("after down 022 version = %d, want 21", v)
 	}
 
 	// Migrate down (reverts migration 021 — Mission engine foundation)
