@@ -349,6 +349,83 @@
       const list=document.getElementById("memory-list");
       if(list)list.innerHTML='<div class="empty-state muted">Couldn\'t load memories.</div>';
     });
+
+    loadFactsData();
+    loadConflictsData();
+  }
+
+  // Key facts — current beliefs with pin / correct / forget actions.
+  function loadFactsData(){
+    const list=document.getElementById("facts-list");
+    if(!list)return;
+    fetch("/api/dashboard/memory/facts").then(r=>r.ok?r.json():null).then(data=>{
+      if(!data||!data.facts||data.facts.length===0){
+        list.innerHTML='<div class="empty-state muted">No key facts yet. They\'re extracted automatically as we talk.</div>';
+        return;
+      }
+      list.innerHTML="";
+      data.facts.forEach(f=>{
+        const item=document.createElement("div");
+        item.className="memory-item fact-item";
+        item.innerHTML=
+          '<div class="memory-item-header">'+
+            '<span class="memory-item-source">'+escapeHtml(f.category||"fact")+(f.pinned?' 📌':'')+'</span>'+
+            '<span class="memory-item-date">'+escapeHtml(fmtRelative(f.extracted_at))+'</span>'+
+          '</div>'+
+          '<div class="memory-item-content">'+escapeHtml(f.fact||"")+'</div>'+
+          '<div class="fact-actions">'+
+            '<button type="button" class="linklike" data-act="pin">'+(f.pinned?'Unpin':'Pin')+'</button>'+
+            '<button type="button" class="linklike" data-act="correct">Fix</button>'+
+            '<button type="button" class="linklike danger" data-act="forget">Forget</button>'+
+          '</div>';
+        item.querySelector('[data-act="pin"]').addEventListener("click",()=>{
+          factAction("/api/dashboard/memory/facts/pin",{id:f.id,pinned:!f.pinned});
+        });
+        item.querySelector('[data-act="correct"]').addEventListener("click",()=>{
+          const fixed=prompt("Correct this fact:",f.fact);
+          if(fixed&&fixed.trim()&&fixed!==f.fact)factAction("/api/dashboard/memory/facts/correct",{id:f.id,fact:fixed.trim()});
+        });
+        item.querySelector('[data-act="forget"]').addEventListener("click",()=>{
+          if(confirm("Permanently delete this fact? This cannot be undone."))factAction("/api/dashboard/memory/facts/forget",{fact_id:f.id});
+        });
+        list.appendChild(item);
+      });
+    }).catch(()=>{
+      list.innerHTML='<div class="empty-state muted">Couldn\'t load facts.</div>';
+    });
+  }
+
+  // Conflicts — contradictions where a newer statement replaced a confident older one.
+  function loadConflictsData(){
+    const section=document.getElementById("conflicts-section");
+    const list=document.getElementById("conflicts-list");
+    if(!section||!list)return;
+    fetch("/api/dashboard/memory/conflicts?unreviewed=1").then(r=>r.ok?r.json():null).then(data=>{
+      const conflicts=(data&&data.conflicts)||[];
+      const pending=conflicts.filter(c=>c.resolution==="needs_review"&&!c.reviewed);
+      if(pending.length===0){section.classList.add("hidden");return;}
+      section.classList.remove("hidden");
+      list.innerHTML="";
+      pending.forEach(c=>{
+        const item=document.createElement("div");
+        item.className="memory-item fact-item";
+        item.innerHTML=
+          '<div class="memory-item-content">Now: '+escapeHtml(c.new_fact)+'<br><span class="muted">Was: '+escapeHtml(c.old_fact)+'</span></div>'+
+          '<div class="fact-actions">'+
+            '<button type="button" class="linklike" data-act="keep">Keep new</button>'+
+          '</div>';
+        item.querySelector('[data-act="keep"]').addEventListener("click",()=>{
+          factAction("/api/dashboard/memory/conflicts/review",{id:c.id});
+        });
+        list.appendChild(item);
+      });
+    }).catch(()=>{section.classList.add("hidden");});
+  }
+
+  function factAction(url,body){
+    fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+      .then(()=>loadMemoriesData())
+      .catch(()=>loadMemoriesData());
   }
 
   // Connected apps panel — show webchat as active

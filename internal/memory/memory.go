@@ -35,13 +35,27 @@ type Thought struct {
 	CreatedAt string   `json:"created_at"`
 }
 
-// KeyFact represents an extracted fact about the user.
+// KeyFact represents an extracted fact about the user, with the quality
+// metadata that makes it correctable: where it came from (provenance), how
+// trustworthy it is (confidence), how salient it is (importance), whether a
+// later statement replaced it (status/superseded_by), and how often it gets
+// used (access tracking, a promotion signal for context selection).
 type KeyFact struct {
-	ID            int64  `json:"id"`
-	Fact          string `json:"fact"`
-	Category      string `json:"category"`
-	SourceSession string `json:"source_session"`
-	ExtractedAt   string `json:"extracted_at"`
+	ID            int64   `json:"id"`
+	Fact          string  `json:"fact"`
+	Category      string  `json:"category"`
+	SourceSession string  `json:"source_session"`
+	ExtractedAt   string  `json:"extracted_at"`
+	FactKey       string  `json:"fact_key,omitempty"`
+	Importance    int     `json:"importance"`
+	Confidence    float64 `json:"confidence"`
+	SourceType    string  `json:"source_type,omitempty"`
+	SourceID      int64   `json:"source_id,omitempty"`
+	LastAccessed  string  `json:"last_accessed,omitempty"`
+	AccessCount   int     `json:"access_count"`
+	Status        string  `json:"status"`
+	SupersededBy  int64   `json:"superseded_by,omitempty"`
+	Pinned        bool    `json:"pinned"`
 }
 
 // ThoughtQuery holds optional filters for thought retrieval.
@@ -376,45 +390,34 @@ func (s *Store) ThoughtCount(ctx context.Context) (int, error) {
 // This prevents "AI Butler" from being stored 7 separate times as a key fact
 // when the same project gets mentioned across many sessions.
 func (s *Store) SaveKeyFact(ctx context.Context, fact, category, sourceSession string) (int64, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
-	canonical := entity.CanonicalFact(fact)
-
-	// Dedup on the canonical form within the same category. We compare canonical
-	// forms in Go because CanonicalFact (lowercasing + trailing-punctuation
-	// stripping + internal-whitespace collapsing) can't be expressed in SQL — the
-	// old `LOWER(TRIM(fact)) = ?` comparison stripped neither punctuation nor
-	// inner whitespace, so it silently failed to match whenever the *stored* fact
-	// carried punctuation or doubled spaces, letting duplicates accumulate. Dedup
-	// keeps each category small, so this scan stays bounded. Same category only —
-	// "Cairo" as a location and "Cairo" as a project name are distinct facts.
-	existingID, found, err := s.findCanonicalFact(ctx, canonical, category)
-	if err != nil {
-		return 0, err
-	}
-	if found {
-		// Already stored — bump the timestamp so "most recent" queries work.
-		if _, err := s.db.ExecContext(ctx,
-			`UPDATE key_facts SET extracted_at = ? WHERE id = ?`, now, existingID); err != nil {
-			return 0, fmt.Errorf("memory.save_key_fact: touch: %w", err)
-		}
-		return existingID, nil
-	}
-
-	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO key_facts (fact, category, source_session, extracted_at) VALUES (?, ?, ?, ?)`,
-		fact, category, sourceSession, now)
-	if err != nil {
-		return 0, fmt.Errorf("memory.save_key_fact: %w", err)
-	}
-	return result.LastInsertId()
+	// Thin compatibility wrapper: no fact key (so no conflict detection) and
+	// default confidence/importance. New callers use SaveFact directly.
+	return s.SaveFact(ctx, FactInput{
+		Fact:          fact,
+		Category:      category,
+		SourceSession: sourceSession,
+	})
 }
 
-// findCanonicalFact returns the id of an existing key fact in the same category
-// whose canonical form equals canonical, comparing canonical forms in Go (the
-// transform cannot be expressed in SQL).
+// findCanonicalFact returns the id of an existing ACTIVE key fact in the same
+// category whose canonical form equals canonical, comparing canonical forms in
+// Go (the transform cannot be expressed in SQL). Dedup deliberately ignores
+// superseded/retracted rows: re-asserting a value that was replaced earlier
+// ("I moved back to Cairo") must create a fresh active fact, not resurrect
+// bookkeeping on the dead one.
+//
+// Dedup on the canonical form within the same category. We compare canonical
+// forms in Go because CanonicalFact (lowercasing + trailing-punctuation
+// stripping + internal-whitespace collapsing) can't be expressed in SQL — a
+// naive `LOWER(TRIM(fact)) = ?` comparison strips neither punctuation nor
+// inner whitespace, so it silently fails to match whenever the *stored* fact
+// carries punctuation or doubled spaces, letting duplicates accumulate. Dedup
+// keeps each category small, so this scan stays bounded. Same category only —
+// "Cairo" as a location and "Cairo" as a project name are distinct facts.
 func (s *Store) findCanonicalFact(ctx context.Context, canonical, category string) (int64, bool, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, fact FROM key_facts WHERE COALESCE(category, '') = COALESCE(?, '')`, category)
+		`SELECT id, fact FROM key_facts
+		 WHERE COALESCE(category, '') = COALESCE(?, '') AND status = 'active'`, category)
 	if err != nil {
 		return 0, false, fmt.Errorf("memory.save_key_fact: lookup: %w", err)
 	}
@@ -441,13 +444,21 @@ func (s *Store) GetKeyFacts(ctx context.Context, category string, limit int) ([]
 		limit = 10
 	}
 
+	// Only active facts: superseded and retracted rows are history, not
+	// current knowledge.
 	var query string
 	var args []interface{}
 	if category != "" {
-		query = `SELECT id, fact, COALESCE(category, ''), COALESCE(source_session, ''), extracted_at FROM key_facts WHERE category = ? ORDER BY extracted_at DESC LIMIT ?`
+		query = `SELECT id, fact, COALESCE(category, ''), COALESCE(source_session, ''), extracted_at,
+		                COALESCE(fact_key, ''), importance, confidence, status, pinned
+		         FROM key_facts WHERE category = ? AND status = 'active'
+		         ORDER BY extracted_at DESC LIMIT ?`
 		args = []interface{}{category, limit}
 	} else {
-		query = `SELECT id, fact, COALESCE(category, ''), COALESCE(source_session, ''), extracted_at FROM key_facts ORDER BY extracted_at DESC LIMIT ?`
+		query = `SELECT id, fact, COALESCE(category, ''), COALESCE(source_session, ''), extracted_at,
+		                COALESCE(fact_key, ''), importance, confidence, status, pinned
+		         FROM key_facts WHERE status = 'active'
+		         ORDER BY extracted_at DESC LIMIT ?`
 		args = []interface{}{limit}
 	}
 
@@ -460,9 +471,12 @@ func (s *Store) GetKeyFacts(ctx context.Context, category string, limit int) ([]
 	var facts []KeyFact
 	for rows.Next() {
 		var f KeyFact
-		if err := rows.Scan(&f.ID, &f.Fact, &f.Category, &f.SourceSession, &f.ExtractedAt); err != nil {
+		var pinned int
+		if err := rows.Scan(&f.ID, &f.Fact, &f.Category, &f.SourceSession, &f.ExtractedAt,
+			&f.FactKey, &f.Importance, &f.Confidence, &f.Status, &pinned); err != nil {
 			return nil, fmt.Errorf("memory.get_key_facts: scan: %w", err)
 		}
+		f.Pinned = pinned != 0
 		facts = append(facts, f)
 	}
 	return facts, rows.Err()

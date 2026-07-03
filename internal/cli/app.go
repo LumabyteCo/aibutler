@@ -1117,6 +1117,9 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	dashReg := &dashboardRegistryAdapter{reg: app.AgentRegistry}
 	dashSwarm := &dashboardSwarmAdapter{db: database.Conn()}
 	app.Dashboard = dashboard.New(database.Conn(), dashReg, dashSwarm)
+	// Memories panel fact actions (correct/forget/pin) run through the same
+	// store as the memory tools and mirror into the audit trail.
+	app.Dashboard.SetFactStore(app.MemStore, audit.NewSQLiteAuditor(database.Conn()))
 
 	// 14b. LAN discovery.
 	app.LANDiscovery = lan.New(cfg.Configurations.Web.Port, cfg.Settings.PersonaName)

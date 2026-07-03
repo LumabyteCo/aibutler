@@ -329,8 +329,10 @@ func (c *Composer) loadKeyFacts(ctx context.Context, limit int) []string {
 		return nil
 	}
 
+	// Only active facts: a fact that was superseded by a newer statement or
+	// retracted by the user must never re-enter the prompt.
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT fact FROM key_facts ORDER BY extracted_at DESC LIMIT ?`, limit)
+		`SELECT fact FROM key_facts WHERE status = 'active' ORDER BY extracted_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil
 	}

@@ -20,6 +20,7 @@ func RegisterMemoryTools(registry *tool.Registry, store *Store, detector Instruc
 	registry.Register(&captureTool{store: store, detector: detector})
 	registry.Register(&searchTool{store: store})
 	registry.Register(&factsTool{store: store})
+	registry.Register(&forgetTool{store: store})
 }
 
 // --- memory.capture ---
@@ -54,11 +55,20 @@ func (t *captureTool) Execute(ctx context.Context, input string) (string, error)
 		return "", err
 	}
 
-	// Auto-extract key facts.
+	// Auto-extract key facts, each carrying provenance back to the thought
+	// it came from (so forgetting the thought forgets the facts) and the
+	// user-stated confidence prior (the user said it in their own words).
 	extracted := ExtractKeyFacts(args.Content)
 	var factMessages []string
 	for _, e := range extracted {
-		if _, err := t.store.SaveKeyFact(ctx, e.Fact, e.Category, ""); err == nil {
+		if _, err := t.store.SaveFact(ctx, FactInput{
+			Fact:       e.Fact,
+			Category:   e.Category,
+			FactKey:    e.Key,
+			SourceType: "thought",
+			SourceID:   id,
+			Confidence: ConfidenceUserStated,
+		}); err == nil {
 			factMessages = append(factMessages, fmt.Sprintf("%s (%s)", e.Fact, e.Category))
 		}
 	}
@@ -151,4 +161,68 @@ func (t *factsTool) Execute(ctx context.Context, input string) (string, error) {
 
 	data, _ := json.Marshal(facts)
 	return string(data), nil
+}
+
+// --- memory.forget ---
+//
+// True deletion with provenance cascade: forgetting a thought or transcript
+// also removes every fact extracted from it, its embedding, and its full-text
+// index entry in one transaction. Forgetting a fact removes just that fact
+// (its conflict-ledger rows cascade). Registered under its own capability so
+// deployments can gate deletion more strictly than ordinary memory writes.
+
+type forgetTool struct {
+	store *Store
+}
+
+func (t *forgetTool) Name() string { return "memory.forget" }
+func (t *forgetTool) Description() string {
+	return "Permanently delete a memory item. Deleting a thought or transcript also deletes everything derived from it (extracted facts, embeddings, search index entries). This cannot be undone — confirm with the user before calling."
+}
+func (t *forgetTool) Capability() string { return "memory.forget" }
+func (t *forgetTool) Schema() string {
+	return `{"type":"object","properties":{"fact_id":{"type":"integer","description":"ID of a key fact to delete"},"thought_id":{"type":"integer","description":"ID of a captured thought to delete with everything derived from it"},"transcript_id":{"type":"integer","description":"ID of a transcript row to delete with everything derived from it"}}}`
+}
+
+func (t *forgetTool) Execute(ctx context.Context, input string) (string, error) {
+	var args struct {
+		FactID       int64 `json:"fact_id"`
+		ThoughtID    int64 `json:"thought_id"`
+		TranscriptID int64 `json:"transcript_id"`
+	}
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		return "", fmt.Errorf("memory.forget: invalid input: %w", err)
+	}
+
+	set := 0
+	for _, id := range []int64{args.FactID, args.ThoughtID, args.TranscriptID} {
+		if id != 0 {
+			set++
+		}
+	}
+	if set != 1 {
+		return "", fmt.Errorf("memory.forget: provide exactly one of fact_id, thought_id, transcript_id")
+	}
+
+	switch {
+	case args.FactID != 0:
+		if err := t.store.ForgetFact(ctx, args.FactID); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Fact %d permanently deleted.", args.FactID), nil
+	case args.ThoughtID != 0:
+		res, err := t.store.ForgetThought(ctx, args.ThoughtID)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Thought %d permanently deleted, along with %d derived fact(s) and %d embedding(s).",
+			args.ThoughtID, res.Facts, res.Vectors), nil
+	default:
+		res, err := t.store.ForgetTranscript(ctx, args.TranscriptID)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Transcript row %d permanently deleted, along with %d derived fact(s) and %d embedding(s).",
+			args.TranscriptID, res.Facts, res.Vectors), nil
+	}
 }
