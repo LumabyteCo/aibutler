@@ -29,9 +29,6 @@ func DefaultReliability() ReliabilityConfig {
 // RecoverMissed checks all enabled schedules for runs that were missed
 // (e.g., during downtime) and fires them. Returns the count of recovered runs.
 func (s *Scheduler) RecoverMissed(ctx context.Context) (int, error) {
-	if s.runner == nil {
-		return 0, nil
-	}
 	schedules, err := s.store.List(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("recover: list: %w", err)
@@ -42,6 +39,10 @@ func (s *Scheduler) RecoverMissed(ctx context.Context) (int, error) {
 
 	for _, sched := range schedules {
 		if !sched.Enabled {
+			continue
+		}
+		// Builtins recover without a model runner; agent tasks need one.
+		if s.runner == nil && !hasBuiltinPrefix(sched.Task) {
 			continue
 		}
 
@@ -75,18 +76,16 @@ func (s *Scheduler) RecoverMissed(ctx context.Context) (int, error) {
 				continue
 			}
 
+			// Same dispatch as the tick loop: builtins run their registered
+			// code and capability profiles stay enforced — recovery must not
+			// be a side door around either.
 			go func(sc Schedule, r *Run) {
-				result, execErr := s.runner.Run(ctx, sc.ID, sc.Task, sc.Channel)
-				completedAt := time.Now().UTC()
-				r.CompletedAt = &completedAt
-				if execErr != nil {
-					r.Status = "failed"
-					r.Error = execErr.Error()
-				} else {
-					r.Status = "completed"
-					r.AgentID = result.ID
-				}
-				s.store.RecordRun(ctx, r)
+				defer func() {
+					if rec := recover(); rec != nil {
+						log.Printf("PANIC recovered in scheduler-recovery %s: %v", security.SanitizeLogValue(sc.Name), rec)
+					}
+				}()
+				s.executeAndRecord(ctx, sc, r)
 			}(sched, run)
 
 			recovered++

@@ -30,7 +30,9 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/channel"
 	"github.com/LumabyteCo/aibutler/internal/i18n"
 	"github.com/LumabyteCo/aibutler/internal/memory"
+	"github.com/LumabyteCo/aibutler/internal/memory/digest"
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
+	"github.com/LumabyteCo/aibutler/internal/memory/graph"
 	swarmws "github.com/LumabyteCo/aibutler/internal/memory/swarm"
 	"github.com/LumabyteCo/aibutler/internal/memory/vector"
 	"github.com/LumabyteCo/aibutler/internal/model"
@@ -38,6 +40,7 @@ import (
 	a2aclient "github.com/LumabyteCo/aibutler/internal/protocol/a2a/client"
 	a2aregistry "github.com/LumabyteCo/aibutler/internal/protocol/a2a/registry"
 	"github.com/LumabyteCo/aibutler/internal/ratelimit"
+	"github.com/LumabyteCo/aibutler/internal/reflection"
 	"github.com/LumabyteCo/aibutler/internal/stopphrase"
 	"github.com/LumabyteCo/aibutler/internal/streaming"
 	"github.com/LumabyteCo/aibutler/internal/swarm"
@@ -411,6 +414,34 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 	// Wire factory as scheduler runner so scheduled tasks can execute.
 	if app.Scheduler != nil {
 		app.Scheduler.SetRunner(factory)
+
+		// Idle-time reflection (opt-in): a scheduled, deterministic
+		// maintenance pass — no model, no tools — that surfaces
+		// contradictions for review, flags stale high-importance facts,
+		// checks index health, and (when an embedder exists) backfills
+		// missing vectors. Registered as a scheduler builtin so it gets
+		// cron persistence, run history, and downtime recovery.
+		if app.Config.Configurations.Reflection.Enabled {
+			digests := digest.NewGenerator(app.DB.Conn(), app.MemStore, app.EntityStore, graph.NewStore(app.DB.Conn()))
+			var bf reflection.Backfiller
+			if embedder, embedProvider := resolveEmbedder(app); embedder != nil && app.VectorStore != nil {
+				bf = &backfillAdapter{inner: memory.NewBackfiller(app.DB.Conn(), app.VectorStore, embedder.EmbedBatch, embedProvider)}
+			}
+			maint := reflection.New(app.DB.Conn(), app.MemStore, digests, bf)
+			app.Scheduler.RegisterBuiltin("memory.maintenance", maint.Run)
+			cronExpr := app.Config.Configurations.Reflection.Cron
+			if cronExpr == "" {
+				cronExpr = "0 3 * * *"
+			}
+			if err := app.Scheduler.EnsureBuiltinSchedule(context.Background(), "memory-maintenance", cronExpr,
+				"memory.maintenance", []string{"memory.read", "memory.write"}); err != nil {
+				log.Printf("reflection: ensure schedule: %v", err)
+			}
+		} else {
+			// Opted out after having been enabled: quiet the schedule row
+			// instead of letting it fail nightly on an unregistered builtin.
+			app.Scheduler.DisableBuiltinSchedule(context.Background(), "memory.maintenance")
+		}
 	}
 
 	// Wire factory as A2A task runner (replaces the bootstrap-time stub).
@@ -885,6 +916,20 @@ func (p *postRunProcessor) extractAndSaveEntities(ctx context.Context, sessionID
 
 // factoryRunner adapts *model.Factory to the a2a.TaskRunner interface.
 // Each inbound A2A task gets a synthetic session ID so conversations are isolated.
+// backfillAdapter adapts the memory package's batched backfiller to the
+// reflection cycle's narrow interface.
+type backfillAdapter struct {
+	inner *memory.Backfiller
+}
+
+func (a *backfillAdapter) Run(ctx context.Context) (int, int, error) {
+	res, err := a.inner.BackfillMissing(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	return res.Embedded, res.Failed, nil
+}
+
 type factoryRunner struct {
 	factory *model.Factory
 }

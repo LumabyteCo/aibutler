@@ -18,9 +18,14 @@ type Schedule struct {
 	Channel   string
 	AccountID string
 	Skills    []string
-	Enabled   bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// Capabilities lists the capability resources this job runs with.
+	// Empty = the legacy default set. A populated list means the job gets
+	// exactly these resources and nothing else — background work should
+	// hold only the permissions it needs.
+	Capabilities []string
+	Enabled      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Run represents a single execution of a schedule.
@@ -44,14 +49,31 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-// Create inserts a new schedule.
+// Create inserts a new schedule. Builtin task keys are reserved for
+// code-registered maintenance — enforced here so EVERY creation surface
+// (agent tool, MCP adapters, HTTP) inherits the rule; no caller can alias
+// an agent task onto registered builtin code or schedule extra fires of it.
 func (s *Store) Create(ctx context.Context, sched *Schedule) error {
+	if hasBuiltinPrefix(sched.Task) {
+		return fmt.Errorf("schedule.create: task names starting with %q are reserved", BuiltinPrefix)
+	}
+	return s.create(ctx, sched)
+}
+
+// create is the reservation-exempt insert used by the scheduler itself to
+// register builtin schedules.
+func (s *Store) create(ctx context.Context, sched *Schedule) error {
 	skills, _ := json.Marshal(sched.Skills)
+	var capsJSON interface{}
+	if len(sched.Capabilities) > 0 {
+		b, _ := json.Marshal(sched.Capabilities)
+		capsJSON = string(b)
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO schedules (id, name, cron_expr, task, channel, account_id, skills, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO schedules (id, name, cron_expr, task, channel, account_id, skills, capabilities, enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sched.ID, sched.Name, sched.CronExpr, sched.Task, sched.Channel, sched.AccountID,
-		string(skills), boolToInt(sched.Enabled))
+		string(skills), capsJSON, boolToInt(sched.Enabled))
 	if err != nil {
 		return fmt.Errorf("schedule.create: %w", err)
 	}
@@ -61,7 +83,7 @@ func (s *Store) Create(ctx context.Context, sched *Schedule) error {
 // Get retrieves a schedule by ID.
 func (s *Store) Get(ctx context.Context, id string) (*Schedule, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, cron_expr, task, channel, account_id, skills, enabled, created_at, updated_at
+		`SELECT id, name, cron_expr, task, channel, account_id, skills, COALESCE(capabilities, ''), enabled, created_at, updated_at
 		 FROM schedules WHERE id = ?`, id)
 	return scanSchedule(row)
 }
@@ -69,7 +91,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Schedule, error) {
 // List returns all schedules.
 func (s *Store) List(ctx context.Context) ([]Schedule, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, cron_expr, task, channel, account_id, skills, enabled, created_at, updated_at
+		`SELECT id, name, cron_expr, task, channel, account_id, skills, COALESCE(capabilities, ''), enabled, created_at, updated_at
 		 FROM schedules ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("schedule.list: %w", err)
@@ -186,11 +208,11 @@ func (s *Store) LastRun(ctx context.Context, scheduleID string) (*Run, error) {
 
 func scanSchedule(row *sql.Row) (*Schedule, error) {
 	var sched Schedule
-	var skillsJSON string
+	var skillsJSON, capsJSON string
 	var enabled int
 	var createdStr, updatedStr string
 	err := row.Scan(&sched.ID, &sched.Name, &sched.CronExpr, &sched.Task,
-		&sched.Channel, &sched.AccountID, &skillsJSON, &enabled,
+		&sched.Channel, &sched.AccountID, &skillsJSON, &capsJSON, &enabled,
 		&createdStr, &updatedStr)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("schedule: not found")
@@ -212,16 +234,19 @@ func scanSchedule(row *sql.Row) (*Schedule, error) {
 	if skillsJSON != "" {
 		json.Unmarshal([]byte(skillsJSON), &sched.Skills)
 	}
+	if capsJSON != "" {
+		json.Unmarshal([]byte(capsJSON), &sched.Capabilities)
+	}
 	return &sched, nil
 }
 
 func scanScheduleRow(rows *sql.Rows) (*Schedule, error) {
 	var sched Schedule
-	var skillsJSON string
+	var skillsJSON, capsJSON string
 	var enabled int
 	var createdStr, updatedStr string
 	err := rows.Scan(&sched.ID, &sched.Name, &sched.CronExpr, &sched.Task,
-		&sched.Channel, &sched.AccountID, &skillsJSON, &enabled,
+		&sched.Channel, &sched.AccountID, &skillsJSON, &capsJSON, &enabled,
 		&createdStr, &updatedStr)
 	if err != nil {
 		return nil, fmt.Errorf("schedule.scan: %w", err)
@@ -239,6 +264,9 @@ func scanScheduleRow(rows *sql.Rows) (*Schedule, error) {
 	}
 	if skillsJSON != "" {
 		json.Unmarshal([]byte(skillsJSON), &sched.Skills)
+	}
+	if capsJSON != "" {
+		json.Unmarshal([]byte(capsJSON), &sched.Capabilities)
 	}
 	return &sched, nil
 }

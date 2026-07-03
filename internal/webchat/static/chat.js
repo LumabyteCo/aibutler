@@ -352,6 +352,41 @@
 
     loadFactsData();
     loadConflictsData();
+    loadProposalsData();
+  }
+
+  // Pending approvals — self-authored skill proposals awaiting a decision.
+  function loadProposalsData(){
+    const section=document.getElementById("proposals-section");
+    const list=document.getElementById("proposals-list");
+    if(!section||!list)return;
+    fetch("/api/dashboard/proposals").then(r=>r.ok?r.json():null).then(data=>{
+      const proposals=(data&&data.proposals)||[];
+      if(proposals.length===0){section.classList.add("hidden");return;}
+      section.classList.remove("hidden");
+      list.innerHTML="";
+      proposals.forEach(p=>{
+        const item=document.createElement("div");
+        item.className="memory-item fact-item";
+        item.innerHTML=
+          '<div class="memory-item-header">'+
+            '<span class="memory-item-source">'+escapeHtml(p.title||("Proposal #"+p.id))+'</span>'+
+            '<span class="memory-item-date">'+escapeHtml(fmtRelative(p.created_at))+'</span>'+
+          '</div>'+
+          '<details class="memory-item-content"><summary>Review the full skill</summary><pre style="white-space:pre-wrap">'+escapeHtml(p.body||"(file unavailable)")+'</pre></details>'+
+          '<div class="fact-actions">'+
+            '<button type="button" class="linklike" data-act="approve">Approve</button>'+
+            '<button type="button" class="linklike danger" data-act="reject">Reject</button>'+
+          '</div>';
+        item.querySelector('[data-act="approve"]').addEventListener("click",()=>{
+          if(confirm("Activate this skill? Review the full content first."))factAction("/api/dashboard/proposals/approve",{id:p.id});
+        });
+        item.querySelector('[data-act="reject"]').addEventListener("click",()=>{
+          factAction("/api/dashboard/proposals/reject",{id:p.id});
+        });
+        list.appendChild(item);
+      });
+    }).catch(()=>{section.classList.add("hidden");});
   }
 
   // Key facts — current beliefs with pin / correct / forget actions.
@@ -428,8 +463,12 @@
 
   function factAction(url,body){
     fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
-      .then(()=>loadMemoriesData())
-      .catch(()=>loadMemoriesData());
+      .then(r=>r.json().catch(()=>({})).then(data=>{
+        if(!r.ok&&data.error)alert(data.error);
+        else if(data.note)alert(data.note);
+      }))
+      .catch(()=>{})
+      .finally(()=>loadMemoriesData());
   }
 
   // Connected apps panel — show webchat as active

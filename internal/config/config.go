@@ -318,12 +318,24 @@ type Configurations struct {
 	Sandbox     SandboxConfig             `yaml:"sandbox"`
 	Backup      BackupConfig              `yaml:"backup"`
 	File        FileConfig                `yaml:"file"`
+	// Reflection is the opt-in idle-time maintenance cycle: a scheduled,
+	// deterministic pass (no model, no tools) that surfaces contradictions
+	// awaiting review, flags stale high-importance facts, checks embedding
+	// index health, and writes a maintenance report. It proposes; it never
+	// silently applies anything.
+	Reflection ReflectionConfig `yaml:"reflection"`
 	// SkillSynthesis is opt-in: when enabled, completed multi-step work with
 	// a grounded success signal (a verification tool that ran and did not
 	// error) is distilled into a STAGED skill proposal. Proposals never
 	// activate themselves — approval is always an explicit human action
 	// (`aibutler skills approve`).
 	SkillSynthesis SkillSynthesisConfig `yaml:"skill_synthesis"`
+}
+
+// ReflectionConfig tunes the idle-time maintenance cycle.
+type ReflectionConfig struct {
+	Enabled bool   `yaml:"enabled"` // default false
+	Cron    string `yaml:"cron"`    // default "0 3 * * *" (daily, 03:00)
 }
 
 // SkillSynthesisConfig tunes self-authored skill proposals.
@@ -529,6 +541,10 @@ func Default() *Config {
 			},
 			MCPServer: MCPServerExposure{
 				AllowedCapabilities: []string{"memory.read", "data.read"},
+			},
+			Reflection: ReflectionConfig{
+				Enabled: false, // opt-in while the capability is validated
+				Cron:    "0 3 * * *",
 			},
 			SkillSynthesis: SkillSynthesisConfig{
 				Enabled:      false, // opt-in while the capability is validated

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/memory"
+	"github.com/LumabyteCo/aibutler/internal/skillsynth"
 )
 
 // AgentRecord is a local copy of the registry record to avoid import cycles.
@@ -82,8 +83,9 @@ type Dashboard struct {
 	db         *sql.DB
 	registry   RegistryBrowser
 	swarmStore SwarmStore
-	facts      *memory.Store // optional; enables Memories panel fact actions
-	auditor    AccessLogger  // optional; mirrors panel mutations to the audit trail
+	facts      *memory.Store           // optional; enables Memories panel fact actions
+	auditor    AccessLogger            // optional; mirrors panel mutations to the audit trail
+	proposals  *skillsynth.Synthesizer // optional; enables the approvals surface
 }
 
 // New creates a Dashboard.
@@ -115,6 +117,9 @@ func (d *Dashboard) Handler() http.Handler {
 
 	// Memories panel fact-quality actions (list/correct/forget/pin/conflicts).
 	d.registerFactRoutes(mux)
+
+	// Approvals surface: pending self-authored proposals with decide actions.
+	d.registerProposalRoutes(mux)
 
 	// Enhanced dashboard routes.
 	d.RegisterEnhancedRoutes(mux)
@@ -740,7 +745,7 @@ func (d *Dashboard) handleAIUsage(w http.ResponseWriter, r *http.Request) {
 	// Return usage stats from transaction_audit table (AI tool calls logged there).
 	ctx := r.Context()
 	usage := map[string]interface{}{
-		"providers": map[string]interface{}{},
+		"providers":   map[string]interface{}{},
 		"total_calls": 0,
 	}
 

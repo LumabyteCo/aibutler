@@ -24,12 +24,13 @@ type createTool struct {
 }
 
 type createInput struct {
-	Name      string `json:"name"`
-	Cron      string `json:"cron"`
-	Natural   string `json:"natural"` // Natural language schedule (e.g. "every day at 9:00")
-	Task      string `json:"task"`
-	Channel   string `json:"channel"`
-	AccountID string `json:"account_id"`
+	Name         string   `json:"name"`
+	Cron         string   `json:"cron"`
+	Natural      string   `json:"natural"` // Natural language schedule (e.g. "every day at 9:00")
+	Task         string   `json:"task"`
+	Channel      string   `json:"channel"`
+	AccountID    string   `json:"account_id"`
+	Capabilities []string `json:"capabilities"`
 }
 
 func (t *createTool) Name() string        { return "schedule.create" }
@@ -45,7 +46,8 @@ func (t *createTool) Schema() string {
 			"natural":    {"type": "string", "description": "Natural language schedule (e.g. 'every day at 9:00', 'every weekday')"},
 			"task":       {"type": "string", "description": "Task description for the agent"},
 			"channel":    {"type": "string", "description": "Output channel (e.g. telegram, webchat)"},
-			"account_id": {"type": "string", "description": "Target account for delivery"}
+			"account_id": {"type": "string", "description": "Target account for delivery"},
+			"capabilities": {"type": "array", "items": {"type": "string"}, "description": "Capability resources the job runs with (e.g. memory.read). Empty = default set. Declaring a minimal list is recommended for background jobs."}
 		},
 		"required": ["name", "task", "channel", "account_id"]
 	}`
@@ -75,14 +77,21 @@ func (t *createTool) Execute(ctx context.Context, input string) (string, error) 
 		return "", fmt.Errorf("schedule.create: invalid cron: %w", err)
 	}
 
+	// Builtin task keys are reserved for code-registered maintenance —
+	// a model must not be able to alias an agent task onto them.
+	if hasBuiltinPrefix(in.Task) {
+		return "", fmt.Errorf("schedule.create: task names starting with %q are reserved", BuiltinPrefix)
+	}
+
 	sched := &Schedule{
-		ID:        fmt.Sprintf("sched_%d", timeNowUnixMilli()),
-		Name:      in.Name,
-		CronExpr:  in.Cron,
-		Task:      in.Task,
-		Channel:   in.Channel,
-		AccountID: in.AccountID,
-		Enabled:   true,
+		ID:           fmt.Sprintf("sched_%d", timeNowUnixMilli()),
+		Name:         in.Name,
+		CronExpr:     in.Cron,
+		Task:         in.Task,
+		Channel:      in.Channel,
+		AccountID:    in.AccountID,
+		Capabilities: in.Capabilities,
+		Enabled:      true,
 	}
 
 	if err := t.store.Create(ctx, sched); err != nil {

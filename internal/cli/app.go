@@ -36,6 +36,7 @@ import (
 	cachepkg "github.com/LumabyteCo/aibutler/internal/cache"
 	calpkg "github.com/LumabyteCo/aibutler/internal/calendar"
 	"github.com/LumabyteCo/aibutler/internal/capability"
+	"github.com/LumabyteCo/aibutler/internal/changelog"
 	"github.com/LumabyteCo/aibutler/internal/channel"
 	gchatpkg "github.com/LumabyteCo/aibutler/internal/channel/gchat"
 	ircpkg "github.com/LumabyteCo/aibutler/internal/channel/irc"
@@ -105,6 +106,7 @@ import (
 	pspkg "github.com/LumabyteCo/aibutler/internal/shell/powershell"
 	shellsandbox "github.com/LumabyteCo/aibutler/internal/shell/sandbox"
 	scutpkg "github.com/LumabyteCo/aibutler/internal/shell/shortcuts"
+	"github.com/LumabyteCo/aibutler/internal/skillsynth"
 	"github.com/LumabyteCo/aibutler/internal/slack"
 	"github.com/LumabyteCo/aibutler/internal/taskctx"
 	"github.com/LumabyteCo/aibutler/internal/telegram"
@@ -1159,6 +1161,12 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// Memories panel fact actions (correct/forget/pin) run through the same
 	// store as the memory tools and mirror into the audit trail.
 	app.Dashboard.SetFactStore(app.MemStore, audit.NewSQLiteAuditor(database.Conn()))
+	// Approvals surface: decisions route through the same synthesizer logic
+	// as the CLI (no model needed for approve/reject/list).
+	dashLedger := changelog.New(database.Conn(), audit.NewSQLiteAuditor(database.Conn()))
+	app.Dashboard.SetProposals(skillsynth.New(skillsynth.Config{
+		SkillsDir: cfg.SkillsDir(),
+	}, nil, database.Conn(), dashLedger, nil))
 
 	// 14b. LAN discovery.
 	app.LANDiscovery = lan.New(cfg.Configurations.Web.Port, cfg.Settings.PersonaName)
