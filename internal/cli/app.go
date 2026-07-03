@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"log"
@@ -1059,6 +1060,22 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// 8b. Wire git context into prompt composer.
 	app.Composer.SetGitContext(func(ctx context.Context) string {
 		return app.GitClient.GitContext(ctx)
+	})
+
+	// 8c. Wire working state into prompt composer: the session's active
+	// multi-step task plus any mission paused for user input, so every turn
+	// starts aware of unfinished work without a retrieval call.
+	app.Composer.SetWorkingState(func(ctx context.Context, sessionID string) string {
+		var parts []string
+		if tc, err := tcStore.Load(ctx, sessionID); err == nil && tc != nil {
+			parts = append(parts, fmt.Sprintf("active task %q (%s)", tc.TaskType, tc.State))
+		}
+		var waiting int
+		if err := database.Conn().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM missions WHERE state = ?`, string(missionpkg.StateWaitingUser)).Scan(&waiting); err == nil && waiting > 0 {
+			parts = append(parts, fmt.Sprintf("%d mission(s) awaiting your input", waiting))
+		}
+		return strings.Join(parts, "; ")
 	})
 
 	// 9. Scheduler (if enabled).

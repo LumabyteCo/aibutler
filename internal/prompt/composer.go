@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent"
 	"github.com/LumabyteCo/aibutler/internal/config"
@@ -47,6 +50,11 @@ type InstructionProvider interface {
 // GitContextFunc returns git context string for system prompt injection.
 type GitContextFunc func(ctx context.Context) string
 
+// WorkingStateFunc returns a one-line summary of what is currently in flight
+// for a session (active multi-step task, work paused awaiting the user), so
+// the model knows the working state every turn without a retrieval call.
+type WorkingStateFunc func(ctx context.Context, sessionID string) string
+
 // Composer assembles the three-tier prompt for model consumption.
 type Composer struct {
 	cfg              *config.Config
@@ -58,6 +66,7 @@ type Composer struct {
 	instructionStore InstructionProvider
 	entityStore      EntitySummarizer
 	gitContextFn     GitContextFunc
+	workingStateFn   WorkingStateFunc
 }
 
 // NewComposer creates a prompt composer.
@@ -88,6 +97,12 @@ func (c *Composer) SetEntityStore(es EntitySummarizer) {
 // SetGitContext sets a function that provides git context for system prompt injection.
 func (c *Composer) SetGitContext(fn GitContextFunc) {
 	c.gitContextFn = fn
+}
+
+// SetWorkingState sets a function that summarizes in-flight session work for
+// Tier-1 injection.
+func (c *Composer) SetWorkingState(fn WorkingStateFunc) {
+	c.workingStateFn = fn
 }
 
 // LoadSkills loads skill files from the configured skills directory + embedded defaults.
@@ -198,10 +213,25 @@ func (c *Composer) buildTier1(ctx context.Context, channel, sessionID string) (s
 		parts = append(parts, "Available skills: "+strings.Join(skillSummaries, ", ")+".")
 	}
 
-	// 4. Key Facts (~100 tokens).
-	facts := c.loadKeyFacts(ctx, 10)
+	// 4. Key Facts — the bounded core-memory layer (~350 tokens by default).
+	// "scored" ranks by pinned flag, importance, usage frequency, and recency
+	// within a fixed token budget; "recency" is the legacy newest-first top-10.
+	var facts []string
+	if c.cfg.Options.Prompts.CoreMemorySelection == "recency" {
+		facts = c.loadKeyFacts(ctx, 10)
+	} else {
+		facts = c.loadCoreFacts(ctx, c.coreMemoryBudget())
+	}
 	if len(facts) > 0 {
 		parts = append(parts, "Key facts: "+strings.Join(facts, ". ")+".")
+	}
+
+	// 4b. Working state (~30 tokens): what's currently in flight, so the
+	// model never starts a turn blind to unfinished work.
+	if c.workingStateFn != nil {
+		if ws := c.workingStateFn(ctx, sessionID); ws != "" {
+			parts = append(parts, "Working state: "+ws)
+		}
 	}
 
 	// 5. Living Memory awareness pointer (~10 tokens).
@@ -301,13 +331,47 @@ func (c *Composer) truncateTier1(parts []string, maxTokens int) string {
 		return result
 	}
 
-	// Remove facts (find and remove "Key facts:" part).
+	// Shrink facts before dropping them: cut lowest-scored facts (they sit
+	// at the end of the section) until the prompt fits, so overflow degrades
+	// the core-memory layer gradually instead of zeroing it.
+	overhead := estimateTokens(strings.Join(parts, "\n\n")) - maxTokens
 	var trimmed []string
 	for _, p := range parts {
 		if !strings.HasPrefix(p, "Key facts:") {
 			trimmed = append(trimmed, p)
+			continue
+		}
+		if shrunk, ok := shrinkFactsPart(p, overhead); ok {
+			trimmed = append(trimmed, shrunk)
+		}
+		// ok=false: even one fact doesn't fit — drop the section entirely.
+	}
+	result = strings.Join(trimmed, "\n\n")
+	if estimateTokens(result) <= maxTokens {
+		return result
+	}
+
+	// Still over: drop the facts section wholesale.
+	var trimmedNoFacts []string
+	for _, p := range trimmed {
+		if !strings.HasPrefix(p, "Key facts:") {
+			trimmedNoFacts = append(trimmedNoFacts, p)
 		}
 	}
+	trimmed = trimmedNoFacts
+	result = strings.Join(trimmed, "\n\n")
+	if estimateTokens(result) <= maxTokens {
+		return result
+	}
+
+	// Remove the working-state line.
+	var trimmedWS []string
+	for _, p := range trimmed {
+		if !strings.HasPrefix(p, "Working state:") {
+			trimmedWS = append(trimmedWS, p)
+		}
+	}
+	trimmed = trimmedWS
 	result = strings.Join(trimmed, "\n\n")
 	if estimateTokens(result) <= maxTokens {
 		return result
@@ -321,6 +385,160 @@ func (c *Composer) truncateTier1(parts []string, maxTokens int) string {
 		}
 	}
 	return strings.Join(trimmed2, "\n\n")
+}
+
+// shrinkFactsPart drops trailing facts (lowest-scored — selection emits them
+// in score order) from a "Key facts: a. b. c." section until roughly
+// overhead tokens are saved. Returns ok=false when nothing survives.
+func shrinkFactsPart(part string, overhead int) (string, bool) {
+	body := strings.TrimSuffix(strings.TrimPrefix(part, "Key facts: "), ".")
+	facts := strings.Split(body, ". ")
+	saved := 0
+	for len(facts) > 0 && saved < overhead {
+		last := facts[len(facts)-1]
+		saved += estimateTokens(last) + 1
+		facts = facts[:len(facts)-1]
+	}
+	if len(facts) == 0 {
+		return "", false
+	}
+	return "Key facts: " + strings.Join(facts, ". ") + ".", true
+}
+
+// coreMemoryBudget returns the token budget for the scored fact set.
+func (c *Composer) coreMemoryBudget() int {
+	b := c.cfg.Options.Prompts.MaxCoreMemoryTokens
+	if b <= 0 {
+		b = 350
+	}
+	return b
+}
+
+// coreFactCandidateLimit bounds the scoring scan. Facts are short rows; a few
+// hundred candidates cover any realistic active set while keeping the
+// per-turn query cheap and index-friendly.
+const coreFactCandidateLimit = 200
+
+// loadCoreFacts selects the always-in-context fact set by score rather than
+// recency alone. A fact earns its place through any mix of:
+//
+//   - being pinned by the user (absolute priority),
+//   - importance (explicitly stated facts carry higher salience),
+//   - usage frequency (facts that keep getting retrieved or re-asserted), and
+//   - recency of confirmation (a statement from January should not outrank
+//     one from yesterday just because both exist).
+//
+// The score is computed in Go — the decay and log terms have no SQLite
+// built-ins — over an indexed candidate query, and the winners fill a fixed
+// token budget so the core layer is cheap and predictable every turn.
+func (c *Composer) loadCoreFacts(ctx context.Context, budgetTokens int) []string {
+	if c.db == nil {
+		return nil
+	}
+
+	// pinned DESC first: pinned facts are exactly the ones that are old and
+	// never re-asserted, so they must never age out of the candidate window
+	// as active-fact volume grows. id DESC breaks same-second timestamp ties
+	// deterministically.
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT fact, importance, access_count, pinned, extracted_at, COALESCE(last_accessed, '')
+		 FROM key_facts WHERE status = 'active'
+		 ORDER BY pinned DESC, extracted_at DESC, id DESC LIMIT ?`, coreFactCandidateLimit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	type scored struct {
+		fact  string
+		score float64
+	}
+	var candidates []scored
+	now := time.Now().UTC()
+	for rows.Next() {
+		var fact, extractedAt, lastAccessed string
+		var importance, accessCount, pinned int
+		if err := rows.Scan(&fact, &importance, &accessCount, &pinned, &extractedAt, &lastAccessed); err != nil {
+			continue
+		}
+		candidates = append(candidates, scored{
+			fact:  fact,
+			score: coreFactScore(now, importance, accessCount, pinned != 0, extractedAt, lastAccessed),
+		})
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].score > candidates[j].score })
+
+	// Fill the budget skipping facts that don't fit — one oversized
+	// top-scored fact must not starve the whole layer. The header and
+	// trailing period the caller adds are charged up front.
+	var out []string
+	used := estimateTokens("Key facts: .")
+	for _, cand := range candidates {
+		cost := estimateTokens(cand.fact) + 1 // +1 for the joining separator
+		if used+cost > budgetTokens {
+			continue
+		}
+		out = append(out, cand.fact)
+		used += cost
+	}
+	return out
+}
+
+// Core-memory scoring weights. Importance dominates (a fact the user cares
+// about beats a fact that is merely recent), recency second (beliefs go
+// stale), frequency third (habitual relevance).
+const (
+	coreWeightImportance = 0.40
+	coreWeightRecency    = 0.35
+	coreWeightFrequency  = 0.25
+	coreRecencyHalfLife  = 90 * 24 * time.Hour
+)
+
+// coreFactScore combines the promotion signals into one [0,1]-ish score;
+// pinned facts get an absolute offset that no unpinned combination reaches.
+func coreFactScore(now time.Time, importance, accessCount int, pinned bool, extractedAt, lastAccessed string) float64 {
+	// Recency counts from the latest confirmation — extraction or last use.
+	newest := parseFactTime(extractedAt)
+	if la := parseFactTime(lastAccessed); la.After(newest) {
+		newest = la
+	}
+	recency := 0.0
+	if !newest.IsZero() {
+		age := now.Sub(newest)
+		if age < 0 {
+			age = 0
+		}
+		recency = math.Pow(0.5, float64(age)/float64(coreRecencyHalfLife))
+	}
+
+	// log1p(access)/log1p(100): 0 uses → 0, ~10 uses → ~0.52, 100+ → 1.
+	frequency := math.Log1p(float64(accessCount)) / math.Log1p(100)
+	if frequency > 1 {
+		frequency = 1
+	}
+
+	score := coreWeightImportance*(float64(importance)/10.0) +
+		coreWeightRecency*recency +
+		coreWeightFrequency*frequency
+	if pinned {
+		score += 10 // absolute priority over any unpinned score
+	}
+	return score
+}
+
+// parseFactTime parses the stored RFC3339 / SQLite datetime formats,
+// returning the zero time on failure.
+func parseFactTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // loadKeyFacts loads the most recent key facts from the database.
