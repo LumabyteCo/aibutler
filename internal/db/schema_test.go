@@ -83,6 +83,13 @@ var expectedTables = []string{
 	"missions",
 	"mission_steps",
 	"mission_events",
+	// Migration 022: Memory quality, measured learning, checkpoints
+	"memory_conflicts",
+	"agent_proposals",
+	"eval_runs",
+	"eval_results",
+	"agent_changes",
+	"checkpoints",
 	// Tables from core migrations not previously listed
 	"oauth_tokens",
 	"agent_registry",
@@ -123,8 +130,8 @@ func TestSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schema version: %v", err)
 	}
-	if version != 21 {
-		t.Errorf("schema version = %d, want 21", version)
+	if version != 22 {
+		t.Errorf("schema version = %d, want 22", version)
 	}
 }
 
