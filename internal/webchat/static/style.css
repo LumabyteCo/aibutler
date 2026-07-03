@@ -358,3 +358,10 @@ body.dark .mission-state-waiting_user{background:#2a1f0d;color:#e90}
 body.dark .mission-state-completed{background:#0d1f2a;color:#69b}
 body.dark .mission-state-failed{background:#2a0d0d;color:#d77}
 body.dark .mission-state-cancelled{background:#1a1a1a;color:#777}
+
+/* ============ Memories panel: fact actions ============ */
+.hidden{display:none}
+.fact-actions{display:flex;gap:12px;margin-top:6px}
+.fact-actions .linklike{font-size:.85em}
+.linklike.danger{color:#c0392b}
+body.dark .linklike.danger{color:#e57373}

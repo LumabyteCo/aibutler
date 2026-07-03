@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/LumabyteCo/aibutler/internal/memory"
 )
 
 // AgentRecord is a local copy of the registry record to avoid import cycles.
@@ -80,6 +82,8 @@ type Dashboard struct {
 	db         *sql.DB
 	registry   RegistryBrowser
 	swarmStore SwarmStore
+	facts      *memory.Store // optional; enables Memories panel fact actions
+	auditor    AccessLogger  // optional; mirrors panel mutations to the audit trail
 }
 
 // New creates a Dashboard.
@@ -108,6 +112,9 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("/api/dashboard/agents/tree/", d.handleAgentTree)
 	mux.HandleFunc("/api/dashboard/ai/usage", d.handleAIUsage)
 	mux.HandleFunc("/api/dashboard/ai/providers", d.handleAIProviders)
+
+	// Memories panel fact-quality actions (list/correct/forget/pin/conflicts).
+	d.registerFactRoutes(mux)
 
 	// Enhanced dashboard routes.
 	d.RegisterEnhancedRoutes(mux)

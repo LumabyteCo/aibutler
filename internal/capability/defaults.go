@@ -11,6 +11,9 @@ func TerminalDefaults() []Capability {
 		{Resource: "tool.web.search", AuditLevel: AuditSummary},
 		{Resource: "memory.read", AuditLevel: AuditNone},
 		{Resource: "memory.write", AuditLevel: AuditNone},
+		// Deletion is irreversible, so it always leaves a full audit trail.
+		// The terminal prompter additionally confirms it like other write tools.
+		{Resource: "memory.forget", AuditLevel: AuditFull},
 		{Resource: "tool.shell.exec", AuditLevel: AuditFull},
 		{Resource: "agent.delegate", AuditLevel: AuditSummary},
 	}
@@ -28,6 +31,10 @@ func MessagingDefaults() []Capability {
 		{Resource: "tool.web.fetch", RateLimit: &RateLimit{MaxCalls: 10, Window: time.Minute}, AuditLevel: AuditFull},
 		{Resource: "memory.read", AuditLevel: AuditNone},
 		{Resource: "memory.write", AuditLevel: AuditSummary},
+		// Deletion over a messaging channel requires an explicit yes from the
+		// user in-channel before it executes, and is always fully audited —
+		// it is irreversible and cascades to derived data.
+		{Resource: "memory.forget", RequiresConfirmation: true, AuditLevel: AuditFull},
 		{Resource: "schedule.manage", AuditLevel: AuditFull},
 		{Resource: "tool.shell.exec", AuditLevel: AuditFull},
 		{Resource: "data.tasks.read", AuditLevel: AuditNone},

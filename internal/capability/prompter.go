@@ -151,7 +151,7 @@ func isWriteTool(name string) bool {
 		"reminder.set", "reminder.cancel",
 		"habit.create", "habit.log",
 		"place.save", "place.update", "place.delete",
-		"memory.capture",
+		"memory.capture", "memory.forget",
 		"instruction.save", "instruction.update", "instruction.remove",
 		"shell.exec",
 		"git.commit", "git.branch", "git.pr_create",
