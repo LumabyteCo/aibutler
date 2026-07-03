@@ -14,6 +14,10 @@ func TerminalDefaults() []Capability {
 		// Deletion is irreversible, so it always leaves a full audit trail.
 		// The terminal prompter additionally confirms it like other write tools.
 		{Resource: "memory.forget", AuditLevel: AuditFull},
+		// Checkpoint inspection is read-only; restore rewrites files, so it
+		// audits fully and the terminal prompter confirms it like a write.
+		{Resource: "tool.checkpoint.read", AuditLevel: AuditNone},
+		{Resource: "tool.checkpoint.restore", AuditLevel: AuditFull},
 		{Resource: "tool.shell.exec", AuditLevel: AuditFull},
 		{Resource: "agent.delegate", AuditLevel: AuditSummary},
 	}
@@ -50,6 +54,10 @@ func MessagingDefaults() []Capability {
 		{Resource: "tool.file.read", AuditLevel: AuditSummary},
 		{Resource: "tool.file.write", AuditLevel: AuditFull},
 		{Resource: "tool.file.edit", AuditLevel: AuditFull},
+		// Restoring a checkpoint rewrites a file — over messaging it needs an
+		// explicit in-channel yes, like deletion.
+		{Resource: "tool.checkpoint.read", AuditLevel: AuditSummary},
+		{Resource: "tool.checkpoint.restore", RequiresConfirmation: true, AuditLevel: AuditFull},
 		// Git read is granted by default. Write (commit/push/branch switches)
 		// is intentionally NOT in the default set — every destructive git op
 		// must be explicitly granted via config.

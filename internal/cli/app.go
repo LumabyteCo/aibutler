@@ -19,53 +19,83 @@ import (
 	a11ypkg "github.com/LumabyteCo/aibutler/internal/accessibility"
 	"github.com/LumabyteCo/aibutler/internal/action"
 	"github.com/LumabyteCo/aibutler/internal/agent"
-	desktoppkg "github.com/LumabyteCo/aibutler/internal/desktop"
+	busp "github.com/LumabyteCo/aibutler/internal/agent/bus"
+	missionruntimepkg "github.com/LumabyteCo/aibutler/internal/agent/missionruntime"
+	batchpkg "github.com/LumabyteCo/aibutler/internal/ai/batch"
+	designpkg "github.com/LumabyteCo/aibutler/internal/ai/design"
+	threedpkg "github.com/LumabyteCo/aibutler/internal/ai/threed"
+	workflowpkg "github.com/LumabyteCo/aibutler/internal/ai/workflow"
 	"github.com/LumabyteCo/aibutler/internal/audit"
+	oidcpkg "github.com/LumabyteCo/aibutler/internal/auth/oidc"
+	webauthnpkg "github.com/LumabyteCo/aibutler/internal/auth/webauthn"
 	"github.com/LumabyteCo/aibutler/internal/backup"
+	incrementalpkg "github.com/LumabyteCo/aibutler/internal/backup/incremental"
+	remotebackup "github.com/LumabyteCo/aibutler/internal/backup/remote"
+	subprocpkg "github.com/LumabyteCo/aibutler/internal/bridge/subprocess"
 	"github.com/LumabyteCo/aibutler/internal/browser"
+	cachepkg "github.com/LumabyteCo/aibutler/internal/cache"
+	calpkg "github.com/LumabyteCo/aibutler/internal/calendar"
 	"github.com/LumabyteCo/aibutler/internal/capability"
 	"github.com/LumabyteCo/aibutler/internal/channel"
+	gchatpkg "github.com/LumabyteCo/aibutler/internal/channel/gchat"
+	ircpkg "github.com/LumabyteCo/aibutler/internal/channel/irc"
+	linepkg "github.com/LumabyteCo/aibutler/internal/channel/line"
+	nostrpkg "github.com/LumabyteCo/aibutler/internal/channel/nostr"
+	teamspkg "github.com/LumabyteCo/aibutler/internal/channel/teams"
+	webhookpkg "github.com/LumabyteCo/aibutler/internal/channel/webhook"
 	wapkg "github.com/LumabyteCo/aibutler/internal/channel/whatsapp"
+	checkpointpkg "github.com/LumabyteCo/aibutler/internal/checkpoint"
 	clippkg "github.com/LumabyteCo/aibutler/internal/clipboard"
-	costpkg "github.com/LumabyteCo/aibutler/internal/cost"
-	permpkg "github.com/LumabyteCo/aibutler/internal/permissions"
-	waitpkg "github.com/LumabyteCo/aibutler/internal/wait"
+	"github.com/LumabyteCo/aibutler/internal/coding"
+	compliancepkg "github.com/LumabyteCo/aibutler/internal/compliance"
 	"github.com/LumabyteCo/aibutler/internal/config"
 	"github.com/LumabyteCo/aibutler/internal/contact"
+	costpkg "github.com/LumabyteCo/aibutler/internal/cost"
 	"github.com/LumabyteCo/aibutler/internal/db"
+	desktoppkg "github.com/LumabyteCo/aibutler/internal/desktop"
 	"github.com/LumabyteCo/aibutler/internal/discord"
+	emailpkg "github.com/LumabyteCo/aibutler/internal/email"
 	"github.com/LumabyteCo/aibutler/internal/file"
 	"github.com/LumabyteCo/aibutler/internal/finance"
+	gitpkg "github.com/LumabyteCo/aibutler/internal/git"
 	"github.com/LumabyteCo/aibutler/internal/health"
+	"github.com/LumabyteCo/aibutler/internal/hook"
 	"github.com/LumabyteCo/aibutler/internal/instruction"
 	"github.com/LumabyteCo/aibutler/internal/iot"
+	"github.com/LumabyteCo/aibutler/internal/mcp"
+	mcpserver "github.com/LumabyteCo/aibutler/internal/mcp/server"
+	mcpserverv2 "github.com/LumabyteCo/aibutler/internal/mcp/server_v2"
+	"github.com/LumabyteCo/aibutler/internal/media"
 	"github.com/LumabyteCo/aibutler/internal/media/archive"
 	mediacontact "github.com/LumabyteCo/aibutler/internal/media/contact"
 	"github.com/LumabyteCo/aibutler/internal/media/spreadsheet"
-	"github.com/LumabyteCo/aibutler/internal/mcp"
-	"github.com/LumabyteCo/aibutler/internal/media"
+	videopkg "github.com/LumabyteCo/aibutler/internal/media/video"
 	"github.com/LumabyteCo/aibutler/internal/memory"
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
 	"github.com/LumabyteCo/aibutler/internal/memory/fts"
 	"github.com/LumabyteCo/aibutler/internal/memory/graph"
 	"github.com/LumabyteCo/aibutler/internal/memory/hybrid"
+	swarmws "github.com/LumabyteCo/aibutler/internal/memory/swarm"
 	"github.com/LumabyteCo/aibutler/internal/memory/vector"
-	busp "github.com/LumabyteCo/aibutler/internal/agent/bus"
-	missionruntimepkg "github.com/LumabyteCo/aibutler/internal/agent/missionruntime"
 	missionpkg "github.com/LumabyteCo/aibutler/internal/mission"
+	"github.com/LumabyteCo/aibutler/internal/model"
 	"github.com/LumabyteCo/aibutler/internal/offline"
-	mcpserver "github.com/LumabyteCo/aibutler/internal/mcp/server"
+	permpkg "github.com/LumabyteCo/aibutler/internal/permissions"
 	pluginpkg "github.com/LumabyteCo/aibutler/internal/plugin"
+	marketplacepkg "github.com/LumabyteCo/aibutler/internal/plugin/marketplace"
 	"github.com/LumabyteCo/aibutler/internal/plugin/registry"
+	rescanpkg "github.com/LumabyteCo/aibutler/internal/plugin/rescan"
+	"github.com/LumabyteCo/aibutler/internal/plugin/sandbox"
+	"github.com/LumabyteCo/aibutler/internal/plugin/scanner"
+	pluginstore "github.com/LumabyteCo/aibutler/internal/plugin/store"
+	"github.com/LumabyteCo/aibutler/internal/prompt"
 	"github.com/LumabyteCo/aibutler/internal/protocol/a2a"
 	a2aregistry "github.com/LumabyteCo/aibutler/internal/protocol/a2a/registry"
-	swarmws "github.com/LumabyteCo/aibutler/internal/memory/swarm"
-	oauth "github.com/LumabyteCo/aibutler/internal/proxy/oauth"
-	emailpkg "github.com/LumabyteCo/aibutler/internal/email"
-	calpkg "github.com/LumabyteCo/aibutler/internal/calendar"
-	"github.com/LumabyteCo/aibutler/internal/prompt"
 	"github.com/LumabyteCo/aibutler/internal/proxy"
+	oauth "github.com/LumabyteCo/aibutler/internal/proxy/oauth"
+	rbacpkg "github.com/LumabyteCo/aibutler/internal/rbac"
 	"github.com/LumabyteCo/aibutler/internal/schedule"
+	secmonpkg "github.com/LumabyteCo/aibutler/internal/security/monitor"
 	"github.com/LumabyteCo/aibutler/internal/services"
 	"github.com/LumabyteCo/aibutler/internal/session"
 	"github.com/LumabyteCo/aibutler/internal/shell"
@@ -73,108 +103,82 @@ import (
 	dbuspkg "github.com/LumabyteCo/aibutler/internal/shell/dbus"
 	dispatchpkg "github.com/LumabyteCo/aibutler/internal/shell/dispatch"
 	pspkg "github.com/LumabyteCo/aibutler/internal/shell/powershell"
+	shellsandbox "github.com/LumabyteCo/aibutler/internal/shell/sandbox"
 	scutpkg "github.com/LumabyteCo/aibutler/internal/shell/shortcuts"
 	"github.com/LumabyteCo/aibutler/internal/slack"
 	"github.com/LumabyteCo/aibutler/internal/taskctx"
 	"github.com/LumabyteCo/aibutler/internal/telegram"
 	"github.com/LumabyteCo/aibutler/internal/telemetry"
 	"github.com/LumabyteCo/aibutler/internal/tool"
+	txpkg "github.com/LumabyteCo/aibutler/internal/transaction"
+	"github.com/LumabyteCo/aibutler/internal/updater"
 	"github.com/LumabyteCo/aibutler/internal/vault"
 	"github.com/LumabyteCo/aibutler/internal/voice"
 	"github.com/LumabyteCo/aibutler/internal/voice/deepgram"
 	"github.com/LumabyteCo/aibutler/internal/voice/elevenlabs"
 	"github.com/LumabyteCo/aibutler/internal/voice/piper"
+	waitpkg "github.com/LumabyteCo/aibutler/internal/wait"
 	"github.com/LumabyteCo/aibutler/internal/webchat"
+	authpkg "github.com/LumabyteCo/aibutler/internal/webchat/auth"
 	"github.com/LumabyteCo/aibutler/internal/webchat/dashboard"
 	"github.com/LumabyteCo/aibutler/internal/webchat/lan"
-	"github.com/LumabyteCo/aibutler/internal/webchat/setup"
-	"github.com/LumabyteCo/aibutler/internal/updater"
-	"github.com/LumabyteCo/aibutler/internal/coding"
-	"github.com/LumabyteCo/aibutler/internal/plugin/scanner"
-	"github.com/LumabyteCo/aibutler/internal/plugin/sandbox"
-	incrementalpkg "github.com/LumabyteCo/aibutler/internal/backup/incremental"
-	"github.com/LumabyteCo/aibutler/internal/hook"
-	gitpkg "github.com/LumabyteCo/aibutler/internal/git"
-	linepkg "github.com/LumabyteCo/aibutler/internal/channel/line"
-	ircpkg "github.com/LumabyteCo/aibutler/internal/channel/irc"
-	teamspkg "github.com/LumabyteCo/aibutler/internal/channel/teams"
-	gchatpkg "github.com/LumabyteCo/aibutler/internal/channel/gchat"
-	webhookpkg "github.com/LumabyteCo/aibutler/internal/channel/webhook"
-	nostrpkg "github.com/LumabyteCo/aibutler/internal/channel/nostr"
-	videopkg "github.com/LumabyteCo/aibutler/internal/media/video"
-	txpkg "github.com/LumabyteCo/aibutler/internal/transaction"
-	designpkg "github.com/LumabyteCo/aibutler/internal/ai/design"
-	threedpkg "github.com/LumabyteCo/aibutler/internal/ai/threed"
-	workflowpkg "github.com/LumabyteCo/aibutler/internal/ai/workflow"
-	batchpkg "github.com/LumabyteCo/aibutler/internal/ai/batch"
-	authpkg "github.com/LumabyteCo/aibutler/internal/webchat/auth"
 	pwapkg "github.com/LumabyteCo/aibutler/internal/webchat/pwa"
-	rescanpkg "github.com/LumabyteCo/aibutler/internal/plugin/rescan"
-	webauthnpkg "github.com/LumabyteCo/aibutler/internal/auth/webauthn"
-	secmonpkg "github.com/LumabyteCo/aibutler/internal/security/monitor"
-	cachepkg "github.com/LumabyteCo/aibutler/internal/cache"
-	rbacpkg "github.com/LumabyteCo/aibutler/internal/rbac"
-	oidcpkg "github.com/LumabyteCo/aibutler/internal/auth/oidc"
-	compliancepkg "github.com/LumabyteCo/aibutler/internal/compliance"
-	mcpserverv2 "github.com/LumabyteCo/aibutler/internal/mcp/server_v2"
-	subprocpkg "github.com/LumabyteCo/aibutler/internal/bridge/subprocess"
 	qrpkg "github.com/LumabyteCo/aibutler/internal/webchat/qr"
-	marketplacepkg "github.com/LumabyteCo/aibutler/internal/plugin/marketplace"
-	"github.com/LumabyteCo/aibutler/internal/model"
-	shellsandbox "github.com/LumabyteCo/aibutler/internal/shell/sandbox"
-	pluginstore "github.com/LumabyteCo/aibutler/internal/plugin/store"
-	remotebackup "github.com/LumabyteCo/aibutler/internal/backup/remote"
+	"github.com/LumabyteCo/aibutler/internal/webchat/setup"
 )
 
 const Version = "0.1.0"
 
 // App is the central application struct that wires all internal packages together.
 type App struct {
-	Config         *config.Config
-	DB             *db.DB
-	Vault          vault.Vault
-	Engine         *capability.Engine
-	Channels       *channel.Registry
-	Tools          *tool.Registry
-	Sessions       *session.Manager
-	Composer       *prompt.Composer
-	Tracker        *prompt.Tracker
-	Dispatcher     *tool.Dispatcher
-	Scheduler      *schedule.Scheduler
-	MCPClient      *mcp.Client
-	Telemetry      *telemetry.Collector
-	Offline        *offline.Guard
-	MediaPipeline  *media.Pipeline
-	Voice          *voice.Pipeline
-	Lifecycle      *vault.TokenLifecycleManager
-	HybridSearcher *hybrid.Searcher
-	VectorStore    *vector.Store
-	MemStore       *memory.Store
-	EntityStore    *entity.Store
-	PluginRuntime  pluginpkg.Runtime
-	PluginRegistry *registry.Registry
-	MCPServer      *mcpserver.Server
-	A2AHandler     *a2a.Handler
-	AgentRegistry  *a2aregistry.Registry
-	SwarmWorkspace *swarmws.Workspace
-	OAuthStore     *oauth.Store
-	EmailClient    *emailpkg.Client
-	CalClient      *calpkg.Client
+	Config          *config.Config
+	DB              *db.DB
+	Vault           vault.Vault
+	Engine          *capability.Engine
+	Channels        *channel.Registry
+	Tools           *tool.Registry
+	Sessions        *session.Manager
+	Composer        *prompt.Composer
+	Tracker         *prompt.Tracker
+	Dispatcher      *tool.Dispatcher
+	Scheduler       *schedule.Scheduler
+	MCPClient       *mcp.Client
+	Telemetry       *telemetry.Collector
+	Offline         *offline.Guard
+	MediaPipeline   *media.Pipeline
+	Voice           *voice.Pipeline
+	Lifecycle       *vault.TokenLifecycleManager
+	HybridSearcher  *hybrid.Searcher
+	VectorStore     *vector.Store
+	MemStore        *memory.Store
+	EntityStore     *entity.Store
+	CheckpointStore *checkpointpkg.Store
+	// checkpointJanitorStop halts the retention goroutine on shutdown.
+	checkpointJanitorStop func()
+	PluginRuntime         pluginpkg.Runtime
+	PluginRegistry        *registry.Registry
+	MCPServer             *mcpserver.Server
+	A2AHandler            *a2a.Handler
+	AgentRegistry         *a2aregistry.Registry
+	SwarmWorkspace        *swarmws.Workspace
+	OAuthStore            *oauth.Store
+	EmailClient           *emailpkg.Client
+	CalClient             *calpkg.Client
 
 	// Channels, Media, Voice + Agent Mesh
-	WhatsApp       *wapkg.Client
-	BrowserClient  *browser.Client
-	BrowserChrome  *browser.ChromeClient
-	ElevenLabs     *elevenlabs.Client
-	Deepgram       *deepgram.Client
-	Piper          *piper.Executor
+	WhatsApp      *wapkg.Client
+	BrowserClient *browser.Client
+	BrowserChrome *browser.ChromeClient
+	ElevenLabs    *elevenlabs.Client
+	Deepgram      *deepgram.Client
+	Piper         *piper.Executor
 
 	// Platform, UX & Swarm Dashboard
-	Dashboard      *dashboard.Dashboard
-	LANDiscovery   *lan.Discovery
-	SetupWizard    *setup.Wizard
-	Updater        *updater.Updater
-	CodingRunner   *coding.Runner
+	Dashboard    *dashboard.Dashboard
+	LANDiscovery *lan.Discovery
+	SetupWizard  *setup.Wizard
+	Updater      *updater.Updater
+	CodingRunner *coding.Runner
 
 	// Hardening, Polish + Swarm Safety
 	PluginScanner     *scanner.Scanner
@@ -182,17 +186,17 @@ type App struct {
 	IncrementalBackup *incrementalpkg.Manager
 
 	// Hook Engine, Git, Permissions
-	HookEngine        *hook.Engine
-	GitClient         *gitpkg.Client
-	Prompter          *capability.InteractivePrompter
+	HookEngine *hook.Engine
+	GitClient  *gitpkg.Client
+	Prompter   *capability.InteractivePrompter
 
 	// Channels, Browser Interactive, Video, Voice Enhancements
-	LINEClient        *linepkg.Client
-	IRCClient         *ircpkg.Client
+	LINEClient         *linepkg.Client
+	IRCClient          *ircpkg.Client
 	InteractiveBrowser *browser.InteractiveClient
-	VideoProcessor    *videopkg.Processor
-	TUIVoice          *voice.TUIMode
-	WakeWord          *voice.WakeWordDetector
+	VideoProcessor     *videopkg.Processor
+	TUIVoice           *voice.TUIMode
+	WakeWord           *voice.WakeWordDetector
 
 	// Channels — Teams, Google Chat, Webhook & Nostr
 	TeamsClient    *teamspkg.Client
@@ -204,12 +208,12 @@ type App struct {
 	TransactionEngine *txpkg.Engine
 
 	// Advanced Security (WebAuthn, Monitoring)
-	WebAuthnServer   *webauthnpkg.Server
-	SecurityMonitor  *secmonpkg.Monitor
+	WebAuthnServer  *webauthnpkg.Server
+	SecurityMonitor *secmonpkg.Monitor
 
 	// Multi-Agent (stored for swarm mode access)
-	AgentRouter      interface{} // *router.Router when swarm mode active
-	MessageBus       interface{} // *bus.Bus when swarm mode active
+	AgentRouter interface{} // *router.Router when swarm mode active
+	MessageBus  interface{} // *bus.Bus when swarm mode active
 
 	// Mission runtime — populated unconditionally; only Started when
 	// AgentMode == "mission". MissionRuntimeEnabled records the user's
@@ -219,13 +223,13 @@ type App struct {
 	MissionRuntimeEnabled bool
 
 	// Orphan fixes (Pass 10): previously built but never wired
-	ShellSandbox     *shellsandbox.Sandbox
-	PluginKVStore    *pluginstore.Store
-	RemoteBackup     *remotebackup.Client
+	ShellSandbox  *shellsandbox.Sandbox
+	PluginKVStore *pluginstore.Store
+	RemoteBackup  *remotebackup.Client
 
 	// Web App (Internet Mode, PWA, Dashboard)
-	Authenticator    *authpkg.Authenticator
-	PluginRescanner  *rescanpkg.Rescanner
+	Authenticator   *authpkg.Authenticator
+	PluginRescanner *rescanpkg.Rescanner
 
 	// Wired services
 	ResponseCache    *cachepkg.Cache
@@ -235,10 +239,10 @@ type App struct {
 	MCPServerV2      *mcpserverv2.Server
 	// MCPAgentAdapter is exported so cmd_run can inject the agent factory
 	// after it's constructed (the factory doesn't exist at app.New time).
-	MCPAgentAdapter *mcpV2AgentAdapter
+	MCPAgentAdapter   *mcpV2AgentAdapter
 	SubprocessBridges map[string]*subprocpkg.Adapter
-	Marketplace      *marketplacepkg.Registry
-	BatchExecutor    *model.BatchExecutor
+	Marketplace       *marketplacepkg.Registry
+	BatchExecutor     *model.BatchExecutor
 
 	configPath     string
 	dataDir        string
@@ -411,7 +415,7 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		app.Tools.Register(&tool.FuncTool{
 			ToolName: "market.price", ToolDesc: "Get stock/crypto prices (requires API key)",
 			ToolSchema: `{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}`,
-			ToolCap: "data.finance.read",
+			ToolCap:    "data.finance.read",
 			Exec: func(_ context.Context, _ string) (string, error) {
 				return "", fmt.Errorf("finance tools not configured. Run: aibutler vault set alphavantage_api_key YOUR_KEY")
 			},
@@ -1014,18 +1018,36 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	app.Dispatcher = tool.NewDispatcher(app.Tools, app.Engine, auditor)
 
 	// 6l. Hook engine.
-	if len(cfg.Configurations.Hooks.PreToolUse) > 0 || len(cfg.Configurations.Hooks.PostToolUse) > 0 {
+	verifyHooks := expandVerifyHook(cfg.Configurations.Hooks.Verify)
+	if len(cfg.Configurations.Hooks.PreToolUse) > 0 || len(cfg.Configurations.Hooks.PostToolUse) > 0 || len(verifyHooks) > 0 {
 		preHooks := make([]hook.HookConfig, len(cfg.Configurations.Hooks.PreToolUse))
 		for i, h := range cfg.Configurations.Hooks.PreToolUse {
 			preHooks[i] = hook.HookConfig{Command: h.Command, Tools: h.Tools}
 		}
-		postHooks := make([]hook.HookConfig, len(cfg.Configurations.Hooks.PostToolUse))
-		for i, h := range cfg.Configurations.Hooks.PostToolUse {
-			postHooks[i] = hook.HookConfig{Command: h.Command, Tools: h.Tools}
+		postHooks := make([]hook.HookConfig, 0, len(cfg.Configurations.Hooks.PostToolUse)+len(verifyHooks))
+		for _, h := range cfg.Configurations.Hooks.PostToolUse {
+			postHooks = append(postHooks, hook.HookConfig{Command: h.Command, Tools: h.Tools})
 		}
+		postHooks = append(postHooks, verifyHooks...)
 		app.HookEngine = hook.New(preHooks, postHooks)
 		app.Dispatcher.SetHookEngine(hook.NewHookRunnerAdapter(app.HookEngine))
 	}
+
+	// 6l2. Pre-mutation checkpoints: file-mutating tools get their targets
+	// snapshotted before execution so any agent change can be undone.
+	// Restore re-validates against the same roots the file tools enforce.
+	checkpointStore := checkpointpkg.New(database.Conn(),
+		filepath.Join(dataDir, "checkpoints"),
+		func(path string) error { return file.CheckPathBoundary(path, filePaths) })
+	checkpointpkg.RegisterCheckpointTools(app.Tools, checkpointStore)
+	app.CheckpointStore = checkpointStore
+	app.Dispatcher.SetCheckpointer(checkpointStore)
+	// Retention: pre-images are full file copies — without a janitor they
+	// grow without bound in a long-running daemon (and flow into backups).
+	app.checkpointJanitorStop = checkpointStore.StartJanitor(30*24*time.Hour, 12*time.Hour)
+
+	// 6l3. Repeat-call circuit breaker (identical-call loop guard).
+	app.Dispatcher.SetRepeatCallLimit(cfg.Options.Agents.RepeatCallLimit)
 
 	// 6m. Git tools.
 	cwd, _ := os.Getwd()
@@ -1314,6 +1336,9 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 
 // Shutdown cleans up all resources.
 func (a *App) Shutdown() {
+	if a.checkpointJanitorStop != nil {
+		a.checkpointJanitorStop()
+	}
 	if a.PluginRescanner != nil {
 		a.PluginRescanner.Stop()
 	}

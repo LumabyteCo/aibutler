@@ -126,11 +126,22 @@ func (t *fileReadTool) Execute(_ context.Context, input string) (string, error) 
 
 type fileWriteTool struct{ allowed []string }
 
-func (t *fileWriteTool) Name() string        { return "file.write" }
-func (t *fileWriteTool) Description() string { return "Write content to a file (creates or overwrites)" }
-func (t *fileWriteTool) Capability() string  { return "tool.file.write" }
+func (t *fileWriteTool) Name() string { return "file.write" }
+func (t *fileWriteTool) Description() string {
+	return "Write content to a file (creates or overwrites)"
+}
+func (t *fileWriteTool) Capability() string { return "tool.file.write" }
 func (t *fileWriteTool) Schema() string {
 	return `{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`
+}
+
+// MutatesPaths declares the file this call would change, so the dispatcher
+// checkpoints its pre-image before execution. The checkpoint layer validates
+// the path against the allowed roots itself, before reading anything — one
+// authoritative check, so the verdict can't be evaluated twice with a
+// time-of-check gap in between.
+func (t *fileWriteTool) MutatesPaths(input string) []string {
+	return mutationTarget(input)
 }
 
 func (t *fileWriteTool) Execute(_ context.Context, input string) (string, error) {
@@ -166,6 +177,11 @@ func (t *fileEditTool) Description() string { return "Edit a file by replacing a
 func (t *fileEditTool) Capability() string  { return "tool.file.edit" }
 func (t *fileEditTool) Schema() string {
 	return `{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string","description":"Text to find"},"new":{"type":"string","description":"Replacement text"},"replace_all":{"type":"boolean"}},"required":["path","old","new"]}`
+}
+
+// MutatesPaths declares the file this call would change (see fileWriteTool).
+func (t *fileEditTool) MutatesPaths(input string) []string {
+	return mutationTarget(input)
 }
 
 func (t *fileEditTool) Execute(_ context.Context, input string) (string, error) {
@@ -205,6 +221,20 @@ func (t *fileEditTool) Execute(_ context.Context, input string) (string, error) 
 		return "", fmt.Errorf("file.edit: write: %w", err)
 	}
 	return fmt.Sprintf("Replaced %d occurrence(s) in %s", count, args.Path), nil
+}
+
+// mutationTarget extracts the path field from a write/edit input. Boundary
+// validation happens in the checkpoint layer (which fails the whole call on
+// a forbidden path) and again in Execute — declaring the raw path here keeps
+// exactly one authoritative pre-read check instead of two racy ones.
+func mutationTarget(input string) []string {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(input), &args); err != nil || args.Path == "" {
+		return nil
+	}
+	return []string{args.Path}
 }
 
 // --- file.list ---
@@ -271,9 +301,11 @@ func (t *fileListTool) Execute(_ context.Context, input string) (string, error) 
 
 type fileSearchTool struct{ allowed []string }
 
-func (t *fileSearchTool) Name() string        { return "file.search" }
-func (t *fileSearchTool) Description() string { return "Search for a string in files within a directory" }
-func (t *fileSearchTool) Capability() string  { return "tool.file.read" }
+func (t *fileSearchTool) Name() string { return "file.search" }
+func (t *fileSearchTool) Description() string {
+	return "Search for a string in files within a directory"
+}
+func (t *fileSearchTool) Capability() string { return "tool.file.read" }
 func (t *fileSearchTool) Schema() string {
 	return `{"type":"object","properties":{"path":{"type":"string","description":"Directory to search"},"query":{"type":"string","description":"Text to search for"},"pattern":{"type":"string","description":"Filename glob pattern"}},"required":["path","query"]}`
 }

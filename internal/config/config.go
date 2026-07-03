@@ -266,6 +266,17 @@ type HookEntry struct {
 type HooksConfig struct {
 	PreToolUse  []HookEntry `yaml:"pre_tool_use"`
 	PostToolUse []HookEntry `yaml:"post_tool_use"`
+	// Verify is shorthand for a post-tool verification hook: after the
+	// listed tools mutate files, the command runs (e.g. a lint or test
+	// invocation) and its findings are fed back into what the model sees —
+	// correction driven by real checker output, not self-assessment.
+	Verify VerifyHookConfig `yaml:"verify"`
+}
+
+// VerifyHookConfig configures the built-in post-mutation verification hook.
+type VerifyHookConfig struct {
+	Command string   `yaml:"command"` // checker to run; empty disables
+	Tools   []string `yaml:"tools"`   // tool patterns; default file.write, file.edit
 }
 
 // PermissionRuleConfig holds a single permission rule.
@@ -340,6 +351,7 @@ type AgentOptions struct {
 	L2AutoActions      []string      `yaml:"l2_auto_actions"`      // Tools auto-approved at L2
 	L2AskActions       []string      `yaml:"l2_ask_actions"`       // Tools requiring confirmation at L2
 	ParallelToolLimit  int           `yaml:"parallel_tool_limit"`  // Max concurrent tool calls in multi mode (default: 5)
+	RepeatCallLimit    int           `yaml:"repeat_call_limit"`    // Nth identical tool call within 10m gets an advisory instead of executing (default: 3, 0 = off)
 	PerUserAgentLimit  int           `yaml:"per_user_agent_limit"` // Max concurrent agents per user (default: 3)
 	L3TimeBound        time.Duration `yaml:"l3_time_bound"`        // L3 autonomy time limit (default: 30m, max: 24h)
 	L3SafetyActions    []string      `yaml:"l3_safety_actions"`    // Actions that always require confirmation even at L3
@@ -531,6 +543,7 @@ func Default() *Config {
 				BackgroundMax:     3,
 				AutonomyLevel:     "l1",
 				ParallelToolLimit: 5,
+				RepeatCallLimit:   3,
 			},
 			Prompts: PromptOptions{
 				MaxTier1Tokens:        700,
