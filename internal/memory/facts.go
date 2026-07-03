@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
@@ -412,18 +413,25 @@ func (s *Store) SetFactImportance(ctx context.Context, id int64, importance int)
 
 // TouchFactAccess bumps access tracking for facts that were retrieved into a
 // turn. Frequency of use is a promotion signal for the always-in-context
-// working set. Best-effort: callers ignore the error.
+// working set. One statement for the whole batch; callers treat errors as
+// best-effort.
 func (s *Store) TouchFactAccess(ctx context.Context, ids []int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]interface{}, 0, len(ids)+1)
+	args = append(args, now)
 	for _, id := range ids {
-		if _, err := s.db.ExecContext(ctx,
-			`UPDATE key_facts SET access_count = access_count + 1, last_accessed = ? WHERE id = ?`,
-			now, id); err != nil {
-			return fmt.Errorf("memory.touch_access: %w", err)
-		}
+		args = append(args, id)
+	}
+	// The query text varies only in the number of bound placeholders — ids
+	// are always parameters, never concatenated values.
+	q := `UPDATE key_facts SET access_count = access_count + 1, last_accessed = ? WHERE id IN (` + placeholders + `)`
+	if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+		return fmt.Errorf("memory.touch_access: %w", err)
 	}
 	return nil
 }

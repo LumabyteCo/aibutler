@@ -352,6 +352,12 @@ type PromptOptions struct {
 	SkillTriggerThreshold float64 `yaml:"skill_trigger_threshold"`
 	TruncationStrategy    string  `yaml:"truncation_strategy"`    // balanced | essential_only
 	MaxInstructionTokens  int     `yaml:"max_instruction_tokens"` // default: 200
+	// CoreMemorySelection picks how the always-in-context fact set is chosen:
+	// "scored" (default) ranks active facts by pinned flag, importance, usage
+	// frequency, and recency; "recency" is the legacy newest-first top-10.
+	CoreMemorySelection string `yaml:"core_memory_selection"`
+	// MaxCoreMemoryTokens bounds the scored fact set injected each turn.
+	MaxCoreMemoryTokens int `yaml:"max_core_memory_tokens"` // default: 350
 }
 
 // CostOptions holds cost tracking tuning.
@@ -532,6 +538,8 @@ func Default() *Config {
 				SkillTriggerThreshold: 0.5,
 				TruncationStrategy:    "balanced",
 				MaxInstructionTokens:  200,
+				CoreMemorySelection:   "scored",
+				MaxCoreMemoryTokens:   350,
 			},
 			Cost: CostOptions{
 				CacheTTL:           5 * time.Minute,
@@ -612,6 +620,14 @@ func (c *Config) Validate() error {
 		// ok
 	default:
 		return fmt.Errorf("config: invalid cost strategy %q (must be frugal, balanced, or quality)", c.Settings.Cost.Strategy)
+	}
+
+	// Core-memory selection mode must be a known strategy.
+	switch c.Options.Prompts.CoreMemorySelection {
+	case "", "scored", "recency":
+		// ok ("" = default applied later)
+	default:
+		return fmt.Errorf("config: invalid core_memory_selection %q (must be scored or recency)", c.Options.Prompts.CoreMemorySelection)
 	}
 
 	if c.Settings.Cost.MonthlyBudget < 0 {

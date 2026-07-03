@@ -159,6 +159,16 @@ func (t *factsTool) Execute(ctx context.Context, input string) (string, error) {
 		return "", err
 	}
 
+	// Retrieval is a promotion signal: facts the model actually pulls into
+	// turns earn frequency weight in core-memory selection. Best-effort.
+	if len(facts) > 0 {
+		ids := make([]int64, 0, len(facts))
+		for _, f := range facts {
+			ids = append(ids, f.ID)
+		}
+		_ = t.store.TouchFactAccess(ctx, ids)
+	}
+
 	data, _ := json.Marshal(facts)
 	return string(data), nil
 }

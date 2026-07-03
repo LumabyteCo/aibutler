@@ -387,8 +387,13 @@ func TestTouchFactAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// One retrieval event = one access, even if an id repeats in the batch;
+	// two separate retrievals count twice.
 	if err := store.TouchFactAccess(ctx, []int64{id, id}); err != nil {
-		t.Fatalf("touch: %v", err)
+		t.Fatalf("touch 1: %v", err)
+	}
+	if err := store.TouchFactAccess(ctx, []int64{id}); err != nil {
+		t.Fatalf("touch 2: %v", err)
 	}
 	var count int
 	var last string
