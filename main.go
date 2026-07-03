@@ -76,6 +76,10 @@ func main() {
 		runWithApp(func(app *cli.App) error {
 			return cli.CmdMemory(app, os.Args[2:], os.Stdout)
 		})
+	case "eval":
+		runWithApp(func(app *cli.App) error {
+			return cli.CmdEval(app, os.Args[2:], os.Stdout)
+		})
 	case "repl":
 		runWithApp(func(app *cli.App) error {
 			return cli.CmdRepl(app, os.Args[2:], os.Stdout)
