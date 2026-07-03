@@ -6,14 +6,16 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 )
 
 // SearchResult represents a single FTS5 search result.
 type SearchResult struct {
 	ID      int64   `json:"id"`
 	Content string  `json:"content"`
-	Rank    float64 `json:"rank"`    // BM25 relevance score (lower = more relevant)
-	Source  string  `json:"source"`  // "thought" or "transcript"
+	Rank    float64 `json:"rank"`   // BM25 relevance score (lower = more relevant)
+	Source  string  `json:"source"` // "thought" or "transcript"
 }
 
 // Store provides FTS5 search operations.
@@ -41,9 +43,9 @@ func (s *Store) SearchThoughts(ctx context.Context, query string, limit int) ([]
 		`SELECT ct.id, ct.content, rank
 		 FROM captured_thoughts_fts
 		 JOIN captured_thoughts ct ON ct.id = captured_thoughts_fts.rowid
-		 WHERE captured_thoughts_fts MATCH ?
+		 WHERE captured_thoughts_fts MATCH ? AND ct.bank = ?
 		 ORDER BY rank
-		 LIMIT ?`, ftsQuery, limit)
+		 LIMIT ?`, ftsQuery, bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil, fmt.Errorf("fts.search_thoughts: %w", err)
 	}
@@ -76,9 +78,9 @@ func (s *Store) SearchTranscripts(ctx context.Context, query string, limit int) 
 		`SELECT st.id, st.content, rank
 		 FROM session_transcripts_fts
 		 JOIN session_transcripts st ON st.id = session_transcripts_fts.rowid
-		 WHERE session_transcripts_fts MATCH ?
+		 WHERE session_transcripts_fts MATCH ? AND st.bank = ?
 		 ORDER BY rank
-		 LIMIT ?`, ftsQuery, limit)
+		 LIMIT ?`, ftsQuery, bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil, fmt.Errorf("fts.search_transcripts: %w", err)
 	}

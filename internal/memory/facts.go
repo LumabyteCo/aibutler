@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
 )
 
@@ -146,8 +147,8 @@ func (s *Store) SaveFact(ctx context.Context, in FactInput) (int64, error) {
 	if in.FactKey != "" {
 		err := tx.QueryRowContext(ctx,
 			`SELECT id, confidence FROM key_facts
-			 WHERE fact_key = ? AND status = ? LIMIT 1`,
-			in.FactKey, FactStatusActive).Scan(&oldID, &oldConfidence)
+			 WHERE fact_key = ? AND status = ? AND bank = ? LIMIT 1`,
+			in.FactKey, FactStatusActive, bank.FromContext(ctx)).Scan(&oldID, &oldConfidence)
 		switch {
 		case err == sql.ErrNoRows:
 			// no conflict
@@ -161,10 +162,10 @@ func (s *Store) SaveFact(ctx context.Context, in FactInput) (int64, error) {
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO key_facts
 		 (fact, category, source_session, extracted_at, fact_key, importance,
-		  confidence, source_type, source_id, status)
-		 VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?)`,
+		  confidence, source_type, source_id, status, bank)
+		 VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, ?)`,
 		in.Fact, in.Category, in.SourceSession, now, in.FactKey, in.Importance,
-		in.Confidence, in.SourceType, nullableID(in.SourceID), FactStatusActive)
+		in.Confidence, in.SourceType, nullableID(in.SourceID), FactStatusActive, bank.FromContext(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("memory.save_fact: insert: %w", err)
 	}
@@ -238,10 +239,13 @@ func (s *Store) CorrectFact(ctx context.Context, id int64, corrected string) (in
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO key_facts
 		 (fact, category, source_session, extracted_at, fact_key, importance,
-		  confidence, status, pinned)
-		 VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)`,
+		  confidence, status, pinned, bank)
+		 VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)`,
 		corrected, old.Category, old.SourceSession, now, old.FactKey,
-		importance, ConfidenceUserFixed, FactStatusActive, boolToInt(old.Pinned))
+		importance, ConfidenceUserFixed, FactStatusActive, boolToInt(old.Pinned),
+		// getFact above is bank-guarded, so the old fact IS the caller's
+		// bank; the correction stays in it.
+		bank.FromContext(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("memory.correct_fact: insert: %w", err)
 	}
@@ -256,8 +260,8 @@ func (s *Store) CorrectFact(ctx context.Context, id int64, corrected string) (in
 		// fact for the key regardless of how stale the caller's view was.
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE key_facts SET status = ?, superseded_by = ?
-			 WHERE fact_key = ? AND status = ? AND id != ?`,
-			FactStatusSuperseded, newID, old.FactKey, FactStatusActive, newID); err != nil {
+			 WHERE fact_key = ? AND status = ? AND bank = ? AND id != ?`,
+			FactStatusSuperseded, newID, old.FactKey, FactStatusActive, bank.FromContext(ctx), newID); err != nil {
 			return 0, fmt.Errorf("memory.correct_fact: supersede: %w", err)
 		}
 	} else {
@@ -284,7 +288,8 @@ func (s *Store) CorrectFact(ctx context.Context, id int64, corrected string) (in
 // the schema. This is deletion, not retraction — use RetractFact to keep the
 // row but exclude it from use.
 func (s *Store) ForgetFact(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM key_facts WHERE id = ?`, id)
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM key_facts WHERE id = ? AND bank = ?`, id, bank.FromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("memory.forget_fact: %w", err)
 	}
@@ -297,7 +302,7 @@ func (s *Store) ForgetFact(ctx context.Context, id int64) error {
 // RetractFact marks a fact retracted without deleting it.
 func (s *Store) RetractFact(ctx context.Context, id int64) error {
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE key_facts SET status = ? WHERE id = ?`, FactStatusRetracted, id)
+		`UPDATE key_facts SET status = ? WHERE id = ? AND bank = ?`, FactStatusRetracted, id, bank.FromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("memory.retract_fact: %w", err)
 	}
@@ -342,14 +347,16 @@ func (s *Store) forgetSourceRow(ctx context.Context, table, sourceType string, i
 
 	// Derived facts first (memory_conflicts rows cascade with them).
 	r, err := tx.ExecContext(ctx,
-		`DELETE FROM key_facts WHERE source_type = ? AND source_id = ?`, sourceType, id)
+		`DELETE FROM key_facts WHERE source_type = ? AND source_id = ? AND bank = ?`,
+		sourceType, id, bank.FromContext(ctx))
 	if err != nil {
 		return res, fmt.Errorf("memory.forget: facts: %w", err)
 	}
 	res.Facts, _ = r.RowsAffected()
 
 	r, err = tx.ExecContext(ctx,
-		`DELETE FROM memory_vectors WHERE source_type = ? AND source_id = ?`, sourceType, id)
+		`DELETE FROM memory_vectors WHERE source_type = ? AND source_id = ? AND bank = ?`,
+		sourceType, id, bank.FromContext(ctx))
 	if err != nil {
 		return res, fmt.Errorf("memory.forget: vectors: %w", err)
 	}
@@ -359,13 +366,13 @@ func (s *Store) forgetSourceRow(ctx context.Context, table, sourceType string, i
 	var q string
 	switch table {
 	case "captured_thoughts":
-		q = `DELETE FROM captured_thoughts WHERE id = ?`
+		q = `DELETE FROM captured_thoughts WHERE id = ? AND bank = ?`
 	case "session_transcripts":
-		q = `DELETE FROM session_transcripts WHERE id = ?`
+		q = `DELETE FROM session_transcripts WHERE id = ? AND bank = ?`
 	default:
 		return res, fmt.Errorf("memory.forget: unknown table %q", table)
 	}
-	r, err = tx.ExecContext(ctx, q, id)
+	r, err = tx.ExecContext(ctx, q, id, bank.FromContext(ctx))
 	if err != nil {
 		return res, fmt.Errorf("memory.forget: source row: %w", err)
 	}
@@ -385,7 +392,7 @@ func (s *Store) forgetSourceRow(ctx context.Context, table, sourceType string, i
 // in a follow-up change.
 func (s *Store) PinFact(ctx context.Context, id int64, pinned bool) error {
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE key_facts SET pinned = ? WHERE id = ?`, boolToInt(pinned), id)
+		`UPDATE key_facts SET pinned = ? WHERE id = ? AND bank = ?`, boolToInt(pinned), id, bank.FromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("memory.pin_fact: %w", err)
 	}
@@ -401,7 +408,7 @@ func (s *Store) SetFactImportance(ctx context.Context, id int64, importance int)
 		return fmt.Errorf("memory.set_importance: importance must be 1-10, got %d", importance)
 	}
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE key_facts SET importance = ? WHERE id = ?`, importance, id)
+		`UPDATE key_facts SET importance = ? WHERE id = ? AND bank = ?`, importance, id, bank.FromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("memory.set_importance: %w", err)
 	}
@@ -422,14 +429,14 @@ func (s *Store) TouchFactAccess(ctx context.Context, ids []int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]interface{}, 0, len(ids)+1)
-	args = append(args, now)
+	args := make([]interface{}, 0, len(ids)+2)
+	args = append(args, now, bank.FromContext(ctx))
 	for _, id := range ids {
 		args = append(args, id)
 	}
 	// The query text varies only in the number of bound placeholders — ids
 	// are always parameters, never concatenated values.
-	q := `UPDATE key_facts SET access_count = access_count + 1, last_accessed = ? WHERE id IN (` + placeholders + `)`
+	q := `UPDATE key_facts SET access_count = access_count + 1, last_accessed = ? WHERE bank = ? AND id IN (` + placeholders + `)`
 	if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
 		return fmt.Errorf("memory.touch_access: %w", err)
 	}
@@ -457,18 +464,22 @@ func (s *Store) GetConflicts(ctx context.Context, pendingOnly bool, limit int) (
 	if limit <= 0 {
 		limit = 50
 	}
+	// Conflicts are intra-bank by construction (SaveFact's lookup is
+	// bank-filtered); scoping on the new fact's bank keeps one bank's fact
+	// text out of another bank's review queue and reports.
 	q := `SELECT c.id, c.old_fact_id, c.new_fact_id,
 	             COALESCE(o.fact, '(deleted)'), COALESCE(n.fact, '(deleted)'),
 	             COALESCE(c.fact_key, ''), c.detected_at, c.resolution, c.reviewed
 	      FROM memory_conflicts c
 	      LEFT JOIN key_facts o ON o.id = c.old_fact_id
-	      LEFT JOIN key_facts n ON n.id = c.new_fact_id`
+	      LEFT JOIN key_facts n ON n.id = c.new_fact_id
+	      WHERE n.bank = ?`
 	if pendingOnly {
-		q += ` WHERE c.reviewed = 0 AND c.resolution = 'needs_review'`
+		q += ` AND c.reviewed = 0 AND c.resolution = 'needs_review'`
 	}
 	q += ` ORDER BY c.reviewed ASC, c.detected_at DESC LIMIT ?`
 
-	rows, err := s.db.QueryContext(ctx, q, limit)
+	rows, err := s.db.QueryContext(ctx, q, bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil, fmt.Errorf("memory.get_conflicts: %w", err)
 	}
@@ -532,9 +543,12 @@ func (s *Store) RestoreConflict(ctx context.Context, id int64) error {
 	// Defensive: no other active holder of the key may remain before the old
 	// value is reactivated.
 	if factKey.Valid && factKey.String != "" {
+		// Scoped to the caller's bank: the one-active-per-key invariant is
+		// per bank, and clearing it globally would supersede other banks'
+		// unrelated facts.
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE key_facts SET status = ? WHERE fact_key = ? AND status = ?`,
-			FactStatusSuperseded, factKey.String, FactStatusActive); err != nil {
+			`UPDATE key_facts SET status = ? WHERE fact_key = ? AND status = ? AND bank = ?`,
+			FactStatusSuperseded, factKey.String, FactStatusActive, bank.FromContext(ctx)); err != nil {
 			return fmt.Errorf("memory.restore: clear key: %w", err)
 		}
 	}
@@ -555,13 +569,16 @@ func (s *Store) RestoreConflict(ctx context.Context, id int64) error {
 func (s *Store) getFact(ctx context.Context, id int64) (KeyFact, error) {
 	var f KeyFact
 	var pinned int
+	// Id-addressed operations still require the caller's bank to match the
+	// row: integer ids are guessable, and "explicit target" must not become
+	// a cross-bank side door.
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, fact, COALESCE(category, ''), COALESCE(source_session, ''),
 		        extracted_at, COALESCE(fact_key, ''), importance, confidence,
 		        COALESCE(source_type, ''), COALESCE(source_id, 0),
 		        COALESCE(last_accessed, ''), access_count, status,
 		        COALESCE(superseded_by, 0), pinned
-		 FROM key_facts WHERE id = ?`, id).
+		 FROM key_facts WHERE id = ? AND bank = ?`, id, bank.FromContext(ctx)).
 		Scan(&f.ID, &f.Fact, &f.Category, &f.SourceSession, &f.ExtractedAt,
 			&f.FactKey, &f.Importance, &f.Confidence, &f.SourceType, &f.SourceID,
 			&f.LastAccessed, &f.AccessCount, &f.Status, &f.SupersededBy, &pinned)

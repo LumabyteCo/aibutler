@@ -49,9 +49,11 @@ type hybridSearchTool struct {
 	hybrid *hybrid.Searcher
 }
 
-func (t *hybridSearchTool) Name() string        { return "memory.search" }
-func (t *hybridSearchTool) Description() string { return "Search Living Memory across thoughts, transcripts, and entities" }
-func (t *hybridSearchTool) Capability() string  { return "memory.read" }
+func (t *hybridSearchTool) Name() string { return "memory.search" }
+func (t *hybridSearchTool) Description() string {
+	return "Search Living Memory across thoughts, transcripts, and entities"
+}
+func (t *hybridSearchTool) Capability() string { return "memory.read" }
 func (t *hybridSearchTool) Schema() string {
 	return `{"type":"object","properties":{"query":{"type":"string","description":"Search query (keywords, names, topics)"},"limit":{"type":"integer","description":"Max results (default 20)"}},"required":["query"]}`
 }
@@ -82,9 +84,11 @@ type ftsSearchTool struct {
 	fts *fts.Store
 }
 
-func (t *ftsSearchTool) Name() string        { return "memory.fts_search" }
-func (t *ftsSearchTool) Description() string { return "Full-text BM25 search across thoughts and transcripts" }
-func (t *ftsSearchTool) Capability() string  { return "memory.read" }
+func (t *ftsSearchTool) Name() string { return "memory.fts_search" }
+func (t *ftsSearchTool) Description() string {
+	return "Full-text BM25 search across thoughts and transcripts"
+}
+func (t *ftsSearchTool) Capability() string { return "memory.read" }
 func (t *ftsSearchTool) Schema() string {
 	return `{"type":"object","properties":{"query":{"type":"string","description":"Search query (keywords)"},"limit":{"type":"integer","description":"Max results (default 20)"},"source":{"type":"string","description":"Filter by source: thought, transcript, or all (default all)"}},"required":["query"]}`
 }

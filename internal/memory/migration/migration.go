@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/memory"
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
 )
 
@@ -180,7 +181,11 @@ func thoughtKey(source, content string) string {
 // loadThoughtKeys returns the dedup keys of all stored thoughts, for idempotent
 // re-import. Keys are hashes, so memory is bounded regardless of content size.
 func (o *Orchestrator) loadThoughtKeys(ctx context.Context) (map[string]struct{}, error) {
-	rows, err := o.db.QueryContext(ctx, `SELECT content, COALESCE(source, '') FROM captured_thoughts`)
+	// Dedup within the importing bank only: an identical scrap of text in a
+	// worker bank must not suppress importing the user's real thought.
+	rows, err := o.db.QueryContext(ctx,
+		`SELECT content, COALESCE(source, '') FROM captured_thoughts WHERE bank = ?`,
+		bank.FromContext(ctx))
 	if err != nil {
 		return nil, err
 	}

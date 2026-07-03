@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/memory"
+	bankpkg "github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/memory/digest"
 )
 
@@ -129,10 +130,10 @@ func (m *Maintenance) staleImportantFacts(ctx context.Context, window time.Durat
 	cutoff := time.Now().UTC().Add(-window).Format(time.RFC3339)
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT fact FROM key_facts
-		 WHERE status = 'active' AND importance >= 8
+		 WHERE status = 'active' AND importance >= 8 AND bank = ?
 		   AND extracted_at < ? AND COALESCE(last_accessed, '') < ?
 		 ORDER BY importance DESC, extracted_at ASC LIMIT ?`,
-		cutoff, cutoff, limit)
+		bankpkg.FromContext(ctx), cutoff, cutoff, limit)
 	if err != nil {
 		return nil, err
 	}

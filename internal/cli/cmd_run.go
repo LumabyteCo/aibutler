@@ -30,6 +30,7 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/channel"
 	"github.com/LumabyteCo/aibutler/internal/i18n"
 	"github.com/LumabyteCo/aibutler/internal/memory"
+	bankpkg "github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/memory/digest"
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
 	"github.com/LumabyteCo/aibutler/internal/memory/graph"
@@ -930,12 +931,21 @@ func (a *backfillAdapter) Run(ctx context.Context) (int, int, error) {
 	return res.Embedded, res.Failed, nil
 }
 
+// swarm subtasks run inside a per-run memory bank: their captured thoughts,
+// facts, transcripts, entities, and embeddings are isolated from the primary
+// user's memory by default. Cross-bank access only happens through surfaces
+// explicitly scoped to another bank.
 type factoryRunner struct {
 	factory *model.Factory
 }
 
 func (r *factoryRunner) RunTask(ctx context.Context, task string) (string, error) {
 	sessionID := fmt.Sprintf("a2a-%d", time.Now().UnixNano())
+	// Isolate the subtask's memory: everything it captures, extracts, or
+	// embeds lands in a worker bank instead of the primary user's memory.
+	// The swarm workspace (run-scoped KV) remains the sanctioned channel
+	// for cross-subtask coordination.
+	ctx = bankpkg.With(ctx, "swarm")
 	result, err := r.factory.Run(ctx, sessionID, task, "a2a")
 	if err != nil {
 		return "", err

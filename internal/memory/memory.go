@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
 )
 
@@ -94,11 +95,15 @@ type Store struct {
 	statDropped atomic.Int64
 }
 
-// indexJob is a single unit of background embedding work.
+// indexJob is a single unit of background embedding work. The bank is
+// captured at enqueue time: the worker drains with a store-owned context
+// that carries no request state, and an embedding stamped into the wrong
+// bank would surface one bank's content in another bank's semantic search.
 type indexJob struct {
 	source  string
 	id      int64
 	content string
+	bank    string
 }
 
 // indexQueueSize bounds the embedding backlog held in memory. When the queue is
@@ -206,7 +211,7 @@ func (s *Store) indexWorker(jobs <-chan indexJob, ctx context.Context, done chan
 			s.statDropped.Add(1)
 			continue
 		}
-		jctx, cancel := context.WithTimeout(ctx, indexJobTimeout)
+		jctx, cancel := context.WithTimeout(bank.With(ctx, job.bank), indexJobTimeout)
 		err := idx.IndexContent(jctx, job.source, job.id, job.content)
 		cancel()
 		if err != nil {
@@ -221,7 +226,7 @@ func (s *Store) indexWorker(jobs <-chan indexJob, ctx context.Context, done chan
 // enqueueIndex schedules background embedding for a freshly saved item. It never
 // blocks the caller: a no-op when no indexer is wired, and on a full queue the
 // item is dropped (and counted) rather than stalling the save.
-func (s *Store) enqueueIndex(source string, id int64, content string) {
+func (s *Store) enqueueIndex(ctx context.Context, source string, id int64, content string) {
 	if content == "" {
 		return
 	}
@@ -234,7 +239,7 @@ func (s *Store) enqueueIndex(source string, id int64, content string) {
 		return
 	}
 	select {
-	case s.jobs <- indexJob{source: source, id: id, content: content}:
+	case s.jobs <- indexJob{source: source, id: id, content: content, bank: bank.FromContext(ctx)}:
 		s.statQueued.Add(1)
 	default:
 		s.statDropped.Add(1)
@@ -299,8 +304,8 @@ func (s *Store) SaveThought(ctx context.Context, content, source, sessionID stri
 	}
 
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO captured_thoughts (content, source, session_id, tags, created_at) VALUES (?, ?, ?, ?, ?)`,
-		content, source, sessionID, tagsJSON, now)
+		`INSERT INTO captured_thoughts (content, source, session_id, tags, created_at, bank) VALUES (?, ?, ?, ?, ?, ?)`,
+		content, source, sessionID, tagsJSON, now, bank.FromContext(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("memory.save_thought: %w", err)
 	}
@@ -308,15 +313,15 @@ func (s *Store) SaveThought(ctx context.Context, content, source, sessionID stri
 	if err != nil {
 		return 0, err
 	}
-	s.enqueueIndex("thought", id, content)
+	s.enqueueIndex(ctx, "thought", id, content)
 	return id, nil
 }
 
 // GetThoughts retrieves thoughts with optional filtering.
 func (s *Store) GetThoughts(ctx context.Context, opts ThoughtQuery) ([]Thought, error) {
 	query := `SELECT id, content, source, COALESCE(session_id, ''), COALESCE(tags, ''), created_at FROM captured_thoughts`
-	var conditions []string
-	var args []interface{}
+	conditions := []string{`bank = ?`}
+	args := []interface{}{bank.FromContext(ctx)}
 
 	if len(opts.Tags) > 0 {
 		var tagConds []string
@@ -375,7 +380,7 @@ func (s *Store) GetThoughts(ctx context.Context, opts ThoughtQuery) ([]Thought, 
 // ThoughtCount returns the total number of captured thoughts.
 func (s *Store) ThoughtCount(ctx context.Context) (int, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM captured_thoughts`).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM captured_thoughts WHERE bank = ?`, bank.FromContext(ctx)).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("memory.thought_count: %w", err)
 	}
@@ -417,7 +422,8 @@ func (s *Store) SaveKeyFact(ctx context.Context, fact, category, sourceSession s
 func (s *Store) findCanonicalFact(ctx context.Context, q querier, canonical, category string) (int64, bool, error) {
 	rows, err := q.QueryContext(ctx,
 		`SELECT id, fact FROM key_facts
-		 WHERE COALESCE(category, '') = COALESCE(?, '') AND status = 'active'`, category)
+		 WHERE COALESCE(category, '') = COALESCE(?, '') AND status = 'active' AND bank = ?`,
+		category, bank.FromContext(ctx))
 	if err != nil {
 		return 0, false, fmt.Errorf("memory.save_key_fact: lookup: %w", err)
 	}
@@ -451,15 +457,15 @@ func (s *Store) GetKeyFacts(ctx context.Context, category string, limit int) ([]
 	if category != "" {
 		query = `SELECT id, fact, COALESCE(category, ''), COALESCE(source_session, ''), extracted_at,
 		                COALESCE(fact_key, ''), importance, confidence, status, pinned
-		         FROM key_facts WHERE category = ? AND status = 'active'
+		         FROM key_facts WHERE category = ? AND status = 'active' AND bank = ?
 		         ORDER BY extracted_at DESC LIMIT ?`
-		args = []interface{}{category, limit}
+		args = []interface{}{category, bank.FromContext(ctx), limit}
 	} else {
 		query = `SELECT id, fact, COALESCE(category, ''), COALESCE(source_session, ''), extracted_at,
 		                COALESCE(fact_key, ''), importance, confidence, status, pinned
-		         FROM key_facts WHERE status = 'active'
+		         FROM key_facts WHERE status = 'active' AND bank = ?
 		         ORDER BY extracted_at DESC LIMIT ?`
-		args = []interface{}{limit}
+		args = []interface{}{bank.FromContext(ctx), limit}
 	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -494,6 +500,9 @@ func (s *Store) ResolveContent(ctx context.Context, sourceType string, ids []int
 		return out, nil
 	}
 
+	// Hydration is bank-scoped as defense-in-depth: searches only surface
+	// in-bank ids, but a mis-scoped id must yield nothing rather than leak
+	// another bank's content into results.
 	// The base query is chosen from a fixed allowlist of tables (never user
 	// input); ids are always bound parameters. Assembling it like GetThoughts —
 	// a complete SELECT literal, then "+=" clauses — keeps the SELECT literal
@@ -515,7 +524,8 @@ func (s *Store) ResolveContent(ctx context.Context, sourceType string, ids []int
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query += " WHERE id IN (" + strings.Join(placeholders, ", ") + ")"
+	query += " WHERE id IN (" + strings.Join(placeholders, ", ") + ") AND bank = ?"
+	args = append(args, bank.FromContext(ctx))
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -562,7 +572,8 @@ func (s *Store) ResolveTimestamps(ctx context.Context, sourceType string, ids []
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query += " WHERE id IN (" + strings.Join(placeholders, ", ") + ")"
+	query += " WHERE id IN (" + strings.Join(placeholders, ", ") + ") AND bank = ?"
+	args = append(args, bank.FromContext(ctx))
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

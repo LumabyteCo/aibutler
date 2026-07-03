@@ -155,12 +155,12 @@ func (d *Dashboard) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var thoughts int
-	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM captured_thoughts").Scan(&thoughts); err == nil {
+	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM captured_thoughts WHERE bank = 'main'").Scan(&thoughts); err == nil {
 		stats["thoughts"] = thoughts
 	}
 
 	var entities int
-	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM entities").Scan(&entities); err == nil {
+	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM entities WHERE bank = 'main'").Scan(&entities); err == nil {
 		stats["entities"] = entities
 	}
 
@@ -177,7 +177,7 @@ func (d *Dashboard) handleStats(w http.ResponseWriter, r *http.Request) {
 	var keyFacts int
 	// Active only — superseded/retracted rows are history, and the count sits
 	// directly above a list that renders only active facts.
-	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM key_facts WHERE status = 'active'").Scan(&keyFacts); err == nil {
+	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM key_facts WHERE status = 'active' AND bank = 'main'").Scan(&keyFacts); err == nil {
 		stats["key_facts"] = keyFacts
 	}
 
@@ -198,9 +198,11 @@ func (d *Dashboard) handleMemory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The panel is the primary user's surface: it shows the default bank
+	// only, so background workers' scratch never renders on a user page.
 	rows, err := d.db.QueryContext(ctx,
 		`SELECT id, content, source, COALESCE(session_id,''), created_at
-		 FROM captured_thoughts ORDER BY created_at DESC LIMIT ?`, limit)
+		 FROM captured_thoughts WHERE bank = 'main' ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

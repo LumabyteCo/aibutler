@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 )
 
 // Type represents an entity category.
@@ -27,25 +29,25 @@ const (
 
 // Entity represents an extracted entity.
 type Entity struct {
-	ID           int64             `json:"id"`
-	Type         Type              `json:"type"`
-	Name         string            `json:"name"`
-	Attributes   map[string]string `json:"attributes,omitempty"`
-	SourceSession string           `json:"source_session,omitempty"`
-	FirstSeen    string            `json:"first_seen"`
-	LastSeen     string            `json:"last_seen"`
-	MentionCount int               `json:"mention_count"`
+	ID            int64             `json:"id"`
+	Type          Type              `json:"type"`
+	Name          string            `json:"name"`
+	Attributes    map[string]string `json:"attributes,omitempty"`
+	SourceSession string            `json:"source_session,omitempty"`
+	FirstSeen     string            `json:"first_seen"`
+	LastSeen      string            `json:"last_seen"`
+	MentionCount  int               `json:"mention_count"`
 }
 
 // Relationship represents a connection between two entities.
 type Relationship struct {
-	ID             int64   `json:"id"`
-	FromEntityID   int64   `json:"from_entity_id"`
-	ToEntityID     int64   `json:"to_entity_id"`
-	Relationship   string  `json:"relationship"`
-	Confidence     float64 `json:"confidence"`
-	SourceSession  string  `json:"source_session,omitempty"`
-	CreatedAt      string  `json:"created_at"`
+	ID            int64   `json:"id"`
+	FromEntityID  int64   `json:"from_entity_id"`
+	ToEntityID    int64   `json:"to_entity_id"`
+	Relationship  string  `json:"relationship"`
+	Confidence    float64 `json:"confidence"`
+	SourceSession string  `json:"source_session,omitempty"`
+	CreatedAt     string  `json:"created_at"`
 }
 
 // Extracted is the result of entity extraction from text.
@@ -91,8 +93,8 @@ func (s *Store) SaveOrUpdate(ctx context.Context, entityType Type, name, session
 	// Try to find existing entity with same type and name.
 	var existingID int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM entities WHERE type = ? AND LOWER(name) = LOWER(?)`,
-		string(entityType), name).Scan(&existingID)
+		`SELECT id FROM entities WHERE type = ? AND LOWER(name) = LOWER(?) AND bank = ?`,
+		string(entityType), name, bank.FromContext(ctx)).Scan(&existingID)
 
 	if err == nil {
 		// Update existing: bump mention count and last_seen.
@@ -108,9 +110,9 @@ func (s *Store) SaveOrUpdate(ctx context.Context, entityType Type, name, session
 
 	// Insert new entity.
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO entities (type, name, attributes, source_session, first_seen, last_seen, mention_count)
-		 VALUES (?, ?, ?, ?, ?, ?, 1)`,
-		string(entityType), name, nullString(attrsJSON), sessionID, now, now)
+		`INSERT INTO entities (type, name, attributes, source_session, first_seen, last_seen, mention_count, bank)
+		 VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+		string(entityType), name, nullString(attrsJSON), sessionID, now, now, bank.FromContext(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("entity.save: %w", err)
 	}
@@ -271,9 +273,9 @@ func (s *Store) GetByType(ctx context.Context, entityType Type, limit int) ([]En
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, type, name, COALESCE(attributes, ''), COALESCE(source_session, ''),
 		        first_seen, last_seen, mention_count
-		 FROM entities WHERE type = ?
+		 FROM entities WHERE type = ? AND bank = ?
 		 ORDER BY mention_count DESC, last_seen DESC
-		 LIMIT ?`, string(entityType), limit)
+		 LIMIT ?`, string(entityType), bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil, fmt.Errorf("entity.get_by_type: %w", err)
 	}
@@ -289,9 +291,9 @@ func (s *Store) GetAll(ctx context.Context, limit int) ([]Entity, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, type, name, COALESCE(attributes, ''), COALESCE(source_session, ''),
 		        first_seen, last_seen, mention_count
-		 FROM entities
+		 FROM entities WHERE bank = ?
 		 ORDER BY mention_count DESC, last_seen DESC
-		 LIMIT ?`, limit)
+		 LIMIT ?`, bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil, fmt.Errorf("entity.get_all: %w", err)
 	}
@@ -307,9 +309,9 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]Entity, 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, type, name, COALESCE(attributes, ''), COALESCE(source_session, ''),
 		        first_seen, last_seen, mention_count
-		 FROM entities WHERE name LIKE ?
+		 FROM entities WHERE name LIKE ? AND bank = ?
 		 ORDER BY mention_count DESC
-		 LIMIT ?`, "%"+query+"%", limit)
+		 LIMIT ?`, "%"+query+"%", bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil, fmt.Errorf("entity.search: %w", err)
 	}
@@ -321,7 +323,7 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]Entity, 
 // Format: "Known: 5 people, 3 projects, 2 pending decisions, 4 action items"
 func (s *Store) Summary(ctx context.Context) (string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT type, COUNT(*) FROM entities GROUP BY type`)
+		`SELECT type, COUNT(*) FROM entities WHERE bank = ? GROUP BY type`, bank.FromContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("entity.summary: %w", err)
 	}

@@ -321,7 +321,9 @@ func (w *ftsSearchWrapper) Execute(ctx context.Context, input string) (string, e
 type peopleWrapper struct{ entities *entity.Store }
 
 func (w *peopleWrapper) Execute(ctx context.Context, input string) (string, error) {
-	var args struct{ Limit int `json:"limit"` }
+	var args struct {
+		Limit int `json:"limit"`
+	}
 	json.Unmarshal([]byte(input), &args)
 	people, err := w.entities.GetByType(ctx, entity.TypePerson, args.Limit)
 	if err != nil {
@@ -334,7 +336,9 @@ func (w *peopleWrapper) Execute(ctx context.Context, input string) (string, erro
 type decisionsWrapper struct{ entities *entity.Store }
 
 func (w *decisionsWrapper) Execute(ctx context.Context, input string) (string, error) {
-	var args struct{ Limit int `json:"limit"` }
+	var args struct {
+		Limit int `json:"limit"`
+	}
 	json.Unmarshal([]byte(input), &args)
 	decisions, err := w.entities.GetByType(ctx, entity.TypeDecision, args.Limit)
 	if err != nil {
@@ -347,7 +351,9 @@ func (w *decisionsWrapper) Execute(ctx context.Context, input string) (string, e
 type projectsWrapper struct{ entities *entity.Store }
 
 func (w *projectsWrapper) Execute(ctx context.Context, input string) (string, error) {
-	var args struct{ Limit int `json:"limit"` }
+	var args struct {
+		Limit int `json:"limit"`
+	}
 	json.Unmarshal([]byte(input), &args)
 	projects, err := w.entities.GetByType(ctx, entity.TypeProject, args.Limit)
 	if err != nil {

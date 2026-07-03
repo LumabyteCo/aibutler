@@ -11,6 +11,7 @@ import (
 
 	"github.com/LumabyteCo/aibutler/internal/agent"
 	"github.com/LumabyteCo/aibutler/internal/config"
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/session"
 )
 
@@ -442,8 +443,8 @@ func (c *Composer) loadCoreFacts(ctx context.Context, budgetTokens int) []string
 	// deterministically.
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT fact, importance, access_count, pinned, extracted_at, COALESCE(last_accessed, '')
-		 FROM key_facts WHERE status = 'active'
-		 ORDER BY pinned DESC, extracted_at DESC, id DESC LIMIT ?`, coreFactCandidateLimit)
+		 FROM key_facts WHERE status = 'active' AND bank = ?
+		 ORDER BY pinned DESC, extracted_at DESC, id DESC LIMIT ?`, bank.FromContext(ctx), coreFactCandidateLimit)
 	if err != nil {
 		return nil
 	}
@@ -550,7 +551,8 @@ func (c *Composer) loadKeyFacts(ctx context.Context, limit int) []string {
 	// Only active facts: a fact that was superseded by a newer statement or
 	// retracted by the user must never re-enter the prompt.
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT fact FROM key_facts WHERE status = 'active' ORDER BY extracted_at DESC LIMIT ?`, limit)
+		`SELECT fact FROM key_facts WHERE status = 'active' AND bank = ? ORDER BY extracted_at DESC LIMIT ?`,
+		bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil
 	}

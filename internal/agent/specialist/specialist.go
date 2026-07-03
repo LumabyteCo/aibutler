@@ -13,6 +13,11 @@ import (
 
 // SpecialistConfig defines a specialist agent configuration.
 type SpecialistConfig struct {
+	// MemoryBank isolates this profile's memory. Empty = the default bank.
+	// Runners that route to a specialist scope the run's context to this
+	// bank so the profile's memory stays its own.
+	MemoryBank string `yaml:"memory_bank"`
+
 	Name         string        `yaml:"name"`
 	Description  string        `yaml:"description"`
 	Capabilities []string      `yaml:"capabilities"`

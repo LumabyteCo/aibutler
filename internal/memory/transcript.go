@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 )
 
 // Transcript represents a single turn in a session.
@@ -23,8 +25,8 @@ func (s *Store) SaveTranscript(ctx context.Context, sessionID, role, content str
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO session_transcripts (session_id, role, content, turn_number, created_at) VALUES (?, ?, ?, ?, ?)`,
-		sessionID, role, content, turnNumber, now)
+		`INSERT INTO session_transcripts (session_id, role, content, turn_number, created_at, bank) VALUES (?, ?, ?, ?, ?, ?)`,
+		sessionID, role, content, turnNumber, now, bank.FromContext(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("memory.save_transcript: %w", err)
 	}
@@ -32,7 +34,7 @@ func (s *Store) SaveTranscript(ctx context.Context, sessionID, role, content str
 	if err != nil {
 		return 0, err
 	}
-	s.enqueueIndex("transcript", id, content)
+	s.enqueueIndex(ctx, "transcript", id, content)
 	return id, nil
 }
 
@@ -78,7 +80,7 @@ func (s *Store) NextTurnNumber(ctx context.Context, sessionID string) int {
 // TranscriptCount returns the total number of indexed transcripts.
 func (s *Store) TranscriptCount(ctx context.Context) (int, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_transcripts`).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_transcripts WHERE bank = ?`, bank.FromContext(ctx)).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("memory.transcript_count: %w", err)
 	}
