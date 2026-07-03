@@ -24,7 +24,7 @@ type ToolsSetter interface {
 // saving conversation to session_transcripts for FTS5 indexing
 // and extracting entities from tool outputs for the knowledge graph.
 type PostRunProcessor interface {
-	AfterAgentRun(ctx context.Context, sessionID, userMsg, assistantMsg string, toolOutputs []agent.ToolOutput)
+	AfterAgentRun(ctx context.Context, sessionID, userMsg, assistantMsg, runStatus string, toolOutputs []agent.ToolOutput)
 }
 
 // FactoryConfig holds the dependencies for the agent factory.
@@ -36,40 +36,40 @@ type FactoryConfig struct {
 	Tracker       *prompt.Tracker
 	DB            *sql.DB
 	Config        *config.Config
-	RoleRouter    *agent.RoleRouter    // Custom role routing (for ModeCustom)
-	PostProcessor  PostRunProcessor     // Optional: FTS5 indexing + entity extraction
-	Compactor      *prompt.Compactor    // Optional: context window compaction
-	BatchExecutor  *BatchExecutor       // Optional: parallel tool execution batching
+	RoleRouter    *agent.RoleRouter // Custom role routing (for ModeCustom)
+	PostProcessor PostRunProcessor  // Optional: FTS5 indexing + entity extraction
+	Compactor     *prompt.Compactor // Optional: context window compaction
+	BatchExecutor *BatchExecutor    // Optional: parallel tool execution batching
 }
 
 // Factory implements channel.AgentFactory.
 // It wires Router → Composer → Agent → Tools into a complete pipeline.
 type Factory struct {
-	composer       *prompt.Composer
-	model          agent.ModelAdapter
-	tools          *tool.Dispatcher
-	caps           *capability.CapabilitySet
-	tracker        *prompt.Tracker
-	db             *sql.DB
-	cfg            *config.Config
-	roleRouter     *agent.RoleRouter
-	postProcessor  PostRunProcessor
-	compactor      *prompt.Compactor
+	composer      *prompt.Composer
+	model         agent.ModelAdapter
+	tools         *tool.Dispatcher
+	caps          *capability.CapabilitySet
+	tracker       *prompt.Tracker
+	db            *sql.DB
+	cfg           *config.Config
+	roleRouter    *agent.RoleRouter
+	postProcessor PostRunProcessor
+	compactor     *prompt.Compactor
 }
 
 // NewFactory creates an agent factory.
 func NewFactory(cfg FactoryConfig) *Factory {
 	return &Factory{
-		composer:       cfg.Composer,
-		model:          cfg.Model,
-		tools:          cfg.Tools,
-		caps:           cfg.Caps,
-		tracker:        cfg.Tracker,
-		db:             cfg.DB,
-		cfg:            cfg.Config,
-		roleRouter:     cfg.RoleRouter,
-		postProcessor:  cfg.PostProcessor,
-		compactor:      cfg.Compactor,
+		composer:      cfg.Composer,
+		model:         cfg.Model,
+		tools:         cfg.Tools,
+		caps:          cfg.Caps,
+		tracker:       cfg.Tracker,
+		db:            cfg.DB,
+		cfg:           cfg.Config,
+		roleRouter:    cfg.RoleRouter,
+		postProcessor: cfg.PostProcessor,
+		compactor:     cfg.Compactor,
 	}
 }
 
@@ -193,7 +193,7 @@ func (f *Factory) Run(ctx context.Context, sessionID, task, channel string) (*ag
 	// 8. Post-run processing: FTS5 indexing + entity extraction.
 	// Run for both successful and failed/cancelled runs — partial tool outputs are still valuable.
 	if f.postProcessor != nil {
-		f.postProcessor.AfterAgentRun(ctx, sessionID, task, result.Output, result.ToolOutputs)
+		f.postProcessor.AfterAgentRun(ctx, sessionID, task, result.Output, string(result.Status), result.ToolOutputs)
 	}
 
 	if err != nil {

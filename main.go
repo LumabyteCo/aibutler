@@ -80,6 +80,10 @@ func main() {
 		runWithApp(func(app *cli.App) error {
 			return cli.CmdEval(app, os.Args[2:], os.Stdout)
 		})
+	case "skills":
+		runWithApp(func(app *cli.App) error {
+			return cli.CmdSkills(app, os.Args[2:], os.Stdout)
+		})
 	case "repl":
 		runWithApp(func(app *cli.App) error {
 			return cli.CmdRepl(app, os.Args[2:], os.Stdout)
@@ -144,6 +148,8 @@ Usage:
   aibutler setup            Show setup configuration
   aibutler config show      Display configuration
   aibutler skill <cmd>      Manage skills (list, enable, disable)
+  aibutler skills <cmd>     Review self-authored skill proposals (pending, show, approve, reject)
+  aibutler eval <cmd>       Internal benchmark suite (run, list, compare)
   aibutler cost <cmd>       Cost tracking (status, history, breakdown, strategy, budget)
   aibutler agent <cmd>      Agent management (list, status, history)
   aibutler mode [name]      Show or switch agent mode (auto, single)
