@@ -97,6 +97,14 @@ func TestUpsert(t *testing.T) {
 	s := vector.NewStore(db.Conn())
 	ctx := context.Background()
 
+	// Upsert refuses to write an embedding whose source row is gone (late
+	// async jobs must not resurrect deleted content), so the thought row has
+	// to exist for the update path under test to run.
+	if _, err := db.Conn().ExecContext(ctx,
+		`INSERT INTO captured_thoughts (id, content, source) VALUES (1, 'test thought', 'test')`); err != nil {
+		t.Fatalf("seed thought: %v", err)
+	}
+
 	// First save.
 	err := s.Save(ctx, "thought", 1, []float32{1, 0, 0}, "model-a")
 	if err != nil {

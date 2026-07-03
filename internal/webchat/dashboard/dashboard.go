@@ -170,7 +170,9 @@ func (d *Dashboard) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var keyFacts int
-	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM key_facts").Scan(&keyFacts); err == nil {
+	// Active only — superseded/retracted rows are history, and the count sits
+	// directly above a list that renders only active facts.
+	if err := d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM key_facts WHERE status = 'active'").Scan(&keyFacts); err == nil {
 		stats["key_facts"] = keyFacts
 	}
 

@@ -3,11 +3,22 @@ package memory
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
 )
+
+// ErrNotFound reports that the referenced memory row does not exist. HTTP
+// surfaces map it to 404.
+var ErrNotFound = errors.New("not found")
+
+// querier is the subset of *sql.DB / *sql.Tx the fact helpers need, so the
+// same lookup can run standalone or inside a transaction.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
 
 // Fact lifecycle states. Superseded and retracted rows are excluded from
 // selection but retained so history stays inspectable.
@@ -22,6 +33,7 @@ const (
 	ResolutionAutoSupersede = "auto_supersede" // clear case: newer statement wins
 	ResolutionNeedsReview   = "needs_review"   // superseded, but flagged for the user
 	ResolutionUserCorrected = "user_corrected" // explicit correction by the user
+	ResolutionUserRestored  = "user_restored"  // user rejected the replacement, old value restored
 )
 
 // Confidence priors by how a fact entered the system. A fact stated by the
@@ -76,33 +88,55 @@ func (s *Store) SaveFact(ctx context.Context, in FactInput) (int64, error) {
 	if in.Importance <= 0 {
 		in.Importance = 5
 	}
+	if in.Importance > 10 {
+		in.Importance = 10
+	}
 	if in.Confidence <= 0 {
 		in.Confidence = ConfidenceDefault
+	}
+	if in.Confidence > 1.0 {
+		in.Confidence = 1.0
+	}
+	if in.SourceID == 0 {
+		// Half-provenance (a type without a row) is meaningless — store neither.
+		in.SourceType = ""
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	canonical := entity.CanonicalFact(in.Fact)
 
-	// 1. Re-assertion of an existing active fact: refresh instead of insert.
-	existingID, found, err := s.findCanonicalFact(ctx, canonical, in.Category)
-	if err != nil {
-		return 0, err
-	}
-	if found {
-		if _, err := s.db.ExecContext(ctx,
-			`UPDATE key_facts
-			 SET extracted_at = ?, access_count = access_count + 1,
-			     confidence = MIN(1.0, confidence + ?)
-			 WHERE id = ?`, now, reassertBoost, existingID); err != nil {
-			return 0, fmt.Errorf("memory.save_fact: touch: %w", err)
-		}
-		return existingID, nil
-	}
-
+	// Everything — dedup scan included — runs in one transaction. With the
+	// single-connection pool this serializes concurrent SaveFact calls, so
+	// two parallel saves of the same statement can't both miss the dedup
+	// check and insert twins (or, worse, record a self-supersede "conflict"
+	// between two copies of the same value).
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("memory.save_fact: begin: %w", err)
 	}
 	defer tx.Rollback()
+
+	// 1. Re-assertion of an existing active fact: refresh instead of insert.
+	// If the earlier copy was stored without a key (e.g. through the legacy
+	// wrapper), adopt this call's key so the attribute joins conflict
+	// detection from now on.
+	existingID, found, err := s.findCanonicalFact(ctx, tx, canonical, in.Category)
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE key_facts
+			 SET extracted_at = ?, access_count = access_count + 1,
+			     confidence = MIN(1.0, confidence + ?),
+			     fact_key = COALESCE(fact_key, NULLIF(?, ''))
+			 WHERE id = ?`, now, reassertBoost, in.FactKey, existingID); err != nil {
+			return 0, fmt.Errorf("memory.save_fact: touch: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("memory.save_fact: commit: %w", err)
+		}
+		return existingID, nil
+	}
 
 	// 2. Conflict check: another active fact holds this single-valued key.
 	var oldID int64
@@ -189,6 +223,13 @@ func (s *Store) CorrectFact(ctx context.Context, id int64, corrected string) (in
 	}
 	defer tx.Rollback()
 
+	// Corrections of keyless facts must target the live row: if the fact was
+	// already superseded (the panel can be stale), the correction would
+	// otherwise resurrect a dead value beside the live one.
+	if old.FactKey == "" && old.Status != FactStatusActive {
+		return 0, fmt.Errorf("memory.correct_fact: fact %d was already updated — reload and retry", id)
+	}
+
 	importance := old.Importance
 	if importance < 7 {
 		importance = 7 // the user cared enough to fix it
@@ -207,10 +248,23 @@ func (s *Store) CorrectFact(ctx context.Context, id int64, corrected string) (in
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE key_facts SET status = ?, superseded_by = ? WHERE id = ?`,
-		FactStatusSuperseded, newID, id); err != nil {
-		return 0, fmt.Errorf("memory.correct_fact: supersede: %w", err)
+	if old.FactKey != "" {
+		// Supersede EVERY other active holder of the key, not just the row the
+		// user clicked — the clicked row may itself have been superseded since
+		// the panel loaded, and the correction must leave exactly one active
+		// fact for the key regardless of how stale the caller's view was.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE key_facts SET status = ?, superseded_by = ?
+			 WHERE fact_key = ? AND status = ? AND id != ?`,
+			FactStatusSuperseded, newID, old.FactKey, FactStatusActive, newID); err != nil {
+			return 0, fmt.Errorf("memory.correct_fact: supersede: %w", err)
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE key_facts SET status = ?, superseded_by = ? WHERE id = ?`,
+			FactStatusSuperseded, newID, id); err != nil {
+			return 0, fmt.Errorf("memory.correct_fact: supersede: %w", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO memory_conflicts (old_fact_id, new_fact_id, fact_key, detected_at, resolution, reviewed)
@@ -234,7 +288,7 @@ func (s *Store) ForgetFact(ctx context.Context, id int64) error {
 		return fmt.Errorf("memory.forget_fact: %w", err)
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("memory.forget_fact: fact %d not found", id)
+		return fmt.Errorf("memory.forget_fact: fact %d: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -247,7 +301,7 @@ func (s *Store) RetractFact(ctx context.Context, id int64) error {
 		return fmt.Errorf("memory.retract_fact: %w", err)
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("memory.retract_fact: fact %d not found", id)
+		return fmt.Errorf("memory.retract_fact: fact %d: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -316,7 +370,7 @@ func (s *Store) forgetSourceRow(ctx context.Context, table, sourceType string, i
 	}
 	res.Rows, _ = r.RowsAffected()
 	if res.Rows == 0 {
-		return res, fmt.Errorf("memory.forget: %s %d not found", sourceType, id)
+		return res, fmt.Errorf("memory.forget: %s %d: %w", sourceType, id, ErrNotFound)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -325,8 +379,9 @@ func (s *Store) forgetSourceRow(ctx context.Context, table, sourceType string, i
 	return res, nil
 }
 
-// PinFact sets or clears the pinned flag. Pinned facts always win selection
-// into the always-in-context working set.
+// PinFact sets or clears the pinned flag. The flag is stored now; scored
+// context selection (which gives pinned facts absolute priority) consumes it
+// in a follow-up change.
 func (s *Store) PinFact(ctx context.Context, id int64, pinned bool) error {
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE key_facts SET pinned = ? WHERE id = ?`, boolToInt(pinned), id)
@@ -334,7 +389,7 @@ func (s *Store) PinFact(ctx context.Context, id int64, pinned bool) error {
 		return fmt.Errorf("memory.pin_fact: %w", err)
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("memory.pin_fact: fact %d not found", id)
+		return fmt.Errorf("memory.pin_fact: fact %d: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -350,7 +405,7 @@ func (s *Store) SetFactImportance(ctx context.Context, id int64, importance int)
 		return fmt.Errorf("memory.set_importance: %w", err)
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("memory.set_importance: fact %d not found", id)
+		return fmt.Errorf("memory.set_importance: fact %d: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -386,8 +441,11 @@ type Conflict struct {
 	Reviewed   bool   `json:"reviewed"`
 }
 
-// GetConflicts lists recorded contradictions, unreviewed first.
-func (s *Store) GetConflicts(ctx context.Context, onlyUnreviewed bool, limit int) ([]Conflict, error) {
+// GetConflicts lists recorded contradictions. pendingOnly restricts to the
+// user's review queue — unreviewed needs_review rows — so routine
+// auto-supersede history (which nothing ever marks reviewed) can't crowd
+// flagged items out of the LIMIT window.
+func (s *Store) GetConflicts(ctx context.Context, pendingOnly bool, limit int) ([]Conflict, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -397,8 +455,8 @@ func (s *Store) GetConflicts(ctx context.Context, onlyUnreviewed bool, limit int
 	      FROM memory_conflicts c
 	      LEFT JOIN key_facts o ON o.id = c.old_fact_id
 	      LEFT JOIN key_facts n ON n.id = c.new_fact_id`
-	if onlyUnreviewed {
-		q += ` WHERE c.reviewed = 0`
+	if pendingOnly {
+		q += ` WHERE c.reviewed = 0 AND c.resolution = 'needs_review'`
 	}
 	q += ` ORDER BY c.reviewed ASC, c.detected_at DESC LIMIT ?`
 
@@ -430,9 +488,59 @@ func (s *Store) MarkConflictReviewed(ctx context.Context, id int64) error {
 		return fmt.Errorf("memory.mark_reviewed: %w", err)
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("memory.mark_reviewed: conflict %d not found", id)
+		return fmt.Errorf("memory.mark_reviewed: conflict %d: %w", id, ErrNotFound)
 	}
 	return nil
+}
+
+// RestoreConflict rejects a replacement: the new fact is retracted, the old
+// fact becomes the active holder again, and the conflict is closed as
+// user_restored. One transaction; the one-active-per-key invariant is
+// re-established defensively before reactivation.
+func (s *Store) RestoreConflict(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("memory.restore: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	var oldID, newID int64
+	var factKey sql.NullString
+	err = tx.QueryRowContext(ctx,
+		`SELECT old_fact_id, new_fact_id, fact_key FROM memory_conflicts WHERE id = ?`, id).
+		Scan(&oldID, &newID, &factKey)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("memory.restore: conflict %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("memory.restore: %w", err)
+	}
+
+	// The rejected replacement is retracted (kept for history, never used).
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE key_facts SET status = ? WHERE id = ?`, FactStatusRetracted, newID); err != nil {
+		return fmt.Errorf("memory.restore: retract new: %w", err)
+	}
+	// Defensive: no other active holder of the key may remain before the old
+	// value is reactivated.
+	if factKey.Valid && factKey.String != "" {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE key_facts SET status = ? WHERE fact_key = ? AND status = ?`,
+			FactStatusSuperseded, factKey.String, FactStatusActive); err != nil {
+			return fmt.Errorf("memory.restore: clear key: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE key_facts SET status = ?, superseded_by = NULL WHERE id = ?`,
+		FactStatusActive, oldID); err != nil {
+		return fmt.Errorf("memory.restore: reactivate old: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE memory_conflicts SET reviewed = 1, resolution = ? WHERE id = ?`,
+		ResolutionUserRestored, id); err != nil {
+		return fmt.Errorf("memory.restore: close conflict: %w", err)
+	}
+	return tx.Commit()
 }
 
 // getFact loads one fact row with all quality columns.
@@ -450,7 +558,7 @@ func (s *Store) getFact(ctx context.Context, id int64) (KeyFact, error) {
 			&f.FactKey, &f.Importance, &f.Confidence, &f.SourceType, &f.SourceID,
 			&f.LastAccessed, &f.AccessCount, &f.Status, &f.SupersededBy, &pinned)
 	if err == sql.ErrNoRows {
-		return f, fmt.Errorf("memory.get_fact: fact %d not found", id)
+		return f, fmt.Errorf("memory.get_fact: fact %d: %w", id, ErrNotFound)
 	}
 	if err != nil {
 		return f, fmt.Errorf("memory.get_fact: %w", err)
