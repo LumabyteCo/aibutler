@@ -26,7 +26,7 @@
 
 ---
 
-> **🚀 v0.1 — Public Beta.** AI Butler is an ambitious project — **116 packages, 1,681 passing tests, 59 internal security audit passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready. Several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release)
+> **🚀 v0.1 — Public Beta.** AI Butler is an ambitious project — **120+ packages, 2,100+ passing tests, 59 internal security audit passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready. Several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release)
 
 ---
 
@@ -45,7 +45,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | 🛡️ **Security-first** | 59-pass internal security audit. RBAC, FIDO2/WebAuthn, OIDC SSO, capability-gated tools, WASM plugin sandbox, SSRF protection, shell allowlisting. |
 | 🖥️ **Clean built-in web UI** | 6-panel sidebar dashboard — chat, home, memories browser, connected apps, spending, settings. No framework, no build step, embedded in the binary. |
 | 💾 **Self-hosted & private** | Single Go binary. Your data stays on your machine. Runs from Raspberry Pi to cloud. Zero telemetry unless you explicitly opt in. |
-| 🌍 **Open source** | Apache 2.0 licensed (patent grant included). 1,681 tests. 116 packages. Zero CVEs (`govulncheck` verified). |
+| 🌍 **Open source** | Apache 2.0 licensed (patent grant included). 2,100+ tests. 120+ packages. Zero CVEs (`govulncheck` verified). |
 
 ---
 
@@ -69,7 +69,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | **MCP client** — connects to external MCP servers on boot | `ready` |
 | **Vault** — credential storage with OS keyring integration | `ready` |
 | **Capability engine** — per-tool permissions + audit trail | `ready` |
-| **SQLite database** — 67 tables, 19 migrations, WAL mode | `ready` |
+| **SQLite database** — 74 tables, 22 migrations, WAL mode | `ready` |
 | **Config system** — Three-tier (Settings / Configurations / Options) + BUTLER.md project files | `ready` |
 | **File + shell + git tools** — capability-gated, sandboxed | `ready` |
 | **Single-binary distribution** — zero CGO, cross-compiles to any Go platform | `ready` |
@@ -100,6 +100,14 @@ We wrote the code and it compiles + passes unit tests, but we haven't put these 
 | **LAN mode + mDNS discovery** | `beta` | — |
 | **Subprocess bridges** (ffmpeg, Aider, Continue, any CLI) | `beta` | — |
 | **Smart home via Home Assistant** — tool surface + PIN safety gating ready, HA adapter in final wiring | `beta → v0.2` | [#ha-adapter](../../issues/new?labels=beta&title=Home+Assistant+adapter) |
+| **Fact quality & correction** — per-fact provenance/confidence, contradictions supersede with a review queue, true deletion cascades to everything derived, Memories panel actions | `beta` | — |
+| **Scored core memory** — the always-in-context fact set picked by pinning, importance, usage, and recency within a token budget (revert with `core_memory_selection: recency`) | `beta` | — |
+| **File checkpoints & undo** — pre-images captured before agent file edits, `checkpoint.list`/`checkpoint.restore`, integrity-checked, retention janitor | `beta` | — |
+| **Repeat-call circuit breaker + verify hooks** — identical-call loops get an advisory; configured checkers run after file edits and feed real results back | `beta` | — |
+| **Internal eval harness** (`aibutler eval`) — deterministic benchmark suite through the real agent loop; unit-mode baseline runs green in CI, live-mode baseline pending a published run | `beta` | — |
+| **Self-authored skill proposals** (opt-in `skill_synthesis.enabled`) — grounded successes distilled into staged skills; approval is always an explicit human action; effectiveness unmeasured until compared with the eval harness | `beta` | — |
+| **Idle-time reflection cycle** (opt-in `reflection.enabled`) + per-schedule capability profiles — nightly deterministic maintenance report; scheduled jobs can declare a strict capability subset | `beta` | — |
+| **Per-profile memory banks** — background workers read/write isolated memory by default | `beta` | — |
 | **Whisper STT** (local + cloud) | `beta` | — |
 | **Piper TTS** (local, CPU-only) | `beta` | — |
 
@@ -248,7 +256,7 @@ aibutler vault set whatsapp_phone_number_id YOUR_PHONE_ID
 
 | Metric | Value |
 |--------|-------|
-| Tests (passing, race-free) | **1,681** |
+| Tests (passing, race-free) | **2,148** |
 | Go packages | **116** |
 | SQLite tables | **67** |
 | Database migrations | **19** |
