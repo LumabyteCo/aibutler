@@ -1,0 +1,112 @@
+# Core suite: loop, dispatch, and file-tool mechanics.
+#
+# Every task runs in a fresh temp workspace with workspace-rooted file tools
+# and the real agent loop + dispatcher. Scripts drive unit mode; live mode
+# replaces the script with a real model against the same prompts and checks.
+
+- id: file-write-roundtrip
+  description: A single write lands exactly the requested content.
+  prompt: 'Create {{WORKSPACE}}/notes.txt containing exactly "hello butler".'
+  script:
+    - tools:
+        - name: file.write
+          input: '{"path":"{{WORKSPACE}}/notes.txt","content":"hello butler"}'
+    - text: "Created notes.txt with the requested content."
+  budget: { max_tool_calls: 3 }
+  checks:
+    - { kind: tool_called, target: file.write }
+    - { kind: file_equals, target: notes.txt, value: "hello butler" }
+    - { kind: output_contains, value: "notes.txt" }
+
+- id: file-edit-existing
+  description: An edit modifies pre-existing content precisely.
+  prompt: 'In {{WORKSPACE}}/config.txt, change the port from 8080 to 9090.'
+  files:
+    config.txt: "host=localhost\nport=8080\n"
+  script:
+    - tools:
+        - name: file.edit
+          input: '{"path":"{{WORKSPACE}}/config.txt","old":"port=8080","new":"port=9090"}'
+    - text: "Updated the port to 9090."
+  budget: { max_tool_calls: 3 }
+  checks:
+    - { kind: file_contains, target: config.txt, value: "port=9090" }
+    - { kind: file_contains, target: config.txt, value: "host=localhost" }
+    - { kind: max_tool_errors, value: "0" }
+
+- id: read-modify-verify
+  description: Multi-step flow reads before editing and verifies after.
+  prompt: 'Read {{WORKSPACE}}/data.txt, replace "draft" with "final", then confirm the change by reading it back.'
+  files:
+    data.txt: "status: draft\n"
+  script:
+    - tools:
+        - name: file.read
+          input: '{"path":"{{WORKSPACE}}/data.txt"}'
+    - tools:
+        - name: file.edit
+          input: '{"path":"{{WORKSPACE}}/data.txt","old":"draft","new":"final"}'
+    - tools:
+        - name: file.read
+          input: '{"path":"{{WORKSPACE}}/data.txt"}'
+    - text: "data.txt now reads status: final."
+  budget: { max_tool_calls: 5 }
+  checks:
+    - { kind: tool_order, value: "file.read, file.edit, file.read" }
+    - { kind: file_equals, target: data.txt, value: "status: final\n" }
+
+- id: error-then-recover
+  description: A failed edit is corrected on the next attempt using real error feedback.
+  prompt: 'Set the greeting in {{WORKSPACE}}/hello.txt to "hi there".'
+  files:
+    hello.txt: "greeting: hello\n"
+  script:
+    - tools:
+        - name: file.edit
+          input: '{"path":"{{WORKSPACE}}/hello.txt","old":"greeting: howdy","new":"greeting: hi there"}'
+    - tools:
+        - name: file.edit
+          input: '{"path":"{{WORKSPACE}}/hello.txt","old":"greeting: hello","new":"greeting: hi there"}'
+    - text: "Fixed — the first pattern did not match, corrected against the actual content."
+  budget: { max_tool_calls: 4 }
+  checks:
+    - { kind: file_contains, target: hello.txt, value: "greeting: hi there" }
+    - { kind: min_tool_errors, value: "1" }
+    - { kind: max_tool_errors, value: "1" }
+
+- id: boundary-respected
+  description: Writes outside the workspace are refused and nothing leaks.
+  prompt: 'Write "x" to /tmp/outside-eval-boundary.txt.'
+  script:
+    - tools:
+        - name: file.write
+          input: '{"path":"/tmp/outside-eval-boundary.txt","content":"x"}'
+    - text: "That path is outside the allowed workspace, so the write was refused."
+  budget: { max_tool_calls: 2 }
+  checks:
+    - { kind: output_contains, value: "refused" }
+    - { kind: min_tool_errors, value: "1" }
+    - { kind: max_tool_errors, value: "1" }
+
+- id: answer-without-tools
+  description: A pure question gets a direct answer with zero tool calls.
+  prompt: "What file extension do YAML files use?"
+  script:
+    - text: "YAML files use the .yaml (or .yml) extension."
+  budget: { max_tool_calls: 0 }
+  checks:
+    - { kind: output_contains, value: ".yaml" }
+    - { kind: tool_not_called, target: file.read }
+
+- id: consistency-repeat
+  description: The same simple task passes on every repeat, not just once.
+  prompt: 'Create {{WORKSPACE}}/ok.txt containing "ok".'
+  repeat: 3
+  script:
+    - tools:
+        - name: file.write
+          input: '{"path":"{{WORKSPACE}}/ok.txt","content":"ok"}'
+    - text: "Done."
+  budget: { max_tool_calls: 2 }
+  checks:
+    - { kind: file_equals, target: ok.txt, value: "ok" }
