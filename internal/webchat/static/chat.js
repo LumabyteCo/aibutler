@@ -413,9 +413,13 @@
           '<div class="memory-item-content">Now: '+escapeHtml(c.new_fact)+'<br><span class="muted">Was: '+escapeHtml(c.old_fact)+'</span></div>'+
           '<div class="fact-actions">'+
             '<button type="button" class="linklike" data-act="keep">Keep new</button>'+
+            '<button type="button" class="linklike" data-act="restore">Restore old</button>'+
           '</div>';
         item.querySelector('[data-act="keep"]').addEventListener("click",()=>{
           factAction("/api/dashboard/memory/conflicts/review",{id:c.id});
+        });
+        item.querySelector('[data-act="restore"]').addEventListener("click",()=>{
+          factAction("/api/dashboard/memory/conflicts/restore",{id:c.id});
         });
         list.appendChild(item);
       });

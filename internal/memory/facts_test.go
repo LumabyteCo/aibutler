@@ -3,9 +3,11 @@ package memory_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/LumabyteCo/aibutler/internal/memory"
+	"github.com/LumabyteCo/aibutler/internal/memory/vector"
 	"github.com/LumabyteCo/aibutler/testutil"
 )
 
@@ -426,5 +428,200 @@ func TestRetractedFactExcludedEverywhere(t *testing.T) {
 	}
 	if newID == id {
 		t.Error("dedup resurrected a retracted fact; expected a fresh row")
+	}
+}
+
+// --- regression tests from adversarial review ---
+
+// A correction issued against a stale row (the panel was open while the agent
+// superseded the fact) must still leave exactly one active holder of the key.
+func TestCorrectFactOnStaleSupersededRowKeepsInvariant(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	cairoID, err := store.SaveFact(ctx, memory.FactInput{
+		Fact: "User lives in Cairo", Category: "identity", FactKey: "user.location",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveFact(ctx, memory.FactInput{
+		Fact: "User lives in Alexandria", Category: "identity", FactKey: "user.location",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// User corrects the (now superseded) Cairo row from a stale view.
+	gizaID, err := store.CorrectFact(ctx, cairoID, "User lives in Giza")
+	if err != nil {
+		t.Fatalf("correct on stale row: %v", err)
+	}
+
+	facts, err := store.GetKeyFacts(ctx, "identity", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 1 || facts[0].ID != gizaID {
+		t.Fatalf("one-active-per-key violated: %+v", facts)
+	}
+}
+
+// A correction of a stale KEYLESS fact must fail loudly instead of quietly
+// resurrecting a replaced value.
+func TestCorrectFactOnStaleKeylessRowFails(t *testing.T) {
+	db := testutil.TestDB(t)
+	store := memory.NewStore(db.Conn())
+	ctx := context.Background()
+
+	id, err := store.SaveFact(ctx, memory.FactInput{Fact: "User likes tea", Category: "preference"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RetractFact(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CorrectFact(ctx, id, "User likes green tea"); err == nil {
+		t.Fatal("expected error correcting a non-active keyless fact")
+	}
+}
+
+// Concurrent identical saves must dedup to one row and record no
+// self-supersede "conflicts" — the dedup scan runs inside the transaction.
+func TestSaveFactConcurrentIdenticalSaves(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = store.SaveFact(ctx, memory.FactInput{
+				Fact: "User lives in Cairo", Category: "identity", FactKey: "user.location",
+			})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+	}
+
+	facts, err := store.GetKeyFacts(ctx, "identity", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 1 {
+		t.Errorf("expected 1 deduped fact, got %d", len(facts))
+	}
+	conflicts, _ := store.GetConflicts(ctx, false, 10)
+	if len(conflicts) != 0 {
+		t.Errorf("identical concurrent saves recorded %d spurious conflict(s): %+v", len(conflicts), conflicts)
+	}
+}
+
+// A queued embedding job that lands after the source row was forgotten must
+// not resurrect the embedding.
+func TestUpsertAfterForgetDoesNotResurrectEmbedding(t *testing.T) {
+	db := testutil.TestDB(t)
+	store := memory.NewStore(db.Conn())
+	vstore := vector.NewStore(db.Conn())
+	ctx := context.Background()
+
+	id, err := store.SaveThought(ctx, "secret plans", "terminal", "s1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ForgetThought(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	// The late async job fires now.
+	if err := vstore.Upsert(ctx, "thought", id, []float32{0.1, 0.2}, "test-model"); err != nil {
+		t.Fatalf("late upsert should be a silent no-op, got: %v", err)
+	}
+	var n int
+	if err := db.Conn().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memory_vectors WHERE source_type='thought' AND source_id=?`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("forgotten thought's embedding was resurrected (%d rows)", n)
+	}
+}
+
+// Restore rejects a flagged replacement: old value active again, new value
+// retracted, conflict closed as user_restored.
+func TestRestoreConflict(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	oldID, err := store.SaveFact(ctx, memory.FactInput{
+		Fact: "User works at LumaByte", Category: "identity",
+		FactKey: "user.employer", Confidence: 0.95,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveFact(ctx, memory.FactInput{
+		Fact: "User works at Initech", Category: "identity",
+		FactKey: "user.employer", Confidence: memory.ConfidenceToolOutput,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := store.GetConflicts(ctx, true, 10)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("expected 1 pending conflict, got %d (err %v)", len(pending), err)
+	}
+
+	if err := store.RestoreConflict(ctx, pending[0].ID); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	facts, err := store.GetKeyFacts(ctx, "identity", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 1 || facts[0].ID != oldID {
+		t.Fatalf("expected old fact restored as sole active, got %+v", facts)
+	}
+	// Queue is empty; ledger closed as user_restored.
+	pending, _ = store.GetConflicts(ctx, true, 10)
+	if len(pending) != 0 {
+		t.Errorf("review queue not emptied: %+v", pending)
+	}
+	all, _ := store.GetConflicts(ctx, false, 10)
+	if len(all) != 1 || all[0].Resolution != memory.ResolutionUserRestored {
+		t.Errorf("expected user_restored on the ledger, got %+v", all)
+	}
+}
+
+// The review queue only carries needs_review rows — routine auto-supersede
+// history must not crowd it.
+func TestPendingConflictsExcludeAutoSupersede(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+
+	if _, err := store.SaveFact(ctx, memory.FactInput{
+		Fact: "User lives in Cairo", Category: "identity", FactKey: "user.location",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveFact(ctx, memory.FactInput{
+		Fact: "User lives in Alexandria", Category: "identity", FactKey: "user.location",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := store.GetConflicts(ctx, true, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("auto_supersede rows leaked into the review queue: %+v", pending)
+	}
+	all, _ := store.GetConflicts(ctx, false, 10)
+	if len(all) != 1 {
+		t.Errorf("ledger should still hold the auto_supersede record, got %d", len(all))
 	}
 }

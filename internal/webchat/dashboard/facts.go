@@ -3,6 +3,8 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"mime"
 	"net/http"
 	"strconv"
 
@@ -33,10 +35,13 @@ func (d *Dashboard) registerFactRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/dashboard/memory/facts/importance", d.handleFactImportance)
 	mux.HandleFunc("/api/dashboard/memory/conflicts", d.handleConflictsList)
 	mux.HandleFunc("/api/dashboard/memory/conflicts/review", d.handleConflictReview)
+	mux.HandleFunc("/api/dashboard/memory/conflicts/restore", d.handleConflictRestore)
 }
 
-// auditMemoryAction best-effort records a panel-initiated mutation.
-func (d *Dashboard) auditMemoryAction(ctx context.Context, action, target, status, errMsg string) {
+// auditMemoryAction best-effort records a panel-initiated mutation under the
+// same capability string the equivalent tool surface uses, so a single audit
+// query covers both surfaces.
+func (d *Dashboard) auditMemoryAction(ctx context.Context, action, capabilityUsed, target, status, errMsg string) {
 	if d.auditor == nil {
 		return
 	}
@@ -46,7 +51,7 @@ func (d *Dashboard) auditMemoryAction(ctx context.Context, action, target, statu
 		Service:        "memories_panel",
 		Action:         action,
 		Target:         target,
-		CapabilityUsed: "memory.write",
+		CapabilityUsed: capabilityUsed,
 		Status:         status,
 		Error:          errMsg,
 	})
@@ -58,6 +63,30 @@ func (d *Dashboard) requireFacts(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+// requireJSONPost gates the mutating endpoints: POST with a JSON body.
+// Requiring Content-Type: application/json means a cross-origin page cannot
+// reach these destructive handlers with a simple no-preflight form/text POST.
+func requireJSONPost(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return false
+	}
+	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if ct != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return false
+	}
+	return true
+}
+
+// factErrorStatus maps store errors to HTTP statuses.
+func factErrorStatus(err error) int {
+	if errors.Is(err, memory.ErrNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
 }
 
 func (d *Dashboard) handleFactsList(w http.ResponseWriter, r *http.Request) {
@@ -100,11 +129,7 @@ func (d *Dashboard) handleConflictsList(w http.ResponseWriter, r *http.Request) 
 }
 
 func (d *Dashboard) handleFactCorrect(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !d.requireFacts(w) {
+	if !requireJSONPost(w, r) || !d.requireFacts(w) {
 		return
 	}
 	var req struct {
@@ -117,20 +142,16 @@ func (d *Dashboard) handleFactCorrect(w http.ResponseWriter, r *http.Request) {
 	}
 	newID, err := d.facts.CorrectFact(r.Context(), req.ID, req.Fact)
 	if err != nil {
-		d.auditMemoryAction(r.Context(), "fact.correct", strconv.FormatInt(req.ID, 10), "error", err.Error())
-		writeError(w, http.StatusInternalServerError, err.Error())
+		d.auditMemoryAction(r.Context(), "fact.correct", "memory.write", strconv.FormatInt(req.ID, 10), "error", err.Error())
+		writeError(w, factErrorStatus(err), err.Error())
 		return
 	}
-	d.auditMemoryAction(r.Context(), "fact.correct", strconv.FormatInt(req.ID, 10), "success", "")
+	d.auditMemoryAction(r.Context(), "fact.correct", "memory.write", strconv.FormatInt(req.ID, 10), "success", "")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"new_id": newID})
 }
 
 func (d *Dashboard) handleFactForget(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !d.requireFacts(w) {
+	if !requireJSONPost(w, r) || !d.requireFacts(w) {
 		return
 	}
 	var req struct {
@@ -141,32 +162,30 @@ func (d *Dashboard) handleFactForget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "exactly one of fact_id or thought_id is required")
 		return
 	}
+	// Deletion is audited under memory.forget — the same capability the tool
+	// surface uses — so one audit query covers every deletion path.
 	if req.FactID != 0 {
 		if err := d.facts.ForgetFact(r.Context(), req.FactID); err != nil {
-			d.auditMemoryAction(r.Context(), "fact.forget", strconv.FormatInt(req.FactID, 10), "error", err.Error())
-			writeError(w, http.StatusInternalServerError, err.Error())
+			d.auditMemoryAction(r.Context(), "fact.forget", "memory.forget", strconv.FormatInt(req.FactID, 10), "error", err.Error())
+			writeError(w, factErrorStatus(err), err.Error())
 			return
 		}
-		d.auditMemoryAction(r.Context(), "fact.forget", strconv.FormatInt(req.FactID, 10), "success", "")
+		d.auditMemoryAction(r.Context(), "fact.forget", "memory.forget", strconv.FormatInt(req.FactID, 10), "success", "")
 		writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": "fact"})
 		return
 	}
 	res, err := d.facts.ForgetThought(r.Context(), req.ThoughtID)
 	if err != nil {
-		d.auditMemoryAction(r.Context(), "thought.forget", strconv.FormatInt(req.ThoughtID, 10), "error", err.Error())
-		writeError(w, http.StatusInternalServerError, err.Error())
+		d.auditMemoryAction(r.Context(), "thought.forget", "memory.forget", strconv.FormatInt(req.ThoughtID, 10), "error", err.Error())
+		writeError(w, factErrorStatus(err), err.Error())
 		return
 	}
-	d.auditMemoryAction(r.Context(), "thought.forget", strconv.FormatInt(req.ThoughtID, 10), "success", "")
+	d.auditMemoryAction(r.Context(), "thought.forget", "memory.forget", strconv.FormatInt(req.ThoughtID, 10), "success", "")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": "thought", "cascade": res})
 }
 
 func (d *Dashboard) handleFactPin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !d.requireFacts(w) {
+	if !requireJSONPost(w, r) || !d.requireFacts(w) {
 		return
 	}
 	var req struct {
@@ -178,19 +197,16 @@ func (d *Dashboard) handleFactPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.facts.PinFact(r.Context(), req.ID, req.Pinned); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		d.auditMemoryAction(r.Context(), "fact.pin", "memory.write", strconv.FormatInt(req.ID, 10), "error", err.Error())
+		writeError(w, factErrorStatus(err), err.Error())
 		return
 	}
-	d.auditMemoryAction(r.Context(), "fact.pin", strconv.FormatInt(req.ID, 10), "success", "")
+	d.auditMemoryAction(r.Context(), "fact.pin", "memory.write", strconv.FormatInt(req.ID, 10), "success", "")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"pinned": req.Pinned})
 }
 
 func (d *Dashboard) handleFactImportance(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !d.requireFacts(w) {
+	if !requireJSONPost(w, r) || !d.requireFacts(w) {
 		return
 	}
 	var req struct {
@@ -202,19 +218,20 @@ func (d *Dashboard) handleFactImportance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := d.facts.SetFactImportance(r.Context(), req.ID, req.Importance); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		status := factErrorStatus(err)
+		if status == http.StatusInternalServerError {
+			status = http.StatusBadRequest // range error
+		}
+		d.auditMemoryAction(r.Context(), "fact.importance", "memory.write", strconv.FormatInt(req.ID, 10), "error", err.Error())
+		writeError(w, status, err.Error())
 		return
 	}
-	d.auditMemoryAction(r.Context(), "fact.importance", strconv.FormatInt(req.ID, 10), "success", "")
+	d.auditMemoryAction(r.Context(), "fact.importance", "memory.write", strconv.FormatInt(req.ID, 10), "success", "")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"importance": req.Importance})
 }
 
 func (d *Dashboard) handleConflictReview(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !d.requireFacts(w) {
+	if !requireJSONPost(w, r) || !d.requireFacts(w) {
 		return
 	}
 	var req struct {
@@ -225,8 +242,30 @@ func (d *Dashboard) handleConflictReview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := d.facts.MarkConflictReviewed(r.Context(), req.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		d.auditMemoryAction(r.Context(), "conflict.review", "memory.write", strconv.FormatInt(req.ID, 10), "error", err.Error())
+		writeError(w, factErrorStatus(err), err.Error())
 		return
 	}
+	d.auditMemoryAction(r.Context(), "conflict.review", "memory.write", strconv.FormatInt(req.ID, 10), "success", "")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"reviewed": true})
+}
+
+func (d *Dashboard) handleConflictRestore(w http.ResponseWriter, r *http.Request) {
+	if !requireJSONPost(w, r) || !d.requireFacts(w) {
+		return
+	}
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == 0 {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	if err := d.facts.RestoreConflict(r.Context(), req.ID); err != nil {
+		d.auditMemoryAction(r.Context(), "conflict.restore", "memory.write", strconv.FormatInt(req.ID, 10), "error", err.Error())
+		writeError(w, factErrorStatus(err), err.Error())
+		return
+	}
+	d.auditMemoryAction(r.Context(), "conflict.restore", "memory.write", strconv.FormatInt(req.ID, 10), "success", "")
+	writeJSON(w, http.StatusOK, map[string]interface{}{"restored": true})
 }

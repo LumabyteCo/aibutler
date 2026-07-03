@@ -414,8 +414,8 @@ func (s *Store) SaveKeyFact(ctx context.Context, fact, category, sourceSession s
 // carries punctuation or doubled spaces, letting duplicates accumulate. Dedup
 // keeps each category small, so this scan stays bounded. Same category only —
 // "Cairo" as a location and "Cairo" as a project name are distinct facts.
-func (s *Store) findCanonicalFact(ctx context.Context, canonical, category string) (int64, bool, error) {
-	rows, err := s.db.QueryContext(ctx,
+func (s *Store) findCanonicalFact(ctx context.Context, q querier, canonical, category string) (int64, bool, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT id, fact FROM key_facts
 		 WHERE COALESCE(category, '') = COALESCE(?, '') AND status = 'active'`, category)
 	if err != nil {

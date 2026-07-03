@@ -44,9 +44,41 @@ func (s *Store) Save(ctx context.Context, sourceType string, sourceID int64, emb
 }
 
 // Upsert saves or replaces an embedding for a source item.
+//
+// The source-row existence guard runs in the same transaction as the write:
+// embedding jobs are queued asynchronously, so by the time one executes the
+// user may have permanently deleted the source row — deletion promises that
+// every derived artifact goes with it, and a late upsert must not resurrect
+// the embedding of forgotten content. Unknown source types (e.g. "entity")
+// pass through unguarded.
 func (s *Store) Upsert(ctx context.Context, sourceType string, sourceID int64, embedding []float32, model string) error {
 	blob := Float32ToBlob(embedding)
-	_, err := s.db.ExecContext(ctx,
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("vector.upsert: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	exists := 1
+	switch sourceType {
+	case "thought":
+		err = tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM captured_thoughts WHERE id = ?)`, sourceID).Scan(&exists)
+	case "transcript":
+		err = tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM session_transcripts WHERE id = ?)`, sourceID).Scan(&exists)
+	}
+	if err != nil {
+		return fmt.Errorf("vector.upsert: source check: %w", err)
+	}
+	if exists == 0 {
+		// Source row was deleted while this job sat in the queue — drop the
+		// embedding silently; there is nothing left for it to describe.
+		return nil
+	}
+
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO memory_vectors (source_type, source_id, embedding, model, dimension)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(source_type, source_id) DO UPDATE SET
@@ -57,6 +89,9 @@ func (s *Store) Upsert(ctx context.Context, sourceType string, sourceID int64, e
 		sourceType, sourceID, blob, model, len(embedding))
 	if err != nil {
 		return fmt.Errorf("vector.upsert: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("vector.upsert: commit: %w", err)
 	}
 	return nil
 }
