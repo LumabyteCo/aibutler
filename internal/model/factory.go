@@ -76,6 +76,28 @@ func NewFactory(cfg FactoryConfig) *Factory {
 // Run implements channel.AgentFactory. It composes the prompt, creates an agent,
 // runs it, and records token usage.
 func (f *Factory) Run(ctx context.Context, sessionID, task, channel string) (*agent.Result, error) {
+	return f.runWithCaps(ctx, sessionID, task, channel, f.caps)
+}
+
+// RunWithCapabilities runs a task under a restricted capability set — the
+// scheduler uses it so background jobs hold only the permissions their
+// schedule declares. Declared resources are a strict SUBSET of the factory
+// default set: each grant is inherited from the parent with its scopes,
+// rate limits, confirmation requirements, and audit levels intact, and a
+// resource the default set doesn't hold fails the run. A capability list
+// can therefore only narrow what a job may do, never widen it or quietly
+// shed a confirmation gate. An empty list falls back to the full default.
+func (f *Factory) RunWithCapabilities(ctx context.Context, sessionID, task, channel string, capResources []string) (*agent.Result, error) {
+	if len(capResources) == 0 {
+		return f.runWithCaps(ctx, sessionID, task, channel, f.caps)
+	}
+	if err := capability.ValidateSubset(f.caps, capResources); err != nil {
+		return nil, fmt.Errorf("factory: schedule capability profile: %w", err)
+	}
+	return f.runWithCaps(ctx, sessionID, task, channel, capability.Subset(f.caps, capResources))
+}
+
+func (f *Factory) runWithCaps(ctx context.Context, sessionID, task, channel string, caps *capability.CapabilitySet) (*agent.Result, error) {
 	// 1. Compose the prompt (system message + skills + history).
 	composed, err := f.composer.Compose(ctx, sessionID, task, channel)
 	if err != nil {
@@ -106,7 +128,7 @@ func (f *Factory) Run(ctx context.Context, sessionID, task, channel string) (*ag
 	// 4. Get available tools, filtered by custom role if applicable.
 	var toolDefs []agent.ToolDef
 	if f.tools != nil {
-		toolDefs = f.tools.AvailableTools(ctx, mode, f.caps)
+		toolDefs = f.tools.AvailableTools(ctx, mode, caps)
 	}
 	if role != nil && len(role.Tools) > 0 {
 		toolDefs = filterToolsByRole(toolDefs, role.Tools)
@@ -160,7 +182,7 @@ func (f *Factory) Run(ctx context.Context, sessionID, task, channel string) (*ag
 		Task:          task,
 		Type:          agent.TypePrimary,
 		Model:         f.model,
-		Caps:          f.caps,
+		Caps:          caps,
 		Mode:          mode,
 		DB:            f.db,
 		InitMessages:  initMessages,
