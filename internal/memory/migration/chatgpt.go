@@ -16,7 +16,7 @@ func (c *ChatGPTImporter) Name() string { return "chatgpt" }
 type chatgptExport []chatgptConversation
 
 type chatgptConversation struct {
-	Title   string                       `json:"title"`
+	Title   string                        `json:"title"`
 	Mapping map[string]chatgptMappingNode `json:"mapping"`
 }
 

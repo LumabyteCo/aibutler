@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/memory/vector"
 )
 
@@ -56,12 +57,12 @@ type missingQuery struct {
 
 var backfillSources = []missingQuery{
 	{source: "thought", query: `
-		SELECT t.id, t.content FROM captured_thoughts t
+		SELECT t.id, t.content, t.bank FROM captured_thoughts t
 		LEFT JOIN memory_vectors mv ON mv.source_type = 'thought' AND mv.source_id = t.id
 		WHERE mv.source_id IS NULL AND t.content != ''
 		ORDER BY t.id`},
 	{source: "transcript", query: `
-		SELECT t.id, t.content FROM session_transcripts t
+		SELECT t.id, t.content, t.bank FROM session_transcripts t
 		LEFT JOIN memory_vectors mv ON mv.source_type = 'transcript' AND mv.source_id = t.id
 		WHERE mv.source_id IS NULL AND t.content != ''
 		ORDER BY t.id`},
@@ -70,6 +71,7 @@ var backfillSources = []missingQuery{
 type backfillItem struct {
 	id      int64
 	content string
+	bank    string
 }
 
 // BackfillMissing embeds every memory item that has no vector yet, in batches of
@@ -122,7 +124,11 @@ func (b *Backfiller) backfillSource(ctx context.Context, src missingQuery, res *
 				res.Failed++
 				continue
 			}
-			if err := b.vec.Upsert(ctx, src.source, it.id, vecs[i], b.model); err != nil {
+			// The vector must carry the SOURCE row's bank — the backfill runs
+			// on an unscoped maintenance context, and stamping that context's
+			// bank onto another bank's item would surface its content in the
+			// wrong bank's semantic search.
+			if err := b.vec.Upsert(bank.With(ctx, it.bank), src.source, it.id, vecs[i], b.model); err != nil {
 				res.Failed++
 				log.Printf("memory: backfill upsert %s/%d failed: %v", src.source, it.id, err)
 				continue
@@ -143,7 +149,7 @@ func (b *Backfiller) loadMissing(ctx context.Context, query string) ([]backfillI
 	var items []backfillItem
 	for rows.Next() {
 		var it backfillItem
-		if err := rows.Scan(&it.id, &it.content); err != nil {
+		if err := rows.Scan(&it.id, &it.content, &it.bank); err != nil {
 			return nil, err
 		}
 		items = append(items, it)

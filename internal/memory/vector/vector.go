@@ -10,6 +10,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 )
 
 // Embedder generates vector embeddings from text.
@@ -34,9 +36,9 @@ func NewStore(db *sql.DB) *Store {
 func (s *Store) Save(ctx context.Context, sourceType string, sourceID int64, embedding []float32, model string) error {
 	blob := Float32ToBlob(embedding)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO memory_vectors (source_type, source_id, embedding, model, dimension)
-		 VALUES (?, ?, ?, ?, ?)`,
-		sourceType, sourceID, blob, model, len(embedding))
+		`INSERT INTO memory_vectors (source_type, source_id, embedding, model, dimension, bank)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		sourceType, sourceID, blob, model, len(embedding), bank.FromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("vector.save: %w", err)
 	}
@@ -79,14 +81,15 @@ func (s *Store) Upsert(ctx context.Context, sourceType string, sourceID int64, e
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO memory_vectors (source_type, source_id, embedding, model, dimension)
-		 VALUES (?, ?, ?, ?, ?)
+		`INSERT INTO memory_vectors (source_type, source_id, embedding, model, dimension, bank)
+		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(source_type, source_id) DO UPDATE SET
 		   embedding = excluded.embedding,
 		   model = excluded.model,
 		   dimension = excluded.dimension,
+		   bank = excluded.bank,
 		   created_at = datetime('now')`,
-		sourceType, sourceID, blob, model, len(embedding))
+		sourceType, sourceID, blob, model, len(embedding), bank.FromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("vector.upsert: %w", err)
 	}
@@ -116,8 +119,9 @@ func (s *Store) Search(ctx context.Context, query []float32, limit int) ([]Searc
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT source_type, source_id, vec_distance_cosine(embedding, ?) as distance
 		 FROM memory_vectors
+		 WHERE bank = ?
 		 ORDER BY distance ASC
-		 LIMIT ?`, blob, limit)
+		 LIMIT ?`, blob, bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil, fmt.Errorf("vector.search: %w", err)
 	}
@@ -147,9 +151,9 @@ func (s *Store) SearchByType(ctx context.Context, query []float32, sourceType st
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT source_type, source_id, vec_distance_cosine(embedding, ?) as distance
 		 FROM memory_vectors
-		 WHERE source_type = ?
+		 WHERE source_type = ? AND bank = ?
 		 ORDER BY distance ASC
-		 LIMIT ?`, blob, sourceType, limit)
+		 LIMIT ?`, blob, sourceType, bank.FromContext(ctx), limit)
 	if err != nil {
 		return nil, fmt.Errorf("vector.search_by_type: %w", err)
 	}

@@ -174,10 +174,10 @@ func TestSaveKeyFactDedupes(t *testing.T) {
 	// Save the "same" fact five times with surface variations.
 	variants := []string{
 		"User prefers dark mode",
-		"user prefers dark mode",       // case diff
-		"User prefers dark mode.",      // trailing punct
-		"  User prefers dark mode  ",   // leading/trailing whitespace
-		"User  prefers  dark  mode",    // collapsed whitespace
+		"user prefers dark mode",     // case diff
+		"User prefers dark mode.",    // trailing punct
+		"  User prefers dark mode  ", // leading/trailing whitespace
+		"User  prefers  dark  mode",  // collapsed whitespace
 	}
 
 	ids := make(map[int64]bool)

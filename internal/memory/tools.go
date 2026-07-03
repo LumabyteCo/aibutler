@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	bankpkg "github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/tool"
 )
 
@@ -78,8 +79,11 @@ func (t *captureTool) Execute(ctx context.Context, input string) (string, error)
 		result += fmt.Sprintf(" Extracted %d key fact(s): %s", len(factMessages), fmt.Sprintf("%v", factMessages))
 	}
 
-	// Auto-detect instruction patterns.
-	if t.detector != nil {
+	// Auto-detect instruction patterns — default bank only. Learned
+	// instructions are global and injected into the primary prompt every
+	// turn; a background worker processing untrusted input must not be able
+	// to install one.
+	if t.detector != nil && bankpkg.FromContext(ctx) == bankpkg.Default {
 		count, _ := t.detector.DetectAndSave(ctx, args.Content)
 		if count > 0 {
 			result += fmt.Sprintf(" Auto-detected %d instruction(s).", count)
@@ -102,9 +106,11 @@ type searchTool struct {
 	store *Store
 }
 
-func (t *searchTool) Name() string        { return "memory.thoughts" }
-func (t *searchTool) Description() string { return "List captured thoughts filtered by tags or by substring. For rich hybrid search across the whole memory, use memory.search instead." }
-func (t *searchTool) Capability() string  { return "memory.read" }
+func (t *searchTool) Name() string { return "memory.thoughts" }
+func (t *searchTool) Description() string {
+	return "List captured thoughts filtered by tags or by substring. For rich hybrid search across the whole memory, use memory.search instead."
+}
+func (t *searchTool) Capability() string { return "memory.read" }
 func (t *searchTool) Schema() string {
 	return `{"type":"object","properties":{"tags":{"type":"array","items":{"type":"string"},"description":"Filter by tags (OR logic)"},"query":{"type":"string","description":"Substring to match in thought content"},"limit":{"type":"integer","description":"Max results (default 50)"}}}`
 }

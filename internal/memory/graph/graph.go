@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/memory/entity"
 )
 
 // Node represents an entity with its relationships.
 type Node struct {
-	Entity        entity.Entity       `json:"entity"`
-	Relationships []RelatedEntity     `json:"relationships,omitempty"`
+	Entity        entity.Entity   `json:"entity"`
+	Relationships []RelatedEntity `json:"relationships,omitempty"`
 }
 
 // RelatedEntity is an entity connected via a relationship.
@@ -42,7 +43,7 @@ func (s *Store) GetNode(ctx context.Context, entityID int64) (*Node, error) {
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, type, name, COALESCE(attributes, ''), COALESCE(source_session, ''),
 		        first_seen, last_seen, mention_count
-		 FROM entities WHERE id = ?`, entityID).
+		 FROM entities WHERE id = ? AND bank = ?`, entityID, bank.FromContext(ctx)).
 		Scan(&e.ID, &e.Type, &e.Name, &attrsStr, &e.SourceSession,
 			&e.FirstSeen, &e.LastSeen, &e.MentionCount)
 	if err != nil {
@@ -109,7 +110,7 @@ func (s *Store) GetNode(ctx context.Context, entityID int64) (*Node, error) {
 func (s *Store) FindByName(ctx context.Context, name string) (*Node, error) {
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM entities WHERE LOWER(name) = LOWER(?) LIMIT 1`, name).Scan(&id)
+		`SELECT id FROM entities WHERE LOWER(name) = LOWER(?) AND bank = ? LIMIT 1`, name, bank.FromContext(ctx)).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("graph.find_by_name: %w", err)
 	}
@@ -130,7 +131,7 @@ func (s *Store) Stats(ctx context.Context) (map[string]int, error) {
 	stats := make(map[string]int)
 
 	var entities, relationships int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entities`).Scan(&entities)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entities WHERE bank = ?`, bank.FromContext(ctx)).Scan(&entities)
 	if err != nil {
 		return nil, fmt.Errorf("graph.stats: entities: %w", err)
 	}
@@ -143,7 +144,7 @@ func (s *Store) Stats(ctx context.Context) (map[string]int, error) {
 	stats["relationships"] = relationships
 
 	// Count by type.
-	rows, err := s.db.QueryContext(ctx, `SELECT type, COUNT(*) FROM entities GROUP BY type`)
+	rows, err := s.db.QueryContext(ctx, `SELECT type, COUNT(*) FROM entities WHERE bank = ? GROUP BY type`, bank.FromContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("graph.stats: by_type: %w", err)
 	}

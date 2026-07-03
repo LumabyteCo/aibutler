@@ -59,7 +59,8 @@ var personStopwords = map[string]struct{}{
 // from the first match onward. Case-insensitive; word-boundaried.
 //
 // Example: "Nimbus that weather-aware scheduling" → "Nimbus"
-//          "AI Butler and the swarm" → "AI Butler"
+//
+//	"AI Butler and the swarm" → "AI Butler"
 var nameFragmentPattern = regexp.MustCompile(
 	`(?i)\s+(?:that|which|who|whose|whom|where|when|and|but|or|for|with|without|because|since|while|although|though|so|thus|hence|then|after|before|until|unless|if|as)\b.*$`,
 )
