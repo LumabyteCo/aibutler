@@ -45,7 +45,7 @@ type recordingPostProcessor struct {
 	toolOutputs  []agent.ToolOutput
 }
 
-func (p *recordingPostProcessor) AfterAgentRun(_ context.Context, sessID, user, assistant string, outputs []agent.ToolOutput) {
+func (p *recordingPostProcessor) AfterAgentRun(_ context.Context, sessID, user, assistant, _ string, outputs []agent.ToolOutput) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.callCount++

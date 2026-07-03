@@ -538,6 +538,7 @@ func isCacheable(toolName string) bool {
 		"agent.delegate", "agent.spawn", "channel.send", "channel.relay",
 		"memory.capture", "memory.forget", "instruction.save", "instruction.update", "instruction.remove",
 		"transaction.", "voice.", "plugin.marketplace.install", "checkpoint.restore",
+		"code.",
 	}
 	for _, prefix := range uncacheable {
 		if strings.HasPrefix(toolName, prefix) {

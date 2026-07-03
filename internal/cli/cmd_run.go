@@ -15,12 +15,17 @@ import (
 
 	"net/http"
 
+	"github.com/LumabyteCo/aibutler/internal/audit"
+	"github.com/LumabyteCo/aibutler/internal/changelog"
 	"github.com/LumabyteCo/aibutler/internal/config"
+	"github.com/LumabyteCo/aibutler/internal/skillsynth"
+
 	"github.com/LumabyteCo/aibutler/internal/agent"
 	"github.com/LumabyteCo/aibutler/internal/agent/bus"
 	missionruntimepkg "github.com/LumabyteCo/aibutler/internal/agent/missionruntime"
 	"github.com/LumabyteCo/aibutler/internal/agent/router"
 	"github.com/LumabyteCo/aibutler/internal/agent/specialist"
+	subprocpkg "github.com/LumabyteCo/aibutler/internal/bridge/subprocess"
 	"github.com/LumabyteCo/aibutler/internal/capability"
 	"github.com/LumabyteCo/aibutler/internal/channel"
 	"github.com/LumabyteCo/aibutler/internal/i18n"
@@ -32,12 +37,11 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/prompt"
 	a2aclient "github.com/LumabyteCo/aibutler/internal/protocol/a2a/client"
 	a2aregistry "github.com/LumabyteCo/aibutler/internal/protocol/a2a/registry"
-	subprocpkg "github.com/LumabyteCo/aibutler/internal/bridge/subprocess"
 	"github.com/LumabyteCo/aibutler/internal/ratelimit"
 	"github.com/LumabyteCo/aibutler/internal/stopphrase"
+	"github.com/LumabyteCo/aibutler/internal/streaming"
 	"github.com/LumabyteCo/aibutler/internal/swarm"
 	"github.com/LumabyteCo/aibutler/internal/tool"
-	"github.com/LumabyteCo/aibutler/internal/streaming"
 )
 
 // CmdRun starts the interactive mode:
@@ -351,6 +355,33 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 	// transcript-save path taken by every chat turn.
 	postProc := &postRunProcessor{mem: app.MemStore, entities: app.EntityStore}
 
+	// Skill synthesis (opt-in): completed multi-step work with a grounded
+	// success signal can be distilled into a staged skill proposal. The
+	// synthesizer's capability clamp is the resource list of the same
+	// default set the factory below runs with — a learned skill can never
+	// declare access the run that taught it didn't have.
+	if app.Config.Configurations.SkillSynthesis.Enabled {
+		synthCaps := append([]capability.Capability{}, capability.MessagingDefaults()...)
+		synthCaps = append(synthCaps, capability.IoTDefaults()...)
+		var capResources []string
+		for _, c := range synthCaps {
+			capResources = append(capResources, c.Resource)
+		}
+		ledger := changelog.New(app.DB.Conn(), audit.NewSQLiteAuditor(app.DB.Conn()))
+		postProc.synth = skillsynth.New(skillsynth.Config{
+			Enabled:      true,
+			MinToolCalls: app.Config.Configurations.SkillSynthesis.MinToolCalls,
+			VerifyTools:  app.Config.Configurations.SkillSynthesis.VerifyTools,
+			SkillsDir:    app.Config.SkillsDir(),
+		}, adapter, app.DB.Conn(), ledger, capResources)
+		postProc.synth.SetToolCapabilityResolver(func(toolName string) string {
+			if t, ok := app.Tools.Get(toolName); ok {
+				return t.Capability()
+			}
+			return ""
+		})
+	}
+
 	// Create compactor for context window management.
 	compactor := prompt.NewCompactor(prompt.DefaultCompactorConfig())
 
@@ -372,9 +403,9 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 		DB:            app.DB.Conn(),
 		Config:        app.Config,
 		RoleRouter:    roleRouter,
-		PostProcessor:  postProc,
-		Compactor:      compactor,
-		BatchExecutor:  app.BatchExecutor,
+		PostProcessor: postProc,
+		Compactor:     compactor,
+		BatchExecutor: app.BatchExecutor,
 	})
 
 	// Wire factory as scheduler runner so scheduled tasks can execute.
@@ -434,7 +465,6 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 		}
 		app.Config.Configurations.Agents.MaxConcurrent = maxConcurrent
 	}
-
 
 	// Register agent orchestration tools.
 	agentSem := agent.NewSemaphore(app.Config.Configurations.Agents.MaxConcurrent)
@@ -788,9 +818,10 @@ func pickOllamaEmbedModel(resp *http.Response) (string, bool) {
 type postRunProcessor struct {
 	mem      *memory.Store
 	entities *entity.Store
+	synth    *skillsynth.Synthesizer // nil unless skill synthesis is enabled
 }
 
-func (p *postRunProcessor) AfterAgentRun(ctx context.Context, sessionID, userMsg, assistantMsg string, toolOutputs []agent.ToolOutput) {
+func (p *postRunProcessor) AfterAgentRun(ctx context.Context, sessionID, userMsg, assistantMsg, runStatus string, toolOutputs []agent.ToolOutput) {
 	// Use session-scoped turn numbering: query max existing turn for this session
 	// to avoid reset-to-0 across multiple runs in the same session.
 	turn := p.mem.NextTurnNumber(ctx, sessionID)
@@ -820,6 +851,25 @@ func (p *postRunProcessor) AfterAgentRun(ctx context.Context, sessionID, userMsg
 			log.Printf("postrun: save assistant transcript: %v", err)
 		}
 		p.extractAndSaveEntities(ctx, sessionID, assistantMsg)
+	}
+
+	// Skill synthesis: distill grounded multi-step successes into staged
+	// proposals. Off the hot path — the drafting model call runs in its own
+	// goroutine with its own deadline, and the result is only ever a pending
+	// proposal awaiting human review.
+	if p.synth != nil {
+		info := skillsynth.RunInfo{SessionID: sessionID, UserMessage: userMsg, Status: runStatus, ToolOutputs: toolOutputs}
+		if p.synth.ShouldSynthesize(info) {
+			go func() {
+				sctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				if id, err := p.synth.Synthesize(sctx, info); err != nil {
+					log.Printf("skillsynth: %v", err)
+				} else {
+					log.Printf("skillsynth: staged proposal %d — review with `aibutler skills pending`", id)
+				}
+			}()
+		}
 	}
 }
 

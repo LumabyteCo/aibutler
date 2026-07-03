@@ -14,6 +14,11 @@ import (
 var defaultSkillsFS embed.FS
 
 // Skill represents a parsed skill file (markdown + YAML frontmatter).
+//
+// The provenance fields (version, created_by, source_session, status) make
+// self-authored skills first-class reviewable artifacts: who wrote it, from
+// which session's work, which revision, and whether a human approved it.
+// Hand-written skills may omit them all.
 type Skill struct {
 	Name         string   `yaml:"name"`
 	Description  string   `yaml:"description"`
@@ -22,7 +27,11 @@ type Skill struct {
 	Tools        []string `yaml:"tools"`
 	Capabilities []string `yaml:"capabilities"`
 	Enabled      bool     `yaml:"enabled"`
-	Body         string   `yaml:"-"` // Markdown content after frontmatter
+	Version      int      `yaml:"version"`        // 0 = unversioned (hand-written)
+	CreatedBy    string   `yaml:"created_by"`     // "" | "user" | "agent"
+	SourceRun    string   `yaml:"source_session"` // session the procedure was learned from
+	Status       string   `yaml:"status"`         // "" | "active" | "proposed" | "archived"
+	Body         string   `yaml:"-"`              // Markdown content after frontmatter
 }
 
 // LoadSkill parses a skill file with YAML frontmatter + markdown body.
@@ -154,6 +163,13 @@ func parseSkill(content string) (*Skill, error) {
 		return nil, fmt.Errorf("skill: parse frontmatter: %w", err)
 	}
 	skill.Body = body
+
+	// Defense-in-depth: staged proposals live outside the loaded directory,
+	// but even if one is copied in by hand, a non-approved self-authored
+	// skill never activates — approval is the only path to active.
+	if skill.Status == "proposed" || skill.Status == "archived" {
+		skill.Enabled = false
+	}
 
 	return &skill, nil
 }

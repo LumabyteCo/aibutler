@@ -19,14 +19,14 @@ type CostSettings struct {
 
 // Settings — user preferences (everyone sees these).
 type Settings struct {
-	Language        string       `yaml:"language"`
-	Timezone        string       `yaml:"timezone"`
-	Notifications   bool         `yaml:"notifications"`
-	MorningBriefing string       `yaml:"morning_briefing"`
-	ActiveChannels  []string     `yaml:"active_channels"`
-	Model           string       `yaml:"model"`
-	PersonaName     string       `yaml:"persona_name"`
-	Skills          []string     `yaml:"skills"`
+	Language         string       `yaml:"language"`
+	Timezone         string       `yaml:"timezone"`
+	Notifications    bool         `yaml:"notifications"`
+	MorningBriefing  string       `yaml:"morning_briefing"`
+	ActiveChannels   []string     `yaml:"active_channels"`
+	Model            string       `yaml:"model"`
+	PersonaName      string       `yaml:"persona_name"`
+	Skills           []string     `yaml:"skills"`
 	AgentsEnabled    bool         `yaml:"agents_enabled"`
 	AgentMode        string       `yaml:"agent_mode"`
 	Cost             CostSettings `yaml:"cost"`
@@ -43,7 +43,7 @@ type ModelConfig struct {
 	// Ignored for native Anthropic / OpenAI / Gemini / xAI adapters.
 	// Example: "https://ollama.com/v1/chat/completions" for Ollama Cloud.
 	// Defaults to http://localhost:11434/v1/chat/completions.
-	BaseURL  string `yaml:"base_url"`
+	BaseURL string `yaml:"base_url"`
 }
 
 // ChannelConfig holds per-channel configuration.
@@ -66,14 +66,14 @@ type AgentConfig struct {
 type CustomRoleSpec struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description"`
-	Model       string   `yaml:"model"`        // Model override (empty = use primary)
+	Model       string   `yaml:"model"`         // Model override (empty = use primary)
 	Tools       []string `yaml:"tools"`         // Allowed tool names (empty = all)
 	Prompt      string   `yaml:"system_prompt"` // Additional system instructions
 }
 
 // ShellConfig holds shell execution security settings.
 type ShellConfig struct {
-	Mode    string   `yaml:"mode"`    // allowlist | denylist
+	Mode    string   `yaml:"mode"` // allowlist | denylist
 	Allowed []string `yaml:"allowed"`
 	// UseDefaultAllowlist, when true, prepends the curated DefaultAllowlist
 	// from each native-script executor (applescript, shortcuts, dbus) to the
@@ -184,8 +184,8 @@ type PluginConfig struct {
 type A2AConfig struct {
 	Enabled     bool     `yaml:"enabled"`
 	TokenHashes []string `yaml:"token_hashes"` // SHA-256 hashes of allowed bearer tokens
-	Port        int      `yaml:"port"`          // default: 8081
-	BindAddress string   `yaml:"bind_address"`  // default: "127.0.0.1" (localhost only for security)
+	Port        int      `yaml:"port"`         // default: 8081
+	BindAddress string   `yaml:"bind_address"` // default: "127.0.0.1" (localhost only for security)
 }
 
 // MCPServerExposure holds MCP server exposure settings.
@@ -222,14 +222,14 @@ type BridgesConfig struct {
 
 // SandboxConfig holds shell sandbox settings.
 type SandboxConfig struct {
-	Mode       string   `yaml:"mode"`        // off | workspace-only | allow-list
+	Mode       string   `yaml:"mode"` // off | workspace-only | allow-list
 	AllowPaths []string `yaml:"allow_paths"`
 }
 
 // RemoteBackupConfig holds remote backup destination settings.
 type RemoteBackupConfig struct {
-	Provider   string `yaml:"provider"`    // s3 | http
-	Endpoint   string `yaml:"endpoint"`    // S3 endpoint or HTTP PUT URL
+	Provider   string `yaml:"provider"` // s3 | http
+	Endpoint   string `yaml:"endpoint"` // S3 endpoint or HTTP PUT URL
 	Bucket     string `yaml:"bucket"`
 	AccessKey  string `yaml:"access_key"`
 	SecretKey  string `yaml:"secret_key"`
@@ -293,31 +293,44 @@ type PermissionsConfig struct {
 
 // Configurations — system wiring (power users).
 type Configurations struct {
-	Models    ModelConfig                `yaml:"models"`
-	Channels  map[string]*ChannelConfig  `yaml:"channels"`
-	Agents    AgentConfig                `yaml:"agents"`
-	Security  SecurityConfig             `yaml:"security"`
-	Vault     VaultConfig                `yaml:"vault"`
-	Cost      CostConfig                 `yaml:"cost"`
-	Prompts   PromptConfig               `yaml:"prompts"`
-	Web       WebConfig                  `yaml:"web"`
-	MCP       MCPConfig                  `yaml:"mcp"`
-	Schedule  ScheduleConfig             `yaml:"schedule"`
-	IoT       IoTConfig                  `yaml:"iot"`
-	Voice     VoiceConfig                `yaml:"voice"`
-	Embedding EmbeddingConfig            `yaml:"embedding"`
-	Plugins   PluginConfig               `yaml:"plugins"`
-	A2A       A2AConfig                  `yaml:"a2a"`
-	MCPServer MCPServerExposure           `yaml:"mcp_server"`
-	OAuth       OAuthConfig       `yaml:"oauth"`
-	Swarm       SwarmConfig       `yaml:"swarm"`
-	Registry    RegistryConfig    `yaml:"registry"`
-	Hooks       HooksConfig       `yaml:"hooks"`
-	Permissions PermissionsConfig `yaml:"permissions"`
-	Bridges     BridgesConfig     `yaml:"bridges"`
-	Sandbox     SandboxConfig     `yaml:"sandbox"`
-	Backup      BackupConfig      `yaml:"backup"`
-	File        FileConfig        `yaml:"file"`
+	Models      ModelConfig               `yaml:"models"`
+	Channels    map[string]*ChannelConfig `yaml:"channels"`
+	Agents      AgentConfig               `yaml:"agents"`
+	Security    SecurityConfig            `yaml:"security"`
+	Vault       VaultConfig               `yaml:"vault"`
+	Cost        CostConfig                `yaml:"cost"`
+	Prompts     PromptConfig              `yaml:"prompts"`
+	Web         WebConfig                 `yaml:"web"`
+	MCP         MCPConfig                 `yaml:"mcp"`
+	Schedule    ScheduleConfig            `yaml:"schedule"`
+	IoT         IoTConfig                 `yaml:"iot"`
+	Voice       VoiceConfig               `yaml:"voice"`
+	Embedding   EmbeddingConfig           `yaml:"embedding"`
+	Plugins     PluginConfig              `yaml:"plugins"`
+	A2A         A2AConfig                 `yaml:"a2a"`
+	MCPServer   MCPServerExposure         `yaml:"mcp_server"`
+	OAuth       OAuthConfig               `yaml:"oauth"`
+	Swarm       SwarmConfig               `yaml:"swarm"`
+	Registry    RegistryConfig            `yaml:"registry"`
+	Hooks       HooksConfig               `yaml:"hooks"`
+	Permissions PermissionsConfig         `yaml:"permissions"`
+	Bridges     BridgesConfig             `yaml:"bridges"`
+	Sandbox     SandboxConfig             `yaml:"sandbox"`
+	Backup      BackupConfig              `yaml:"backup"`
+	File        FileConfig                `yaml:"file"`
+	// SkillSynthesis is opt-in: when enabled, completed multi-step work with
+	// a grounded success signal (a verification tool that ran and did not
+	// error) is distilled into a STAGED skill proposal. Proposals never
+	// activate themselves — approval is always an explicit human action
+	// (`aibutler skills approve`).
+	SkillSynthesis SkillSynthesisConfig `yaml:"skill_synthesis"`
+}
+
+// SkillSynthesisConfig tunes self-authored skill proposals.
+type SkillSynthesisConfig struct {
+	Enabled      bool     `yaml:"enabled"`        // default false
+	MinToolCalls int      `yaml:"min_tool_calls"` // default 5
+	VerifyTools  []string `yaml:"verify_tools"`   // default code.test, code.lint, code.run
 }
 
 // FileConfig configures the file-manipulation tools. AllowPaths extends the
@@ -342,19 +355,19 @@ type DatabaseOptions struct {
 
 // AgentOptions holds agent tuning parameters.
 type AgentOptions struct {
-	MaxToolCalls       int           `yaml:"max_tool_calls"`
-	SubagentTimeout    time.Duration `yaml:"subagent_timeout"`
-	BackgroundTimeout  time.Duration `yaml:"background_timeout"`
-	BackgroundMax      int           `yaml:"background_max"`
-	PerSubagentBudget  float64       `yaml:"per_subagent_budget"`  // Max USD per subagent (0 = unlimited)
-	AutonomyLevel      string        `yaml:"autonomy_level"`       // l1 | l2 (default: l1)
-	L2AutoActions      []string      `yaml:"l2_auto_actions"`      // Tools auto-approved at L2
-	L2AskActions       []string      `yaml:"l2_ask_actions"`       // Tools requiring confirmation at L2
-	ParallelToolLimit  int           `yaml:"parallel_tool_limit"`  // Max concurrent tool calls in multi mode (default: 5)
-	RepeatCallLimit    int           `yaml:"repeat_call_limit"`    // Nth identical tool call within 10m gets an advisory instead of executing (default: 3, 0 = off)
-	PerUserAgentLimit  int           `yaml:"per_user_agent_limit"` // Max concurrent agents per user (default: 3)
-	L3TimeBound        time.Duration `yaml:"l3_time_bound"`        // L3 autonomy time limit (default: 30m, max: 24h)
-	L3SafetyActions    []string      `yaml:"l3_safety_actions"`    // Actions that always require confirmation even at L3
+	MaxToolCalls      int           `yaml:"max_tool_calls"`
+	SubagentTimeout   time.Duration `yaml:"subagent_timeout"`
+	BackgroundTimeout time.Duration `yaml:"background_timeout"`
+	BackgroundMax     int           `yaml:"background_max"`
+	PerSubagentBudget float64       `yaml:"per_subagent_budget"`  // Max USD per subagent (0 = unlimited)
+	AutonomyLevel     string        `yaml:"autonomy_level"`       // l1 | l2 (default: l1)
+	L2AutoActions     []string      `yaml:"l2_auto_actions"`      // Tools auto-approved at L2
+	L2AskActions      []string      `yaml:"l2_ask_actions"`       // Tools requiring confirmation at L2
+	ParallelToolLimit int           `yaml:"parallel_tool_limit"`  // Max concurrent tool calls in multi mode (default: 5)
+	RepeatCallLimit   int           `yaml:"repeat_call_limit"`    // Nth identical tool call within 10m gets an advisory instead of executing (default: 3, 0 = off)
+	PerUserAgentLimit int           `yaml:"per_user_agent_limit"` // Max concurrent agents per user (default: 3)
+	L3TimeBound       time.Duration `yaml:"l3_time_bound"`        // L3 autonomy time limit (default: 30m, max: 24h)
+	L3SafetyActions   []string      `yaml:"l3_safety_actions"`    // Actions that always require confirmation even at L3
 }
 
 // PromptOptions holds prompt tuning parameters.
@@ -387,7 +400,7 @@ type SessionOptions struct {
 // ScheduleOptions holds schedule tuning parameters.
 type ScheduleOptions struct {
 	TickInterval  time.Duration `yaml:"tick_interval"`  // default: 60s
-	MaxConcurrent int          `yaml:"max_concurrent"` // default: 3
+	MaxConcurrent int           `yaml:"max_concurrent"` // default: 3
 }
 
 // VoiceOptions holds voice pipeline tuning parameters.
@@ -398,8 +411,8 @@ type VoiceOptions struct {
 
 // PluginOptions holds plugin system tuning.
 type PluginOptions struct {
-	MaxPlugins  int           `yaml:"max_plugins"`  // default: 20
-	ExecTimeout time.Duration `yaml:"exec_timeout"` // default: 30s
+	MaxPlugins  int           `yaml:"max_plugins"`   // default: 20
+	ExecTimeout time.Duration `yaml:"exec_timeout"`  // default: 30s
 	MaxMemoryMB int           `yaml:"max_memory_mb"` // default: 64
 }
 
@@ -516,6 +529,11 @@ func Default() *Config {
 			},
 			MCPServer: MCPServerExposure{
 				AllowedCapabilities: []string{"memory.read", "data.read"},
+			},
+			SkillSynthesis: SkillSynthesisConfig{
+				Enabled:      false, // opt-in while the capability is validated
+				MinToolCalls: 5,
+				VerifyTools:  []string{"code.test", "code.lint", "code.run"},
 			},
 			Swarm: SwarmConfig{
 				MaxDepth:          4,
