@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -135,14 +136,43 @@ type CacheProvider interface {
 	TTLForTool(toolName string) time.Duration
 }
 
+// PathMutator is implemented by tools that modify files. MutatesPaths
+// inspects a call's input and returns the file paths the call would change;
+// the dispatcher checkpoints each one before execution so the mutation can
+// be undone. Empty result = nothing to checkpoint for this call.
+type PathMutator interface {
+	MutatesPaths(input string) []string
+}
+
+// Checkpointer records a file's pre-mutation state. Snapshot errors abort
+// the mutation (fail closed): a rollback guarantee that silently skips is
+// not a guarantee.
+type Checkpointer interface {
+	Snapshot(ctx context.Context, tool, path string) error
+}
+
 type Dispatcher struct {
-	registry   *Registry
-	engine     *capability.Engine
-	auditor    capability.Auditor
-	telemetry  TelemetryRecorder
-	hooks      HookRunner
-	compliance ComplianceLogger
-	cache      CacheProvider
+	registry     *Registry
+	engine       *capability.Engine
+	auditor      capability.Auditor
+	telemetry    TelemetryRecorder
+	hooks        HookRunner
+	compliance   ComplianceLogger
+	cache        CacheProvider
+	checkpointer Checkpointer
+
+	// Repeat-call circuit breaker: identical (tool, input) calls repeated
+	// within the window get an advisory instead of execution — runaway
+	// loops burn budget and, worse, retry destructive actions.
+	repeatLimit  int
+	repeatWindow time.Duration
+	repeatMu     sync.Mutex
+	repeatSeen   map[string]*repeatEntry
+}
+
+type repeatEntry struct {
+	count int
+	first time.Time
 }
 
 // NewDispatcher creates a dispatcher.
@@ -172,6 +202,55 @@ func (d *Dispatcher) SetComplianceLogger(cl ComplianceLogger) {
 // SetCache attaches a response cache to the dispatcher.
 func (d *Dispatcher) SetCache(c CacheProvider) {
 	d.cache = c
+}
+
+// SetCheckpointer attaches the pre-mutation checkpoint store. Tools that
+// implement PathMutator get their target files snapshotted before execution.
+func (d *Dispatcher) SetCheckpointer(c Checkpointer) {
+	d.checkpointer = c
+}
+
+// SetRepeatCallLimit enables the repeat-call circuit breaker: the Nth
+// identical call within a 10-minute window returns an advisory instead of
+// executing. 0 disables.
+func (d *Dispatcher) SetRepeatCallLimit(n int) {
+	d.repeatLimit = n
+	d.repeatWindow = 10 * time.Minute
+	if d.repeatSeen == nil {
+		d.repeatSeen = make(map[string]*repeatEntry)
+	}
+}
+
+// checkRepeat returns an advisory message when the identical call has hit
+// the repeat limit inside the window. It also prunes expired entries
+// opportunistically, keeping the map bounded by the window.
+func (d *Dispatcher) checkRepeat(name, input string) (string, bool) {
+	if d.repeatLimit <= 0 {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(name + "\x00" + input))
+	key := string(sum[:])
+	now := time.Now()
+
+	d.repeatMu.Lock()
+	defer d.repeatMu.Unlock()
+	for k, e := range d.repeatSeen {
+		if now.Sub(e.first) > d.repeatWindow {
+			delete(d.repeatSeen, k)
+		}
+	}
+	e, ok := d.repeatSeen[key]
+	if !ok || now.Sub(e.first) > d.repeatWindow {
+		d.repeatSeen[key] = &repeatEntry{count: 1, first: now}
+		return "", false
+	}
+	e.count++
+	if e.count >= d.repeatLimit {
+		return fmt.Sprintf(
+			"blocked: this exact %s call has now been attempted %d times with identical input in the last few minutes. If a different outcome is needed, something must change first — the input, the approach, or the state it depends on. Adjust and retry, or ask the user how to proceed.",
+			name, e.count), true
+	}
+	return "", false
 }
 
 // Execute dispatches a tool call through capability gates.
@@ -234,13 +313,53 @@ func (d *Dispatcher) ExecuteWithCaps(ctx context.Context, call agent.ToolCall, c
 		ctx = capability.WithCaps(ctx, caps)
 	}
 
-	// E4: Check cache before executing (skip mutating tools).
-	if d.cache != nil && isCacheable(call.Name) {
+	// E4: Check cache before executing. Tools that mutate state must never
+	// be served a cached "success": a mutating call replayed after a restore
+	// would report done without doing anything, skipping post-hooks and audit
+	// with it. The PathMutator check makes this structural — a mutating tool
+	// cannot silently fall out of the name denylist.
+	_, mutates := t.(PathMutator)
+	cacheable := d.cache != nil && !mutates && isCacheable(call.Name)
+	if cacheable {
 		ttl := d.cache.TTLForTool(call.Name)
 		if ttl > 0 {
 			cacheKey := call.Name + "\x00" + call.Input
 			if cached, found, cErr := d.cache.Get(ctx, cacheKey); cErr == nil && found {
 				return cached, nil
+			}
+		}
+	}
+
+	// 4b. Repeat-call circuit breaker: identical calls looping within the
+	// window get an advisory result instead of executing again. Runs after
+	// the cache (a cache hit is free — no budget burn, nothing destructive)
+	// and exempts read-capability tools, whose repetition is a normal
+	// read-verify pattern rather than a stuck loop. Returned as tool output
+	// (not an error) so the model reads and reacts to it; the audit trail
+	// records the block.
+	if !strings.HasSuffix(cap, ".read") {
+		if advisory, blocked := d.checkRepeat(call.Name, call.Input); blocked {
+			if d.auditor != nil {
+				_ = d.auditor.LogAccess(ctx, capability.AuditEntry{
+					Action:         call.Name,
+					CapabilityUsed: cap,
+					Status:         "blocked_repeat",
+				})
+			}
+			return advisory, nil
+		}
+	}
+
+	// 4c. Pre-mutation checkpoints: tools that declare the paths they will
+	// modify get each one snapshotted first, so the change is undoable.
+	// Snapshot failure aborts the mutation — fail closed. The snapshot layer
+	// validates each path against the allowed roots before reading it.
+	if d.checkpointer != nil {
+		if pm, ok := t.(PathMutator); ok {
+			for _, p := range pm.MutatesPaths(call.Input) {
+				if err := d.checkpointer.Snapshot(ctx, call.Name, p); err != nil {
+					return "", fmt.Errorf("checkpoint before %s failed (mutation aborted): %w", call.Name, err)
+				}
 			}
 		}
 	}
@@ -274,8 +393,8 @@ func (d *Dispatcher) ExecuteWithCaps(ctx context.Context, call agent.ToolCall, c
 		}
 	}
 
-	// E4: Store result in cache on success (skip mutating tools).
-	if d.cache != nil && err == nil && isCacheable(call.Name) {
+	// E4: Store result in cache on success (mutating tools excluded above).
+	if cacheable && err == nil {
 		ttl := d.cache.TTLForTool(call.Name)
 		if ttl > 0 {
 			cacheKey := call.Name + "\x00" + call.Input
@@ -377,9 +496,9 @@ type FuncTool struct {
 }
 
 func (f *FuncTool) Name() string        { return f.ToolName }
-func (f *FuncTool) Description() string  { return f.ToolDesc }
-func (f *FuncTool) Schema() string       { return f.ToolSchema }
-func (f *FuncTool) Capability() string   { return f.ToolCap }
+func (f *FuncTool) Description() string { return f.ToolDesc }
+func (f *FuncTool) Schema() string      { return f.ToolSchema }
+func (f *FuncTool) Capability() string  { return f.ToolCap }
 func (f *FuncTool) Execute(ctx context.Context, input string) (string, error) {
 	return f.Exec(ctx, input)
 }
@@ -410,14 +529,15 @@ func SanitizeHookFeedback(feedback string) string {
 // isCacheable returns false for tools that should never be cached (mutating tools).
 func isCacheable(toolName string) bool {
 	// Skip caching for shell, file writes, and other mutating tools.
+	// (Belt: the dispatcher also structurally excludes any PathMutator.)
 	uncacheable := []string{
-		"shell.", "file.write", "file.delete", "task.add", "task.complete",
+		"shell.", "file.write", "file.edit", "file.delete", "task.add", "task.complete",
 		"task.remove", "task.clear", "expense.log", "contact.add", "contact.update",
 		"journal.write", "health.log", "reminder.set", "reminder.cancel",
 		"habit.create", "habit.log", "place.save", "place.update", "place.delete",
 		"agent.delegate", "agent.spawn", "channel.send", "channel.relay",
-		"memory.capture", "instruction.save", "instruction.update", "instruction.remove",
-		"transaction.", "voice.", "plugin.marketplace.install",
+		"memory.capture", "memory.forget", "instruction.save", "instruction.update", "instruction.remove",
+		"transaction.", "voice.", "plugin.marketplace.install", "checkpoint.restore",
 	}
 	for _, prefix := range uncacheable {
 		if strings.HasPrefix(toolName, prefix) {
