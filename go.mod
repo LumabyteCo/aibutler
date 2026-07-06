@@ -10,7 +10,7 @@ require (
 	github.com/extism/go-sdk v1.7.1
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/ncruces/go-sqlite3 v0.35.1
-	github.com/pelletier/go-toml/v2 v2.4.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.53.0
 	golang.org/x/text v0.38.0
