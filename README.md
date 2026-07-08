@@ -104,7 +104,7 @@ We wrote the code and it compiles + passes unit tests, but we haven't put these 
 | **Scored core memory** — the always-in-context fact set picked by pinning, importance, usage, and recency within a token budget (revert with `core_memory_selection: recency`) | `beta` | — |
 | **File checkpoints & undo** — pre-images captured before agent file edits, `checkpoint.list`/`checkpoint.restore`, integrity-checked, retention janitor | `beta` | — |
 | **Repeat-call circuit breaker + verify hooks** — identical-call loops get an advisory; configured checkers run after file edits and feed real results back | `beta` | — |
-| **Internal eval harness** (`aibutler eval`) — deterministic benchmark suite through the real agent loop; unit-mode baseline runs green in CI, live-mode baseline pending a published run | `beta` | — |
+| **Internal eval harness** (`aibutler eval`) — deterministic benchmark suite through the real agent loop; unit-mode baseline green in CI, live-mode baseline published in [docs/eval/BASELINE.md](docs/eval/BASELINE.md) | `beta` | — |
 | **Self-authored skill proposals** (opt-in `skill_synthesis.enabled`) — grounded successes distilled into staged skills; approval is always an explicit human action; effectiveness unmeasured until compared with the eval harness | `beta` | — |
 | **Idle-time reflection cycle** (opt-in `reflection.enabled`) + per-schedule capability profiles — nightly deterministic maintenance report; scheduled jobs can declare a strict capability subset | `beta` | — |
 | **Per-profile memory banks** — background workers read/write isolated memory by default | `beta` | — |

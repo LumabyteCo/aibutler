@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LumabyteCo/aibutler/internal/agent"
 	"github.com/LumabyteCo/aibutler/internal/eval"
 	"github.com/LumabyteCo/aibutler/testutil"
 )
@@ -285,5 +286,54 @@ func TestMinToolErrorsDetectsMissingRefusal(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(report.Results[0].Failures, " "), "min_tool_errors") {
 		t.Fatalf("failure not attributed to min_tool_errors: %+v", report.Results[0].Failures)
+	}
+}
+
+// settableModel records whether it received tool definitions — the live
+// contract the first real run exposed: without SetTools the model cannot
+// call tools, so every tool-using task fails with zero calls.
+type settableModel struct {
+	defs  []agent.ToolDef
+	steps []eval.ScriptStep
+	next  int
+}
+
+func (m *settableModel) SetTools(defs []agent.ToolDef) { m.defs = defs }
+
+func (m *settableModel) Complete(_ context.Context, _ []agent.Message) (agent.Response, error) {
+	if m.next >= len(m.steps) {
+		return agent.Response{Content: "done"}, nil
+	}
+	step := m.steps[m.next]
+	m.next++
+	resp := agent.Response{Content: step.Text}
+	for i, tc := range step.Tools {
+		resp.ToolCalls = append(resp.ToolCalls, agent.ToolCall{ID: string(rune('a' + i)), Name: tc.Name, Input: tc.Input})
+	}
+	return resp, nil
+}
+
+// A live-mode model must be handed the workspace toolset before the run.
+func TestLiveModelReceivesToolDefinitions(t *testing.T) {
+	db := testutil.TestDB(t)
+	model := &settableModel{steps: []eval.ScriptStep{{Text: "done"}}}
+	suite := eval.Suite{Hash: "h", Tasks: []eval.Task{{
+		ID: "t", Prompt: "p",
+		Checks: []eval.Check{{Kind: "output_contains", Value: "done"}},
+	}}}
+	if _, err := eval.RunSuite(context.Background(), db.Conn(), suite, &eval.Runner{Model: model}, "live", "fake"); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.defs) == 0 {
+		t.Fatal("live model received no tool definitions — tool-using tasks would all fail with zero calls")
+	}
+	found := false
+	for _, d := range model.defs {
+		if d.Name == "file.write" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("workspace file tools missing from advertised defs: %+v", model.defs)
 	}
 }
