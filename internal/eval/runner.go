@@ -80,6 +80,16 @@ func (r *Runner) RunTask(ctx context.Context, t Task, workspace string) (Trace, 
 		model = &scriptedModel{steps: t.Script}
 	}
 
+	// Live adapters learn about tools through SetTools — without it the
+	// model has no tool definitions and can only answer in text, which
+	// makes every tool-using task fail with zero calls. (The scripted model
+	// emits tool calls directly, so unit mode works either way — this is
+	// specifically the live-mode contract, and the first live run is what
+	// exposed it.)
+	if setter, ok := model.(interface{ SetTools([]agent.ToolDef) }); ok {
+		setter.SetTools(recorder.AvailableTools(ctx, agent.ModeSingle, nil))
+	}
+
 	// The loop gets headroom BEYOND the task budget: if the agent hard-capped
 	// at the budget, an over-budget behavior would soft-stop invisibly and
 	// look like a pass. The judge fails the task on the visible overage.
