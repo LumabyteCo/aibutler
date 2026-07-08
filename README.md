@@ -257,9 +257,9 @@ aibutler vault set whatsapp_phone_number_id YOUR_PHONE_ID
 | Metric | Value |
 |--------|-------|
 | Tests (passing, race-free) | **2,148** |
-| Go packages | **116** |
-| SQLite tables | **67** |
-| Database migrations | **19** |
+| Go packages | **120+** |
+| SQLite tables | **74** |
+| Database migrations | **22** |
 | Internal security audit passes | **59** |
 | CVEs (`govulncheck` verified) | **0** |
 | External Go dependencies | **~10 direct** |
