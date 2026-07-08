@@ -2,7 +2,7 @@ module github.com/LumabyteCo/aibutler
 
 go 1.26.2
 
-toolchain go1.26.4
+toolchain go1.26.5
 
 require (
 	filippo.io/age v1.3.1
