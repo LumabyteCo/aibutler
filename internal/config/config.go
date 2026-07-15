@@ -137,6 +137,18 @@ type MCPServerConfig struct {
 // MCPConfig holds MCP client settings.
 type MCPConfig struct {
 	Servers []MCPServerConfig `yaml:"servers"`
+
+	// ElicitationPolicy decides how to answer a server's elicitation/create
+	// request (a mid-tool-call prompt for more input).
+	//
+	//	decline         — refuse every elicitation (default). The server is
+	//	                  answered so it never hangs, but the agent never puts
+	//	                  words in the user's mouth.
+	//	accept-defaults — accept the form pre-filled with the schema's own
+	//	                  default values. MCP elicitation forms carry the
+	//	                  suggested answer in `default` for exactly this
+	//	                  one-click case. Only enable for servers you trust.
+	ElicitationPolicy string `yaml:"elicitation_policy"`
 }
 
 // ScheduleConfig holds schedule system settings.

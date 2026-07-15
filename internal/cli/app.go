@@ -437,6 +437,27 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	// 5i. Register MCP tools (connect to configured MCP servers).
 	if len(cfg.Configurations.MCP.Servers) > 0 {
 		mcpClient := mcp.NewClient()
+
+		// Elicitation policy: servers may ask for more input mid-tool-call.
+		// Default is decline — accepting a server's suggested defaults is
+		// opt-in because it answers on the user's behalf.
+		switch cfg.Configurations.MCP.ElicitationPolicy {
+		case "accept-defaults":
+			mcpClient.SetElicitationHandler(mcp.AcceptElicitationDefaults)
+			log.Println("mcp: elicitation policy: accept-defaults")
+		default:
+			mcpClient.SetElicitationHandler(mcp.DeclineElicitation)
+		}
+
+		// Live progress for long-running tool calls.
+		mcpClient.SetProgressHandler(func(server string, p mcp.ProgressParams) {
+			if p.Total > 0 {
+				log.Printf("mcp: %s progress %.0f/%.0f %s", server, p.Progress, p.Total, p.Message)
+				return
+			}
+			log.Printf("mcp: %s progress %.0f %s", server, p.Progress, p.Message)
+		})
+
 		connected := 0
 		for _, srv := range cfg.Configurations.MCP.Servers {
 			// Build env map: start with static env, then overlay vault-resolved secrets.
@@ -463,7 +484,9 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 				continue
 			}
 			tools, _ := mcpClient.Tools(srv.Name)
-			log.Printf("mcp: connected to %s (%d tools)", srv.Name, len(tools))
+			info, proto, _ := mcpClient.ServerInfo(srv.Name)
+			log.Printf("mcp: connected to %s (%d tools) — %s v%s, protocol %s",
+				srv.Name, len(tools), info.Name, info.Version, proto)
 			connected++
 		}
 		if connected > 0 {
