@@ -15,6 +15,11 @@ func RegisterMCPTools(registry *tool.Registry, client *Client) {
 	// Store registry reference for reconnect-time re-registration.
 	client.SetRegistry(registry)
 
+	// Reconnect drops the server's stale tools; this puts the fresh set back.
+	client.SetReRegisterHook(func(serverName string) {
+		registerServerTools(registry, client, serverName)
+	})
+
 	// Register individual server tools as mcp.<server>.<tool>.
 	for _, serverName := range client.Servers() {
 		registerServerTools(registry, client, serverName)
@@ -77,9 +82,9 @@ func (t *mcpTool) Execute(ctx context.Context, input string) (string, error) {
 		return "", err
 	}
 	if result.IsError {
-		return "", fmt.Errorf("mcp tool error: %s", result.TextContent())
+		return "", fmt.Errorf("mcp tool error: %s", result.AgentText())
 	}
-	return result.TextContent(), nil
+	return result.AgentText(), nil
 }
 
 // mcpCallTool is a generic dynamic invocation tool.
@@ -125,7 +130,7 @@ func (t *mcpCallTool) Execute(ctx context.Context, input string) (string, error)
 		return "", err
 	}
 	if result.IsError {
-		return "", fmt.Errorf("mcp tool error: %s", result.TextContent())
+		return "", fmt.Errorf("mcp tool error: %s", result.AgentText())
 	}
-	return result.TextContent(), nil
+	return result.AgentText(), nil
 }
