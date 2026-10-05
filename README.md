@@ -32,7 +32,7 @@
 > **✨ New in v0.6.0 (this release):**
 > **A real Home Assistant adapter** — natural-language device control with a three-tier safety model (*"unlock the front door" demands a confirmation + PIN, by default*). Plus **chat history that survives reloads**, honest cost tracking for Ollama Cloud, provider failures that explain themselves in chat, a security fix that keeps PINs out of model context, editor-extension API endpoints, and a truth pass over every number in this README. [Jump to smart home →](#connect-your-smart-home-optional--beta)
 
-> **🧪 On main now (v0.7):** **the hybrid local/cloud router** — a tiny local model answers "lights off" in ~1-2s *and keeps working with the internet down*; the cloud model handles reasoning. One `configurations.models.local` setting. [How it works →](docs/smart-home/OVERVIEW.md)
+> **🧪 On main now (v0.7):** **routines + the hybrid local/cloud router** — say *"Goodnight"* and the house responds (lights → locks → thermostat, with PIN gates intact per step) — answered by a tiny local model in seconds *and it keeps working with the internet down*. One `configurations.models.local` setting. [How it works →](docs/smart-home/OVERVIEW.md)
 
 ---
 
@@ -225,7 +225,9 @@ aibutler iot set-pin
 
 Then just talk to it: *"list my smart home devices"*, *"turn off the kitchen
 light"*, *"unlock the front door"* — Butler demands the PIN for anything
-that gates entry to your home, by default.
+that gates entry to your home, by default. And say **"Goodnight"** — one
+word runs the whole house (lights off → doors locked → temperature set),
+with the same PIN gates inside the routine.
 
 ### Connect a messaging channel (optional — beta)
 
