@@ -45,3 +45,10 @@ func (p *PINVerifier) Verify(ctx context.Context, pin string) (bool, error) {
 	}
 	return true, nil
 }
+
+// SetPINForTest is the test-facing PIN setter (production callers use the
+// `aibutler iot set-pin` CLI command). It stores the bcrypt hash in the
+// configured vault exactly like the CLI does.
+func (v *PINVerifier) SetPINForTest(ctx context.Context, pin string) error {
+	return v.SetPIN(ctx, pin)
+}

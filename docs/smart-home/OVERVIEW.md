@@ -125,6 +125,47 @@ This is the configuration the Raspberry Pi story targets: a Pi running
 Butler + Ollama with a 4B model controls the house offline; the cloud
 model adds the brainpower when the network is there.
 
+## Routines (Phase 3)
+
+A routine is a named chain of device commands expanded against your
+live device registry and executed step-by-step through the Controller —
+so **every existing safety gate applies to every step**. No stored PIN,
+no bypass: locking doors inside a routine demands the PIN exactly like a
+manual lock.
+
+| Routine | Chain |
+|---|---|
+| `goodnight` | all lights off → lock all doors (**PIN**) → climate to 18°C |
+| `good_morning` | climate to 21°C |
+| `leaving_home` | lights off → lock doors (**PIN**) → arm alarm (**PIN**) |
+| `movie_time` | dim lights to 25% |
+
+Just say it — "Goodnight." — optionally with the PIN in the same
+message ("Goodnight. Safety PIN: 2468"). Without a PIN, comfort steps
+complete honestly and safety steps report `pin_required`:
+
+```
+You: Goodnight.
+Butler: Lights off (kitchen, living room) ✅
+        Front door lock — PIN required to complete this step
+        Temperature — skipped (no thermostat found)
+        If you'd like the door locked, just send your safety PIN.
+You:   PIN: 2468 — lock the front door.
+Butler: Front door locked. 🔒
+```
+
+Details:
+- **Skips are honest**: a routine written for a full house runs fine in
+  a studio — missing device classes are skipped with a note, never a
+  hard failure.
+- **Partial success is the design**: comfort steps finish even when a
+  safety step refuses. The result lists exactly what happened per step.
+- Routines ride the hybrid router: "goodnight" is a fast intent, so the
+  **whole chain executes locally and offline**.
+- Routine runs are recorded in the actions audit log — the reflection
+  cycle can later offer to automate them ("you usually run goodnight at
+  23:10 — schedule it?").
+
 ## Source Files
 
 - `internal/iot/iot.go` -- Controller, ReadSensor, ExecuteCommand, Sync, checkSafetyBounds

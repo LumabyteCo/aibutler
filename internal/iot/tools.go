@@ -11,6 +11,7 @@ import (
 
 // RegisterIoTTools registers IoT tools with the tool registry.
 func RegisterIoTTools(registry *tool.Registry, controller *Controller) {
+	registry.Register(&routineRunTool{controller: controller})
 	registry.Register(&sensorReadTool{controller: controller})
 	registry.Register(&deviceControlTool{controller: controller})
 	registry.Register(&safetyControlTool{controller: controller})
@@ -192,5 +193,53 @@ func (t *deviceDiscoverTool) Execute(ctx context.Context, _ string) (string, err
 	// runtime could be listed but not executed until a restart.
 	t.controller.Sync(devices)
 	data, _ := json.Marshal(devices)
+	return string(data), nil
+}
+
+// routineRunTool runs a named smart-home routine ("goodnight" =
+// lights→locks→climate) with every existing gate applying per step.
+type routineRunTool struct{ controller *Controller }
+
+type routineRunInput struct {
+	Name string `json:"name"`
+	PIN  string `json:"pin"`
+}
+
+func (t *routineRunTool) Name() string { return "iot.routine.run" }
+func (t *routineRunTool) Description() string {
+	return "Run a smart-home routine (a named chain of device commands). CALL THIS whenever the user says " +
+		"\"goodnight\", \"good morning\", \"leaving home\" or \"movie time\" — even as a single word with no other " +
+		"context — instead of replying socially. Routines: goodnight (all lights off → lock all doors → set " +
+		"temperature), good_morning, leaving_home, movie_time. Every step passes the same safety gates as a " +
+		"manual command: locking doors requires the safety PIN, so pass the user's PIN in the 'pin' field when " +
+		"the message provides one. Without a PIN, safety steps report pin_required and comfort steps still complete."
+}
+func (t *routineRunTool) Capability() string { return "iot.device.control" }
+
+func (t *routineRunTool) Schema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Routine name (goodnight, good_morning, leaving_home, movie_time)"},
+			"pin":  {"type": "string", "description": "Safety PIN if the user provided one (for lock/alarm steps)"}
+		},
+		"required": ["name"]
+	}`
+}
+
+func (t *routineRunTool) Execute(ctx context.Context, input string) (string, error) {
+	var in routineRunInput
+	if err := json.Unmarshal([]byte(input), &in); err != nil {
+		return "", fmt.Errorf("iot.routine.run: %w", err)
+	}
+	caps := capability.CapsFromContext(ctx)
+	if caps == nil {
+		return "", fmt.Errorf("iot.routine.run: no capabilities in context")
+	}
+	results, err := t.controller.RunRoutine(ctx, caps, in.Name, in.PIN)
+	if err != nil {
+		return "", err
+	}
+	data, _ := json.Marshal(results)
 	return string(data), nil
 }

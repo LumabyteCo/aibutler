@@ -187,3 +187,8 @@ func toFloat64(v interface{}) (float64, bool) {
 		return 0, false
 	}
 }
+
+// SetPINForTest is the test-facing PIN setter (see PINVerifier.SetPINForTest).
+func (c *Controller) SetPINForTest(ctx context.Context, pin string) error {
+	return c.pin.SetPINForTest(ctx, pin)
+}

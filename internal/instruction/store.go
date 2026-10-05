@@ -263,3 +263,32 @@ func scanInstructions(rows *sql.Rows) ([]Instruction, error) {
 	}
 	return instructions, rows.Err()
 }
+
+// Seed describes a built-in instruction to ensure exists (idempotent).
+type Seed struct {
+	Content  string
+	Category string
+	Priority int
+	Source   string
+}
+
+// SaveSeed ensures a built-in instruction exists — idempotent by
+// (source, content). Built-in seeds never overwrite a user's edited
+// or deleted version: if a row with the same source+content exists,
+// this is a no-op.
+func (s *Store) SaveSeed(ctx context.Context, seed Seed) error {
+	if seed.Content == "" {
+		return fmt.Errorf("instruction: seed content is required")
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM learned_instructions WHERE source = ? AND content = ?`,
+		seed.Source, seed.Content).Scan(&exists); err != nil {
+		return fmt.Errorf("instruction: seed check: %w", err)
+	}
+	if exists > 0 {
+		return nil // already seeded — never duplicate, never overwrite
+	}
+	_, err := s.Save(ctx, seed.Content, seed.Category, seed.Priority, ScopeGlobal, "", seed.Source, "")
+	return err
+}

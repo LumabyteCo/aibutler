@@ -375,6 +375,17 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	instrDetector := instruction.NewDetector(instrStore)
 	instruction.RegisterInstructionTools(app.Tools, instrStore)
 
+	// Phase 3: seed the smart-home routine instruction (idempotent — the
+	// store dedupes by source+content hash via ON CONFLICT in SaveSeed).
+	// Small local models on the fast-intent path need an explicit push to
+	// call the routine tool instead of replying socially to "goodnight".
+	_ = instrStore.SaveSeed(context.Background(), instruction.Seed{
+		Content:  "When the user says goodnight, good morning, leaving home, or movie time (even as a single word), run the matching smart-home routine with iot.routine.run instead of replying with text. If the message contains a safety PIN, pass it in the pin field.",
+		Category: instruction.CategoryRule,
+		Priority: 90,
+		Source:   "builtin",
+	})
+
 	// 5d2. Register memory tools (living memory: capture, thoughts, facts).
 	// MemStore is the single shared instance used by both the capture tool
 	// (here) and postRunProcessor (in cmd_run.go). Keeping one instance means
