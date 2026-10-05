@@ -25,6 +25,7 @@ func CmdRepl(app *App, args []string, w io.Writer) error {
 		return nil
 	}
 	fmt.Fprintf(w, "Provider: %s\n\n", provider)
+	appCompatBaseURL = app.Config.Configurations.Models.BaseURL
 
 	sessionID := fmt.Sprintf("repl-%d", time.Now().UnixNano())
 	var messages []agent.Message
@@ -268,19 +269,14 @@ func handleSlashCommand(app *App, input string, w io.Writer, sessionID string, m
 	return false
 }
 
-// resolveProviderName maps model names to provider strings for the REPL.
+// resolveProviderName maps model names to provider strings for the REPL,
+// accounting for cloud-hosted OpenAI-compat endpoints (Ollama Cloud is
+// paid per token; local endpoints are free).
 func resolveProviderName(modelName string) string {
-	switch {
-	case strings.HasPrefix(modelName, "claude"):
-		return "anthropic"
-	case strings.HasPrefix(modelName, "gpt"):
-		return "openai"
-	case strings.HasPrefix(modelName, "gemini"):
-		return "gemini"
-	case strings.HasPrefix(modelName, "grok"):
-		return "xai"
-	default:
-		return "local"
-	}
+	return model.ResolveProviderForCost(modelName, appCompatBaseURL)
 }
+
+// appCompatBaseURL is set from the loaded config at REPL start so
+// resolveProviderName can distinguish Ollama Cloud from local endpoints.
+var appCompatBaseURL string
 

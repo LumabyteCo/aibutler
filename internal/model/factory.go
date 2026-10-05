@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent"
@@ -71,6 +72,15 @@ func NewFactory(cfg FactoryConfig) *Factory {
 		postProcessor: cfg.PostProcessor,
 		compactor:     cfg.Compactor,
 	}
+}
+
+// providerForCost resolves the pricing provider for the configured model,
+// accounting for cloud-hosted OpenAI-compat endpoints (Ollama Cloud).
+func (f *Factory) providerForCost() string {
+	if f.cfg == nil {
+		return "local"
+	}
+	return ResolveProviderForCost(f.cfg.Configurations.Models.Primary, f.cfg.Configurations.Models.BaseURL)
 }
 
 // Run implements channel.AgentFactory. It composes the prompt, creates an agent,
@@ -195,7 +205,7 @@ func (f *Factory) runWithCaps(ctx context.Context, sessionID, task, channel stri
 		// placeholder rate. README claims "per-model pricing" and this
 		// is the path that makes that claim true for agent-loop calls.
 		CostEstimator: estimateCost,
-		Provider:      resolveProvider(f.cfg.Settings.Model),
+		Provider:      f.providerForCost(),
 	}
 	// Only set Tools if dispatcher is non-nil (avoids nil interface wrapper).
 	if f.tools != nil {
@@ -224,7 +234,7 @@ func (f *Factory) runWithCaps(ctx context.Context, sessionID, task, channel stri
 
 	// 9. Record token usage.
 	if f.tracker != nil {
-		provider := resolveProvider(f.cfg.Configurations.Models.Primary)
+		provider := f.providerForCost()
 		costUSD := estimateCost(provider, result.TokensIn, result.TokensOut)
 		_ = f.tracker.Record(ctx, prompt.UsageEntry{
 			SessionID:    sessionID,
@@ -288,6 +298,27 @@ func resolveProvider(model string) string {
 	}
 }
 
+// ResolveProviderForCost maps a model name to the provider string used for
+// pricing. Cloud-hosted OpenAI-compatible endpoints (Ollama Cloud) are paid
+// per token like any cloud provider; without this, a full day of paid usage
+// shows as $0.00 in the Spending panel because the model name doesn't match
+// a known cloud prefix and defaults to "local" ($0).
+func ResolveProviderForCost(model, compatBaseURL string) string {
+	provider := resolveProvider(model)
+	if provider != "local" {
+		return provider
+	}
+	// Non-claude/gpt/gemini/grok names route through the OpenAI-compat
+	// endpoint. The endpoint decides local vs cloud: ollama.com hosts
+	// Ollama Cloud (paid); anything else (localhost, LAN, LM Studio…) is
+	// the user's own hardware ($0).
+	u := strings.ToLower(compatBaseURL)
+	if strings.Contains(u, "ollama.com") {
+		return "ollama_cloud"
+	}
+	return "local"
+}
+
 // EstimateCostPublic calculates approximate cost based on provider.
 // Exported for use by the REPL and other CLI commands.
 func EstimateCostPublic(provider string, tokensIn, tokensOut int) float64 {
@@ -309,6 +340,12 @@ func estimateCost(provider string, tokensIn, tokensOut int) float64 {
 	case "xai":
 		// Grok-2 pricing: $2/M input, $10/M output
 		return float64(tokensIn)*2.0/1_000_000 + float64(tokensOut)*10.0/1_000_000
+	case "ollama_cloud":
+		// Ollama Cloud hosted models are billed per token. Prices vary
+		// per model (~$2-$6/M input, ~$8-$20/M output for flagship
+		// models); we use a representative flagship rate so budgets and
+		// the Spending panel are conservative rather than $0.
+		return float64(tokensIn)*3.0/1_000_000 + float64(tokensOut)*12.0/1_000_000
 	default:
 		// Local models: $0.00
 		return 0.0

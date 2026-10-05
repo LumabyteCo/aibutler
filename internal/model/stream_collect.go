@@ -41,7 +41,14 @@ func CollectStreamResponse(ch <-chan agent.StreamEvent) agent.Response {
 			resp.TokensOut += evt.TokensOut
 
 		case "error":
-			// Errors are noted but collection continues.
+			// Errors are collected so the router can surface them to
+			// the user; silently dropping them here produced empty
+			// assistant replies on provider failures (401/410).
+			if evt.Error != nil {
+				resp.Error = evt.Error.Error()
+			} else if evt.Text != "" {
+				resp.Error = evt.Text
+			}
 
 		case "message_stop":
 			// Stream complete.
