@@ -38,12 +38,35 @@ type Settings struct {
 type ModelConfig struct {
 	Primary  string `yaml:"primary"`
 	Fallback string `yaml:"fallback"`
+	// Local is an optional SMALL local model (e.g. "qwen3:4b" via Ollama)
+	// used by the hybrid router for fast-intent device commands —
+	// short utterances like "turn off the kitchen light" or "goodnight"
+	// answer in ~1-2s and keep working offline. Empty disables the
+	// hybrid routing (everything goes to Primary).
+	Local string `yaml:"local"`
+	// LocalBaseURL is the endpoint for the local model when it is NOT
+	// plain Ollama (default http://localhost:11434). Rarely needed —
+	// LM Studio users set http://localhost:1234.
+	LocalBaseURL string `yaml:"local_base_url"`
+	// Routing controls the hybrid local/cloud router.
+	Routing RoutingConfig `yaml:"routing"`
 	// BaseURL overrides the OpenAI-compatible endpoint URL for local/cloud
 	// providers (Ollama, LM Studio, vLLM, Ollama Cloud, Groq, DeepSeek, etc.).
 	// Ignored for native Anthropic / OpenAI / Gemini / xAI adapters.
 	// Example: "https://ollama.com/v1/chat/completions" for Ollama Cloud.
 	// Defaults to http://localhost:11434/v1/chat/completions.
 	BaseURL string `yaml:"base_url"`
+}
+
+// RoutingConfig configures the hybrid local/cloud model router
+// (Phase 2 of the smart-home direction).
+type RoutingConfig struct {
+	// FastIntentLocal routes short device-command utterances
+	// ("turn off the kitchen light", "goodnight") to the local model
+	// for sub-2s answers that keep working offline. Requires
+	// models.local to be set. Default false — everything goes to
+	// Primary, exactly as before.
+	FastIntentLocal bool `yaml:"fast_intent_local"`
 }
 
 // ChannelConfig holds per-channel configuration.

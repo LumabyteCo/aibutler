@@ -290,6 +290,26 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 		return echoHandler(app)
 	}
 
+	// Phase 2 — hybrid local/cloud router. When a small local model is
+	// configured (configurations.models.local) and fast-intent routing is
+	// enabled, short device-command utterances go to the local model:
+	// ~1-2s answers that keep working offline ("lights off" on a Pi with
+	// no internet). Everything else — memory, reasoning, tools — stays on
+	// the primary model. Deny-by-default: without both settings the
+	// behavior is exactly what it was before.
+	if localName := app.Config.Configurations.Models.Local; localName != "" && app.Config.Configurations.Models.Routing.FastIntentLocal {
+		if localAdapter := resolveLocalModelAdapter(app, localName); localAdapter != nil {
+			router := model.NewRouter(model.RouterConfig{
+				Local:       localAdapter,
+				LocalName:   "Local (" + localName + ")",
+				Primary:     adapter,
+				PrimaryName: provider,
+			})
+			adapter = router
+			provider = provider + " + Local fast-intent (" + localName + ")"
+		}
+	}
+
 	fmt.Fprintf(w, "AI provider connected: %s\n", provider)
 
 	// Wire embedding provider for vector search (if available).
@@ -1098,4 +1118,68 @@ func echoHandler(app *App) channel.MessageHandler {
 		}
 		return ch.Send(ctx, env.AccountID, reply)
 	}
+}
+
+// resolveLocalModelAdapter builds the small local model adapter for the
+// hybrid router (configurations.models.local, e.g. "qwen3:4b" on Ollama).
+// Returns nil when the local endpoint isn't reachable — the router then
+// simply never routes locally, and the boot output says so once.
+func resolveLocalModelAdapter(app *App, localName string) agent.ModelAdapter {
+	cfg := app.Config
+	// Fast-intent budget: local must be FAST in steady state (1-2s), but
+	// the FIRST call may include a cold model load (Ollama loads the
+	// weights into RAM, ~10-15s for a 4-12B model). 30s covers the load;
+	// warm calls still complete in ~1-2s.
+	timeout := 30 * time.Second
+	if cfg.Options.Models.RequestTimeout > 0 {
+		timeout = cfg.Options.Models.RequestTimeout
+	}
+	retries := 0 // no retries on the fast path — fall through to primary instead
+
+	baseURL := model.DefaultOllamaURL
+	if u := cfg.Configurations.Models.LocalBaseURL; u != "" {
+		baseURL = u
+		if !strings.Contains(baseURL, "/chat/completions") {
+			baseURL = strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+		}
+	}
+
+	// Health probe: a 2s check that Ollama (or the local endpoint) is
+	// actually up before wiring the router — avoids a failed local call
+	// on every device command when no local server exists.
+	probeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	probe := strings.TrimSuffix(strings.Replace(baseURL, "/v1/chat/completions", "", 1), "/")
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, probe+"/api/tags", nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("hybrid router: local model %q unreachable (%v) — fast-intent routing disabled this run", localName, err)
+		return nil
+	}
+	resp.Body.Close()
+
+	// Pre-warm: ask Ollama to load the model now so the first fast-intent
+	// call doesn't pay the ~10-15s cold-load. Best-effort — if the model
+	// isn't pulled yet this fails fast and routing stays enabled anyway
+	// (the first real call will load it).
+	go func() {
+		warmCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		warm := model.NewOpenAICompat(baseURL, "", localName, 90*time.Second, 0)
+		_, _ = warm.Complete(warmCtx, []agent.Message{
+			{Role: "user", Content: "ok"},
+		})
+		log.Printf("hybrid router: local model %q pre-warmed", localName)
+	}()
+
+	adapter := model.NewOpenAICompat(baseURL, "", localName, timeout, retries)
+	pooled, _ := model.NewPooledClient(model.DefaultPoolConfig(), timeout)
+	adapter.SetHTTPClient(pooled)
+	adapter.SetMaxTokens(cfg.Options.Models.MaxTokens)
+	adapter.SetTemperature(cfg.Options.Models.Temperature)
+	log.Printf("hybrid router: fast-intent routing enabled — %q on %s", localName, baseURL)
+	return adapter
 }

@@ -32,6 +32,8 @@
 > **✨ New in v0.6.0 (this release):**
 > **A real Home Assistant adapter** — natural-language device control with a three-tier safety model (*"unlock the front door" demands a confirmation + PIN, by default*). Plus **chat history that survives reloads**, honest cost tracking for Ollama Cloud, provider failures that explain themselves in chat, a security fix that keeps PINs out of model context, editor-extension API endpoints, and a truth pass over every number in this README. [Jump to smart home →](#connect-your-smart-home-optional--beta)
 
+> **🧪 On main now (v0.7):** **the hybrid local/cloud router** — a tiny local model answers "lights off" in ~1-2s *and keeps working with the internet down*; the cloud model handles reasoning. One `configurations.models.local` setting. [How it works →](docs/smart-home/OVERVIEW.md)
+
 ---
 
 ## Why AI Butler
@@ -143,7 +145,6 @@ now cross-platform through Tier 3 (accessibility trees) and Tier 4
 
 | Feature | Target |
 |---|---|
-| **Hybrid local/cloud router** — tiny local model answers "lights off" in ~1-2s fully offline; cloud model handles reasoning | v0.7 |
 | **Smart home routines** — memory-driven scenes ("goodnight" = lights → locks → thermostat), reflection learns your patterns | v0.7 |
 | **Mid-mission user-confirmation prompts** (today: manual `mission.interrupt action=pause`) | v0.7 |
 | **Hosted demo** (`demo.aibutler.dev`) | v0.7.x |

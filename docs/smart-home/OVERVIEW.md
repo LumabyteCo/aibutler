@@ -96,6 +96,35 @@ every call still demands confirmation + the safety PIN
 log, and `iot.device.discover` retries the connection on demand — the rest
 of the assistant is unaffected.
 
+### Fast intents + the hybrid router (offline smart home)
+
+Smart-home commands are usually short — "turn off the kitchen light",
+"goodnight". Those don't need a frontier model. Configure a small local
+model and Butler routes them locally:
+
+```yaml
+configurations:
+  models:
+    primary: glm-5.3            # your reasoning model (cloud or big local)
+    local: qwen3:4b             # small Ollama model (any 3-8B works)
+    routing:
+      fast_intent_local: true   # opt-in
+```
+
+- Short device commands answer in ~1-2s from the local model — **and keep
+  working with the internet completely down** (the router falls back to
+  local automatically when the primary is unreachable).
+- Everything else — memory recall, files, reasoning — goes to the primary
+  model, unchanged.
+- The local model is pre-warmed at boot so the first command doesn't pay
+  the model-load time.
+- Mid-flight agent turns (tool loops) always use the primary: tiny models
+  don't reason over tool schemas.
+
+This is the configuration the Raspberry Pi story targets: a Pi running
+Butler + Ollama with a 4B model controls the house offline; the cloud
+model adds the brainpower when the network is there.
+
 ## Source Files
 
 - `internal/iot/iot.go` -- Controller, ReadSensor, ExecuteCommand, Sync, checkSafetyBounds

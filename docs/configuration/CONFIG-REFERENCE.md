@@ -101,6 +101,13 @@ configurations:
   models:
     primary: claude-sonnet-4-6
     fallback: haiku
+    # Hybrid router (smart-home): a small local model answers short device
+    # commands ("turn off the kitchen light", "goodnight") in ~1-2s and
+    # keeps working offline; everything else goes to primary.
+    # local: qwen3:4b               # small Ollama/compat model
+    # local_base_url: ""            # only if not plain Ollama
+    # routing:
+    #   fast_intent_local: true     # opt-in; default false
   agents:
     max_concurrent: 5
     max_depth: 3
