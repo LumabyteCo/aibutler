@@ -44,6 +44,10 @@ func main() {
 		runWithApp(func(app *cli.App) error {
 			return cli.CmdVault(app, os.Args[2:], os.Stdout)
 		})
+	case "iot":
+		runWithApp(func(app *cli.App) error {
+			return cli.CmdIoT(app, os.Args[2:], os.Stdout)
+		})
 	case "auth":
 		runWithApp(func(app *cli.App) error {
 			return cli.CmdAuth(app, os.Args[2:], os.Stdout)
@@ -154,6 +158,7 @@ Usage:
   aibutler agent <cmd>      Agent management (list, status, history)
   aibutler mode [name]      Show or switch agent mode (auto, single)
   aibutler vault <cmd>      Credential vault (set, get, list, delete)
+  aibutler iot <cmd>        Smart home (set-pin, verify-pin, status)
   aibutler auth <cmd>       Credential management (list, status, revoke)
   aibutler voice <cmd>      Voice pipeline (status, providers)
   aibutler backup <cmd>     Backup management (now, list, verify, export, import)

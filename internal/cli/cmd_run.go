@@ -391,13 +391,22 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 
 	// Create agent factory.
 	// Capability set = messaging defaults + IoT overlay (iot.sensor.read +
-	// iot.device.discover). Comfort / safety IoT controls are NOT granted
-	// by default — they require explicit config or the user granting them
-	// via the interactive prompter when the agent asks. This keeps the
-	// demo smart-home experience functional out-of-the-box while preserving
-	// the deny-by-default posture for destructive actions.
+	// iot.device.discover + comfort control). Safety IoT control is NOT
+	// granted by default — it requires configurations.iot.
+	// safety_control_enabled: true AND still demands confirmation + PIN
+	// per call. Deny-by-default is the security posture for
+	// access-granting devices (locks, alarms, garages).
 	defaultCaps := append([]capability.Capability{}, capability.MessagingDefaults()...)
 	defaultCaps = append(defaultCaps, capability.IoTDefaults()...)
+	if app.Config.Configurations.IoT.SafetyControlEnabled {
+		defaultCaps = append(defaultCaps, capability.Capability{
+			Resource:   "iot.safety.control",
+			Devices:    []string{"*"},
+			RateLimit:  &capability.RateLimit{MaxCalls: 10, Window: time.Hour},
+			AuditLevel: capability.AuditFull,
+		})
+		log.Printf("iot: safety control ENABLED via config — tier-3 commands (locks/alarms/garages) will still require confirmation + PIN per call")
+	}
 	factory := model.NewFactory(model.FactoryConfig{
 		Composer:      app.Composer,
 		Model:         adapter,
@@ -457,6 +466,13 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 	// that it's built.
 	if app.MCPAgentAdapter != nil {
 		app.MCPAgentAdapter.SetRunner(factory)
+	}
+
+	// Inject the agent factory into the /api/vscode/ handler so editor
+	// extension commands (ask/explain/fix/tests) run through the full
+	// agent pipeline.
+	if app.VSCodeRunnerSetter != nil {
+		app.VSCodeRunnerSetter.SetRunner(&vscodeAgentRunner{factory: factory})
 	}
 
 	// Wire swarm orchestrator (when enabled in config).
@@ -935,6 +951,20 @@ func (a *backfillAdapter) Run(ctx context.Context) (int, int, error) {
 // facts, transcripts, entities, and embeddings are isolated from the primary
 // user's memory by default. Cross-bank access only happens through surfaces
 // explicitly scoped to another bank.
+// vscodeAgentRunner adapts *model.Factory to webchat.AgentRunner for the
+// editor extension routes.
+type vscodeAgentRunner struct {
+	factory *model.Factory
+}
+
+func (r *vscodeAgentRunner) Run(ctx context.Context, sessionID, task, channel string) (string, error) {
+	result, err := r.factory.Run(ctx, sessionID, task, channel)
+	if err != nil {
+		return "", err
+	}
+	return result.Output, nil
+}
+
 type factoryRunner struct {
 	factory *model.Factory
 }

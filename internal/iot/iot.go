@@ -3,6 +3,7 @@ package iot
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/LumabyteCo/aibutler/internal/capability"
 )
@@ -13,6 +14,11 @@ type Controller struct {
 	engine  *capability.Engine
 	pin     *PINVerifier
 	devices map[string]*Device
+
+	// mu guards devices: Sync mutates the registry at runtime (discovery)
+	// while ReadSensor/ExecuteCommand/ListDevices read it from agent
+	// goroutines.
+	mu sync.RWMutex
 }
 
 // NewController creates a new IoT controller.
@@ -27,12 +33,16 @@ func NewController(adapter DeviceAdapter, engine *capability.Engine, pin *PINVer
 
 // RegisterDevice adds a device to the controller's registry.
 func (c *Controller) RegisterDevice(d Device) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.devices[d.ID] = &d
 }
 
 // ReadSensor reads a sensor value. Requires iot.sensor.read capability.
 func (c *Controller) ReadSensor(ctx context.Context, caps *capability.CapabilitySet, deviceID string) ([]SensorReading, error) {
+	c.mu.RLock()
 	d, ok := c.devices[deviceID]
+	c.mu.RUnlock()
 	if !ok {
 		return nil, ErrDeviceNotFound
 	}
@@ -53,7 +63,9 @@ func (c *Controller) ReadSensor(ctx context.Context, caps *capability.Capability
 
 // ExecuteCommand executes an IoT command with tier-appropriate security.
 func (c *Controller) ExecuteCommand(ctx context.Context, caps *capability.CapabilitySet, cmd Command) error {
+	c.mu.RLock()
 	d, ok := c.devices[cmd.DeviceID]
+	c.mu.RUnlock()
 	if !ok {
 		return ErrDeviceNotFound
 	}
@@ -109,11 +121,40 @@ func (c *Controller) ExecuteCommand(ctx context.Context, caps *capability.Capabi
 
 // ListDevices returns all registered devices.
 func (c *Controller) ListDevices() []Device {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	devices := make([]Device, 0, len(c.devices))
 	for _, d := range c.devices {
 		devices = append(devices, *d)
 	}
 	return devices
+}
+
+// Sync merges a discovery result into the controller's registry. New devices
+// are added; existing ones refresh name/type/tier so runtime discovery
+// (e.g. a newly paired Home Assistant entity) is immediately controllable.
+// Tier changes only apply when the new tier is HIGHER (safety can be
+// upgraded live, never downgraded — same invariant as config policy).
+func (c *Controller) Sync(devices []Device) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, d := range devices {
+		if existing, ok := c.devices[d.ID]; ok {
+			if d.Tier > existing.Tier {
+				existing.Tier = d.Tier
+			}
+			if d.Name != "" {
+				existing.Name = d.Name
+			}
+			if d.DeviceType != "" {
+				existing.DeviceType = d.DeviceType
+			}
+			existing.Enabled = d.Enabled
+			continue
+		}
+		cp := d
+		c.devices[d.ID] = &cp
+	}
 }
 
 // checkSafetyBounds enforces safety bounds for comfort devices.

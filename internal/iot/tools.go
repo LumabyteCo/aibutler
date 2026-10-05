@@ -66,7 +66,10 @@ type deviceControlInput struct {
 }
 
 func (t *deviceControlTool) Name() string        { return "iot.device.control" }
-func (t *deviceControlTool) Description() string { return "Control a comfort IoT device (lights, thermostat, etc.)." }
+func (t *deviceControlTool) Description() string {
+	return "Control a comfort IoT device (lights, switches, thermostat, fans, covers, media). " +
+		"For tier-3 devices (locks, alarms, garages) use iot.safety.control instead."
+}
 func (t *deviceControlTool) Capability() string  { return "iot.device.control" }
 
 func (t *deviceControlTool) Schema() string {
@@ -109,7 +112,13 @@ type safetyControlInput struct {
 }
 
 func (t *safetyControlTool) Name() string        { return "iot.safety.control" }
-func (t *safetyControlTool) Description() string { return "Control a safety-critical IoT device (locks, alarms). Requires confirmation and PIN." }
+func (t *safetyControlTool) Description() string {
+	return "Control a safety-critical IoT device (locks, alarm panels, garage doors). " +
+		"Use when the user asks to lock/unlock a door, arm/disarm an alarm, or open/close a garage — " +
+		"even if a previous attempt was denied. If the user provides a PIN in their message, pass it in the " +
+		"'pin' field along with confirmed=true. If no PIN was given, attempt the call and report the " +
+		"PIN-required error to the user."
+}
 func (t *safetyControlTool) Capability() string  { return "iot.safety.control" }
 
 func (t *safetyControlTool) Schema() string {
@@ -178,6 +187,10 @@ func (t *deviceDiscoverTool) Execute(ctx context.Context, _ string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("iot.discover: %w", err)
 	}
+	// Register discovered devices with the controller so they are
+	// immediately controllable — without this, HA entities found at
+	// runtime could be listed but not executed until a restart.
+	t.controller.Sync(devices)
 	data, _ := json.Marshal(devices)
 	return string(data), nil
 }
