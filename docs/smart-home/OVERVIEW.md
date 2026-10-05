@@ -46,13 +46,60 @@ Comfort devices enforce hard limits. Example: thermostat temperature must be 5-3
 
 `DeviceAdapter` interface: `ReadSensor`, `Execute`, `Discover`.
 
-- **Today (v0.1):** `StubAdapter` for testing (in-memory device state)
-- **Planned:** Home Assistant, MQTT integrations
-- Config: `configurations.iot.adapter: "stub"` (default)
+- **Stub** (`configurations.iot.adapter: "stub"`, default) — in-memory demo
+  devices so the natural-language flow works out of the box
+- **Home Assistant** (`configurations.iot.adapter: "homeassistant"`) — real
+  integration, shipped: REST API discovery, service-call mapping, URL
+  normalization, bearer-token auth
+- Config: `configurations.iot.adapter` selects between them
+
+### Home Assistant Setup
+
+1. Create a long-lived access token in HA: **Profile → Security → Long-lived access tokens**
+2. Store it in the Butler vault:
+   ```bash
+   aibutler vault set homeassistant_token <your-token>
+   ```
+3. Configure the adapter in `~/.aibutler/config.yaml`:
+   ```yaml
+   configurations:
+     iot:
+       adapter: homeassistant
+       ha_url: http://homeassistant.local:8123
+   ```
+4. Restart (`aibutler run`) — entities are discovered at boot; say
+   *"list my smart home devices"* or use `iot.device.discover` to re-scan
+   without restarting.
+
+### How HA entities map to Butler devices
+
+| HA domain | Butler tier | Notes |
+|---|---|---|
+| `sensor`, `binary_sensor`, `weather`, `person`, `device_tracker` | 1 — Sensor | auto-approved reads |
+| `light`, `switch`, `fan`, `climate`, `cover` (non-garage), `media_player`, `scene`, `vacuum`, `input_boolean`, `input_button` | 2 — Comfort | logged, rate-limited, safety-bounded |
+| `lock`, `alarm_control_panel`, `cover.garage*` | 3 — Safety | **always** confirmation + PIN |
+
+Device IDs are HA entity IDs (`light.kitchen`, `lock.front_door`). Friendly
+names come from HA attributes.
+
+**Tier policy (security invariant):** per-entity overrides via
+`configurations.iot.tier_policy` may *upgrade* a device's tier but can
+**never downgrade a safety device below tier 3**. A lock stays PIN-gated no
+matter what the config says. Runtime discovery follows the same rule.
+
+**Tier-3 capability (deny by default):** chat control of locks/alarms/garages
+additionally requires `configurations.iot.safety_control_enabled: true`, and
+every call still demands confirmation + the safety PIN
+(`aibutler iot set-pin`). The flag opens the capability gate, never the PIN gate.
+
+**When HA is unreachable at boot:** Butler starts normally, warns in the
+log, and `iot.device.discover` retries the connection on demand — the rest
+of the assistant is unaffected.
 
 ## Source Files
 
-- `internal/iot/iot.go` -- Controller, ReadSensor, ExecuteCommand, checkSafetyBounds
+- `internal/iot/iot.go` -- Controller, ReadSensor, ExecuteCommand, Sync, checkSafetyBounds
 - `internal/iot/pin.go` -- PINVerifier (bcrypt + vault)
+- `internal/iot/homeassistant.go` -- HomeAssistantAdapter (REST API, discovery, service mapping)
 - `internal/iot/types.go` -- Device, Command, Tier constants, SensorReading, DeviceAdapter
 - `internal/iot/stub.go` -- StubAdapter for testing

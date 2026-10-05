@@ -93,13 +93,14 @@ We wrote the code and it compiles + passes unit tests, but we haven't put these 
 | **A2A v2 protocol compliance** — handler works, conformance suite pending | `beta` | [#a2a-interop](../../issues/new?labels=beta&title=A2A+interop+report) |
 | **MCP server mode** (exposing Butler's tools to other MCP clients) | `beta` | [#mcp-server-test](../../issues/new?labels=beta&title=MCP+server+test) |
 | **WASM plugin sandbox** (Extism runtime) — runtime ready, sample plugins coming | `beta` | [#plugin-feedback](../../issues/new?labels=beta&title=Plugin+feedback) |
+| **Editor extension API** — `/api/vscode/{ask,explain,fix,tests}` endpoints ship in the webchat; the scaffold extension talks to them through the full agent pipeline | `beta` | — |
 | **OIDC SSO** (Auth0, Okta, Keycloak, Authelia, ZITADEL) | `beta` | [#sso-test](../../issues/new?labels=beta&title=OIDC+test) |
 | **FIDO2 / WebAuthn** (hardware security keys) | `beta` | — |
 | **TOTP 2FA** | `beta` | — |
 | **RBAC** (admin/user/viewer/agent roles) | `beta` | — |
 | **LAN mode + mDNS discovery** | `beta` | — |
 | **Subprocess bridges** (ffmpeg, Aider, Continue, any CLI) | `beta` | — |
-| **Smart home via Home Assistant** — tool surface + PIN safety gating ready, HA adapter in final wiring | `beta → v0.2` | [#ha-adapter](../../issues/new?labels=beta&title=Home+Assistant+adapter) |
+| **Smart home via Home Assistant** — real HA adapter shipped: REST API discovery, service-call mapping, three-tier safety (sensors auto-read, comfort logged, **locks/alarms PIN-gated by default**). Set `configurations.iot.adapter: homeassistant` + `ha_url`, then `aibutler vault set homeassistant_token <token>`. Validated live against HA 2026.9.4 | `beta` | [#ha-adapter](../../issues/new?labels=beta&title=Home+Assistant+adapter) |
 | **Fact quality & correction** — per-fact provenance/confidence, contradictions supersede with a review queue, true deletion cascades to everything derived, Memories panel actions | `beta` | — |
 | **Scored core memory** — the always-in-context fact set picked by pinning, importance, usage, and recency within a token budget (revert with `core_memory_selection: recency`) | `beta` | — |
 | **File checkpoints & undo** — pre-images captured before agent file edits, `checkpoint.list`/`checkpoint.restore`, integrity-checked, retention janitor | `beta` | — |
@@ -142,7 +143,7 @@ adapter, and a mission engine for goals that take more than one turn.
 | **Manager tier** — 3-level supervisor → manager → worker hierarchy (2-level today) | v0.3 |
 | **Tier 3 accessibility tree** (AX, UIAutomation, AT-SPI) — one level finer than vision-driven UI | v0.3 |
 | **Tier 4 vision + input** — screen capture + mouse/keyboard for the long tail | v0.3 |
-| **Smart home full integration** — working Home Assistant adapter out of the box | v0.3 |
+| **Smart home routines** — memory-driven scenes ("goodnight" = lights → locks → thermostat), reflection learns your patterns | v0.3 |
 | **Plugin marketplace** with sample plugins | v0.3 |
 | **Voice TUI mode** — terminal mic capture + playback | v0.3 |
 | **Image generation** — Flux, Stable Diffusion, DALL-E via official APIs | v0.3 |
@@ -198,6 +199,27 @@ aibutler repl
 
 # Web interface at http://localhost:3377
 ```
+
+### Connect your smart home (optional — beta)
+
+```bash
+# Home Assistant: create a long-lived token (Profile → Security),
+# store it, point the config at your instance, and set a safety PIN
+# for tier-3 devices (locks, alarms, garage doors).
+aibutler vault set homeassistant_token YOUR_HA_TOKEN
+aibutler iot set-pin
+
+# ~/.aibutler/config.yaml
+# configurations:
+#   iot:
+#     adapter: homeassistant
+#     ha_url: http://homeassistant.local:8123
+#     safety_control_enabled: true   # grants the capability; PIN still required per call
+```
+
+Then just talk to it: *"list my smart home devices"*, *"turn off the kitchen
+light"*, *"unlock the front door"* — Butler demands the PIN for anything
+that gates entry to your home, by default.
 
 ### Connect a messaging channel (optional — beta)
 
@@ -296,7 +318,7 @@ AI Butler is built with a security-first architecture:
 docker compose up -d
 # With Ollama (fully local AI, no API key needed):
 docker compose -f docker-compose.ollama.yml up -d
-# Full stack (with Home Assistant placeholder):
+# Full stack (AI Butler + Ollama + Home Assistant):
 docker compose -f docker-compose.full.yml up -d
 ```
 
@@ -355,7 +377,8 @@ Per-project overrides via `BUTLER.md` files (like `.cursorrules` but for AI Butl
 - 🧪 **Test a beta channel end-to-end** with your own credentials and file a report
 - 📝 **Write a sample WASM plugin** for the marketplace
 - 🤝 **Connect a real A2A v2 peer** and verify interop
-- 🏠 **Wire up the Home Assistant adapter** — the tool interface is ready
+- 🏠 **Test the Home Assistant adapter** against your real HA instance — the tier-3 PIN-gated lock flow is live; reports push it from beta → ready
+- 🔌 **Test the VS Code extension** — the `/api/vscode` endpoints ship with it; try ask/explain/fix/tests on a real codebase
 - 🌐 **Translate the web UI** to your language
 - 🧑‍💻 **Build a VS Code or JetBrains extension** against the dashboard API
 - 🪄 **Build the multi-agent swarm cookbook** — show off what swarm can do
