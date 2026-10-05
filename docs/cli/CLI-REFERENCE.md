@@ -14,7 +14,7 @@ aibutler version      # Print version
 
 ```bash
 $ aibutler version
-aibutler v0.1.0
+aibutler v0.6.0
 ```
 
 ### setup

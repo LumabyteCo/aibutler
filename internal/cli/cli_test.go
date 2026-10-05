@@ -70,8 +70,8 @@ func TestVersion(t *testing.T) {
 	var buf bytes.Buffer
 	CmdVersion(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "aibutler v0.1.0") {
-		t.Fatalf("expected 'aibutler v0.1.0', got: %s", out)
+	if !strings.Contains(out, "aibutler v"+Version) {
+		t.Fatalf("expected 'aibutler v%s', got: %s", Version, out)
 	}
 }
 

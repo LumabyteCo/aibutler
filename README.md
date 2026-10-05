@@ -21,7 +21,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
   <img alt="Go" src="https://img.shields.io/badge/go-1.26%2B-00ADD8">
   <img alt="CGO" src="https://img.shields.io/badge/CGO-not%20required-success">
-  <img alt="Status" src="https://img.shields.io/badge/status-v0.1%20public%20beta-orange">
+  <img alt="Status" src="https://img.shields.io/badge/status-v0.6%20smart%20home%20edition-orange">
   <a href="https://github.com/LumabyteCo/aibutler/releases"><img alt="Release" src="https://img.shields.io/github/v/release/LumabyteCo/aibutler?include_prereleases&label=release"></a>
 </p>
 

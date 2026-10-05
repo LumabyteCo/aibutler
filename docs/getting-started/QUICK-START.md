@@ -34,7 +34,7 @@ CGO_ENABLED=0 go build -o aibutler .
 
 ```bash
 ./aibutler start
-# AI Butler v0.1.0 starting...
+# AI Butler v0.6.0 starting...
 # Scheduler started.
 #
 # WebChat: http://localhost:3377
