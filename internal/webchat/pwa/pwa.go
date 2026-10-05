@@ -53,7 +53,7 @@ const manifestJSON = `{
 // clean out older versions on upgrade.
 const serviceWorkerJS = `// AI Butler Service Worker
 // Bump CACHE_NAME on breaking changes — the activate handler deletes older caches.
-const CACHE_NAME = 'butler-cache-v2';
+const CACHE_NAME = 'butler-cache-v3';
 const PRECACHE = [
   '/',
   '/static/index.html',

@@ -531,6 +531,9 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 				Pipeline:      app.MediaPipeline,
 			}
 			wa := webchat.New(webCfg)
+			// B5: wire the history store so the chat panel can rehydrate
+			// the recent conversation after a page reload.
+			wa.SetHistoryStore(webchat.NewHistoryStore(database.Conn()))
 			app.webChatAdapter = wa
 			app.Channels.Register(wa)
 		case "slack":

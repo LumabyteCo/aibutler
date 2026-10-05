@@ -185,7 +185,7 @@
     setConn("connecting");
     const proto=location.protocol==="https:"?"wss:":"ws:";
     ws=new WebSocket(proto+"//"+location.host+"/ws");
-    ws.onopen=()=>{setConn("connected");removeTyping()};
+    ws.onopen=()=>{setConn("connected");removeTyping();loadHistory()};
     ws.onmessage=(e)=>{
       const data=JSON.parse(e.data);
       if(data.type==="typing"){showTyping();return}
@@ -205,6 +205,25 @@
     ws.onclose=()=>{setConn("disconnected");setTimeout(connect,2000)};
     ws.onerror=()=>{ws.close()};
   }
+
+  // B5: rehydrate the recent conversation after a reload. The server keeps
+  // every turn in SQLite; the chat panel starts blank without this. If the
+  // fetch fails (older binary, no store wired), the panel just stays empty
+  // — same behavior as before.
+  function loadHistory(){
+    if(historyLoaded)return;
+    fetch("/api/history?limit=50").then(r=>r.ok?r.json():null).then(data=>{
+      if(!data||!data.entries||!data.entries.length){historyLoaded=true;return}
+      historyLoaded=true;
+      hideWelcome();
+      hasMessages=true;
+      data.entries.forEach(e=>{
+        if(e.role!=="user"&&e.role!=="assistant")return;
+        addMessage(e.role,e.content);
+      });
+    }).catch(()=>{});
+  }
+  var historyLoaded=false;
 
   function addMessage(role,text){
     if(!hasMessages){hasMessages=true;hideWelcome()}

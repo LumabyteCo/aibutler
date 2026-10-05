@@ -55,6 +55,7 @@ type Adapter struct {
 	mu            sync.RWMutex
 	conns         map[string]*wsConn // accountID -> conn
 	extraHandlers map[string]http.Handler
+	history       HistoryStore       // optional; enables /api/history
 }
 
 // New creates a WebChat adapter.
@@ -82,13 +83,18 @@ func (a *Adapter) Start(_ context.Context, handler channel.MessageHandler) error
 
 	mux := http.NewServeMux()
 
-	// Static files from embedded FS.
+	// Static files from embedded FS. Cache-Control: no-cache keeps the
+	// browser revalidating on every load — without it browsers
+	// heuristically cache /static/* indefinitely and users miss UI
+	// updates until their cache expires (B5 testing hit this: the
+	// rehydrated chat.js never reached the browser).
 	staticHandler := http.FileServer(http.FS(staticFS))
-	mux.Handle("/static/", staticHandler)
+	mux.Handle("/static/", noCache(staticHandler))
 	mux.HandleFunc("/", a.handleIndex)
 	mux.HandleFunc("/chat", a.handleIndex) // /chat route alias
 	mux.HandleFunc("/ws", a.handleWebSocket)
 	mux.HandleFunc("/upload", a.handleUpload)
+	mux.HandleFunc("/api/history", a.handleHistory)
 
 	// Mount any extra handlers (e.g., dashboard, setup wizard, PWA).
 	// PWA manifest + service worker are mounted by cli/app.go via
