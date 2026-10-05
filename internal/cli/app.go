@@ -129,7 +129,7 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/webchat/setup"
 )
 
-const Version = "0.6.0"
+const Version = "0.7.0"
 
 // App is the central application struct that wires all internal packages together.
 type App struct {

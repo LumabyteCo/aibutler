@@ -357,6 +357,30 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 Changes in `main` that haven't been released yet will be tracked here.
 
+## [0.7.0] — 2026-10-05 — Fast Intents & Routines
+
+The house now obeys in one word, offline. This release completes the
+smart-home loop begun in 0.6.0: a hybrid local/cloud router makes device
+commands fast and internet-independent, and routines chain devices into
+single commands with every safety gate applying per step.
+
+### Added
+
+- **Hybrid local/cloud router** — configure a small local model (`configurations.models.local`) and short device commands ("turn off the kitchen light", "goodnight") answer from it in ~1-2s, **continuing to work with the internet completely down** (the router falls back to local automatically when the primary is unreachable). Everything else — memory, reasoning, tool loops mid-flight — goes to the primary model unchanged. Opt-in (`routing.fast_intent_local`), deny-by-default. The local model is pre-warmed at boot so the first command doesn't pay the model-load time. Verified live: with the primary pointed at an unreachable host, "turn off the kitchen light" still flipped the real Home Assistant entity.
+- **Smart-home routines** — say "Goodnight." and the house responds: lights off → doors locked → temperature set, one command. Routines are named chains expanded against the live device registry and executed step-by-step through the Controller, so **every existing safety gate (capability, tier, rate limit, PIN) applies to every step** — there is no stored PIN and no bypass: locking a door inside a routine demands the PIN exactly like a manual lock. Built-ins: `goodnight`, `good_morning`, `leaving_home`, `movie_time`. Missing device classes are skipped with an honest note (a routine written for a three-bedroom house runs fine in a studio), and partial success is the design — comfort steps complete even when a safety step refuses. Verified live, answered by the *local* model: "Goodnight." turned off the real lights, reported PIN-required on the lock (door stayed unlocked), and locked it when the PIN was supplied in the follow-up.
+- **Instruction seeding** (`instruction.Store.SaveSeed`, idempotent) — built-in behavioral instructions (e.g. "goodnight" triggers the routine even as a single word) are ensured at bootstrap; found live: a small local model replied socially instead of calling the routine tool until the instruction tier pushed it.
+
+### Fixed
+
+- **Tool definitions now flow through the hybrid router** — the Factory's `SetTools` previously found no target on the router and silently dropped tool definitions, leaving every routed model "without skills".
+- **Router heuristic made shape-based** — the first version gated on message count, so any session history silently degraded fast intents to the primary model; routing now inspects the shape of the final user turn.
+
+### Documentation
+
+- Smart-home guide: routines section with the live demo transcript; the hybrid router section (config, pre-warm, offline story).
+- Config reference: `models.local`, `models.local_base_url`, `models.routing.fast_intent_local`.
+- README: the v0.7 banner tells the combined story — one word, whole house, gates intact, offline-capable.
+
 ## [0.6.0] — 2026-10-05 — Smart Home Edition
 
 The first release where AI Butler acts on your house: a real Home Assistant
@@ -1174,6 +1198,7 @@ dashboard panel is read-only by design.
 
 [0.1.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.1.0
 [0.6.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.6.0
+[0.7.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.7.0
 [0.2.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.0
 [0.2.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.1
 [0.2.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.2

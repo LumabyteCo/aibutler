@@ -21,18 +21,18 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
   <img alt="Go" src="https://img.shields.io/badge/go-1.26%2B-00ADD8">
   <img alt="CGO" src="https://img.shields.io/badge/CGO-not%20required-success">
-  <img alt="Status" src="https://img.shields.io/badge/status-v0.6%20smart%20home%20edition-orange">
+  <img alt="Status" src="https://img.shields.io/badge/status-v0.7%20fast%20intents%20routines-orange">
   <a href="https://github.com/LumabyteCo/aibutler/releases"><img alt="Release" src="https://img.shields.io/github/v/release/LumabyteCo/aibutler?include_prereleases&label=release"></a>
 </p>
 
 ---
 
-> **🚀 v0.6.0 — Smart Home Edition.** AI Butler is an ambitious project — **147 packages, 2,191 passing tests, 59 internal security review passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready; several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release) · [Releases →](https://github.com/LumabyteCo/aibutler/releases)
+> **🚀 v0.7.0 — Fast Intents & Routines.** AI Butler is an ambitious project — **147 packages, 2,191 passing tests, 59 internal security review passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready; several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release) · [Releases →](https://github.com/LumabyteCo/aibutler/releases)
 
-> **✨ New in v0.6.0 (this release):**
+> **✨ New in v0.6.0:**
 > **A real Home Assistant adapter** — natural-language device control with a three-tier safety model (*"unlock the front door" demands a confirmation + PIN, by default*). Plus **chat history that survives reloads**, honest cost tracking for Ollama Cloud, provider failures that explain themselves in chat, a security fix that keeps PINs out of model context, editor-extension API endpoints, and a truth pass over every number in this README. [Jump to smart home →](#connect-your-smart-home-optional--beta)
 
-> **🧪 On main now (v0.7):** **routines + the hybrid local/cloud router** — say *"Goodnight"* and the house responds (lights → locks → thermostat, with PIN gates intact per step) — answered by a tiny local model in seconds *and it keeps working with the internet down*. One `configurations.models.local` setting. [How it works →](docs/smart-home/OVERVIEW.md)
+> **✨ New in v0.7.0 (this release):** **routines + the hybrid local/cloud router** — say *"Goodnight"* and the house responds (lights → locks → thermostat, with PIN gates intact per step) — answered by a tiny local model in seconds *and it keeps working with the internet down*. One `configurations.models.local` setting. [How it works →](docs/smart-home/OVERVIEW.md)
 
 ---
 
@@ -60,7 +60,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 
 **We're shipping honest labels instead of marketing.** Here's exactly what's production-ready, what's beta (works but needs community testing), and what's on the roadmap next:
 
-### ✅ Production-ready (v0.1 → v0.6)
+### ✅ Production-ready (v0.1 → v0.7)
 
 | Feature | Status |
 |---|---|
@@ -81,7 +81,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | **File + shell + git tools** — capability-gated, sandboxed | `ready` |
 | **Single-binary distribution** — zero CGO, cross-compiles to any Go platform | `ready` |
 
-### 🟡 Beta — code complete, needs real-world validation (v0.6)
+### 🟡 Beta — code complete, needs real-world validation (v0.7)
 
 We wrote the code and it compiles + passes unit tests, but we haven't put these through end-to-end production use with real third-party APIs. **We'd love your help testing these.** Open an issue if you hit anything.
 
@@ -141,13 +141,12 @@ now cross-platform through Tier 3 (accessibility trees) and Tier 4
 | **Action recording** — fine-grained `actions` audit log with credential redaction | `ready` | Every native-script call logged with target, payload (redacted), duration, result. |
 | **AppleScript target-app allowlist** — `tell:Mail`, `tell:Music*`, `tell:*` | `ready` | Finer-grained safe defaults than bare-verb allowlisting. |
 
-### 🔜 On the roadmap (v0.7+)
+### 🔜 On the roadmap (v0.8+)
 
 | Feature | Target |
 |---|---|
-| **Smart home routines** — memory-driven scenes ("goodnight" = lights → locks → thermostat), reflection learns your patterns | v0.7 |
-| **Mid-mission user-confirmation prompts** (today: manual `mission.interrupt action=pause`) | v0.7 |
-| **Hosted demo** (`demo.aibutler.dev`) | v0.7.x |
+| **Mid-mission user-confirmation prompts** (today: manual `mission.interrupt action=pause`) | v0.8 |
+| **Hosted demo** (`demo.aibutler.dev`) | v0.8.x |
 | **Voice TUI mode** — terminal mic capture + playback | v0.8 |
 | **Plugin marketplace** with sample plugins | v0.8 |
 | **Image generation** — Flux, Stable Diffusion, DALL-E via official APIs | v0.8 |
