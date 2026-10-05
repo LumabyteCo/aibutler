@@ -2,7 +2,7 @@ module github.com/LumabyteCo/aibutler
 
 go 1.26.2
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	filippo.io/age v1.3.1
@@ -13,7 +13,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.53.0
-	golang.org/x/text v0.38.0
+	golang.org/x/text v0.39.0
 	gopkg.in/yaml.v3 v3.0.1
 	mvdan.cc/sh/v3 v3.13.1
 	nhooyr.io/websocket v1.8.17
