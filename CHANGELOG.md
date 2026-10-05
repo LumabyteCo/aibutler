@@ -355,6 +355,30 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ## [Unreleased]
 
+### Added
+
+- **Home Assistant adapter** — `configurations.iot.adapter: homeassistant` now connects to a real HA instance over its REST API: entity discovery at boot, service-call mapping (lights/switches/climate/covers/locks/alarms/media), sensor state parsing, and URL normalization. The three-tier safety model classifies entities automatically (sensors → tier 1, comfort devices → tier 2, locks/alarms/garage covers → tier 3, always PIN-gated). Tier policy is upgrade-only: config or runtime discovery can never downgrade a safety device below tier 3. Validated live against Home Assistant 2026.9.4.
+- **`aibutler iot` command** — `set-pin` (bcrypt, 4-12 digits), `verify-pin`, `status` (adapter/token/PIN state). Previously there was no way to set the tier-3 safety PIN.
+- **`configurations.iot.safety_control_enabled`** — explicit, deny-by-default grant of the `iot.safety.control` capability. Per-call confirmation + PIN gates remain regardless.
+- **Editor extension API** — `/api/vscode/{ask,explain,fix,tests}` endpoints in the webchat power the VS Code extension, running editor commands through the full agent pipeline. (The extension previously pointed at a route that never existed and always 404'd.)
+
+### Fixed
+
+- **Failed agent runs no longer stick in `running` state** — `failWith` persists the `failed` state; a boot-time recovery janitor marks orphaned agents from crashed runs as failed.
+- **`AIBUTLER_DATA` is honored** — the Docker image, systemd unit, and Helm chart have always set it; the binary now reads it (default remains `~/.aibutler`). Containerized data paths documented in deploy guides are now real.
+- **Ollama Cloud usage is priced** — hosted models on `ollama.com` were displayed as $0.00 in the Spending panel because non-claude/gpt/gemini/grok names fell through to "local" pricing. Paid endpoints are now classified per-token; local endpoints stay free.
+- **Provider failures surface in chat** — a 401/410/404 from the model provider previously rendered an empty assistant bubble while the terminal logged the real error. The router now sends categorized, actionable messages (e.g. "model retired — pick a current one" for 410).
+- **Docker port story aligned** — the image and compose files exposed 8080 while the binary serves 3377 by default; both now match (3377 web, 8081 A2A).
+
+### Documentation
+
+- README dashboard count corrected to 7 panels (Missions panel shipped with the mission engine).
+- Verified counts updated (147 packages, 2,191 tests, 77 tables, 22 migrations, 16 direct deps).
+- Stale `website && npm run dev` instruction replaced with a pointer to the separate docs-site repo.
+- Quick-start no longer claims a filesystem MCP server is connected by default (built-in `file.*` tools serve the same walkthrough).
+- "Planned" labels removed from shipped features (reminders, habits, journal.read, contact.birthdays, budget_check, weather/maps/news providers, WhatsApp, PDF extraction, Edge TTS/ElevenLabs/Deepgram, subagent/background agent types).
+- Deployment guides fixed: real launchd plist, correct `deploy/systemd/` paths, `AIBUTLER_DATA` (not the fictional `AIBUTLER_HOME`), Go 1.26+ requirement everywhere, ports aligned to 3377.
+
 ### Testing — Linux Tier 4 validated end-to-end in CI
 
 - Added live desktop tests (`internal/desktop/live_test.go`, gated by

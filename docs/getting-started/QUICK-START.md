@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Go 1.22+
+- Go 1.26+
 
 ## Install
 

@@ -53,9 +53,9 @@ created_at        TEXT NOT NULL DEFAULT (datetime('now'))
 
 Indexed on `name` for fast lookups.
 
-## Planned Tools
+## More Tools
 
-- `contact.update` -- Edit existing contact fields
+- `contact.update` -- Edit existing contact fields (`internal/tool/contact_ext_tools.go`)
 - `contact.birthdays` -- List upcoming birthdays
 
 ## Privacy

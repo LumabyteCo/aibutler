@@ -2,13 +2,14 @@
 > Personal AI agent runtime with multi-channel support, long-term memory, and swarm intelligence.
 
 ## Key Features
-- Multi-channel: Telegram, Slack, Discord, WhatsApp, Web, Terminal, LINE, IRC
+- Multi-channel: Telegram, Slack, Discord, WhatsApp, Teams, Google Chat, Web, Terminal, LINE, IRC, Nostr, custom webhook
 - Long-term memory: Knowledge graph + FTS5 + vector search
 - Swarm orchestration: Multi-agent task decomposition
 - Agent ecosystem: A2A v2, MCP server, subprocess bridges
 - Plugin system: WASM sandbox + marketplace
 - Scheduled automation: Cron-based tasks
 - Voice: STT + TTS pipeline
+- Smart home: Home Assistant adapter with a three-tier safety model (sensors, comfort devices, PIN-gated locks/alarms)
 
 ## Documentation
 - Quick Start: docs/getting-started/QUICK-START.md

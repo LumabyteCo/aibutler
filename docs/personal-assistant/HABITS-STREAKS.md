@@ -16,9 +16,9 @@ Butler: 1. meditation -- daily, 3-day streak
         2. exercise   -- daily, 1-day streak
 ```
 
-## Tools (Planned)
+## Tools
 
-> **Status:** The `user_habits` and `user_habit_logs` tables exist in the schema. Habit tools (`habit.create`, `habit.log`, `habit.streak`, `habit.list`) are planned for a future release.
+> **Status:** `habit.create`, `habit.log`, and `habit.streak` are live (`internal/tool/habit_tools.go`), backed by the `user_habits` and `user_habit_logs` tables. `habit.list` is still on the roadmap.
 
 ### `habit.create` -- Start tracking a habit
 

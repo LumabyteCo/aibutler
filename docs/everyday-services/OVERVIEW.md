@@ -56,7 +56,7 @@ From `capability.MessagingDefaults()`:
 ## Current scope & roadmap
 
 - **Today (v0.1):** Finance (Alpha Vantage), Provider interface for extensibility
-- **Planned:** Weather, maps, news providers (same Provider pattern)
+- **Live:** weather, maps, news, sports, transit, flight, tracking, and recipe providers (same Provider pattern, `internal/services/`)
 
 ## Source Files
 

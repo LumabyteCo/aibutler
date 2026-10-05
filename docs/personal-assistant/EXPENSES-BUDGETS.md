@@ -67,7 +67,7 @@ created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 UNIQUE(category, period)
 ```
 
-Budget tools are planned. The table is ready for per-category monthly/weekly limits.
+`expense.budget_check` is live — check remaining budget per category. The table supports per-category monthly/weekly limits.
 
 ## Privacy
 

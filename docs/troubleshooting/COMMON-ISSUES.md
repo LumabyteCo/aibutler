@@ -10,7 +10,7 @@
 CGO_ENABLED=0 go build -o aibutler .
 ```
 
-Also verify Go 1.22+ is installed:
+Also verify Go 1.26+ is installed:
 
 ```bash
 go version
@@ -64,7 +64,17 @@ go version
 **Valid commands:**
 
 ```
-aibutler setup | config | skill | cost | agent | mode | auth | voice | backup | integrity | version | help
+aibutler start | run          # start channels + scheduler
+aibutler repl | resume        # interactive terminal chat
+aibutler setup | config       # setup wizard / show config
+aibutler vault | auth         # credentials
+aibutler iot                  # smart home (set-pin, verify-pin, status)
+aibutler skill | skills       # skills + self-authored proposals
+aibutler eval | cost | agent  # benchmarks / spend / agent status
+aibutler mode | mcp | plugin  # agent mode / MCP server / plugins
+aibutler memory | backup | integrity | cleanup
+aibutler user | gdpr          # RBAC users / GDPR ops
+aibutler version | help
 ```
 
 Run `aibutler help` for full usage.

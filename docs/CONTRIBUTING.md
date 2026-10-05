@@ -4,7 +4,7 @@ Contributions are welcome. This guide covers setup, code style, and the pull req
 
 ## Prerequisites
 
-- Go 1.22+
+- Go 1.26+
 - make
 
 ## Clone and Build

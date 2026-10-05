@@ -40,7 +40,7 @@ aibutler agent history
 | Primary     | `primary`    | Direct user-initiated agent    |
 | Scheduled   | `scheduled`  | Triggered by cron schedule     |
 
-Future releases will add `subagent` and `background` types.
+`subagent` and `background` agent types are implemented (`internal/agent/tools.go`) — used by agent.delegate and agent.spawn.
 
 ## Lifecycle States
 

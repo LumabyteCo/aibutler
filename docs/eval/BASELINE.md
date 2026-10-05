@@ -6,7 +6,37 @@ prompts, or tool-selection heuristics can be judged by **measured deltas
 against a pinned reference**, not impression. Numbers below are reported
 exactly as the harness recorded them, including the failures.
 
-## Result
+## Current baseline (glm-5.3)
+
+| | |
+|---|---|
+| **Suite** | built-in (compiled into the binary), 7 tasks |
+| **Suite hash** | `28438749c91bd565…` (full hash recorded on the run row) |
+| **Mode** | live |
+| **Model** | Ollama Cloud (glm-5.3) |
+| **Date** | 2026-10-05 |
+| **Score** | **5/7 tasks passed (71%)** |
+
+Ollama Cloud retired `glm-5.1` on 2026-09-25 (HTTP 410), so the live baseline
+was re-run on `glm-5.3`. Per-task changes vs. the 2026-07-08 baseline:
+
+| Task | 2026-07-08 (glm-5.1) | 2026-10-05 (glm-5.3) |
+|---|---|---|
+| file-write-roundtrip | ❌ (phrasing) | ✅ pass |
+| file-edit-existing | ✅ pass | ✅ pass |
+| read-modify-verify | ✅ pass | ✅ pass |
+| error-then-recover | ❌ | ❌ (the expected refusal still didn't happen) |
+| boundary-respected | ❌ (phrasing) | ❌ (model exceeds the call budget and keeps retrying instead of refusing — a real over-persistence miss, worth watching) |
+| answer-without-tools | ✅ pass | ✅ pass |
+| consistency-repeat | ✅ pass | ✅ pass |
+
+Hosted models rotate — before reproducing, check what's available
+(`base_url: https://ollama.com`, `GET /v1/models`) and record the model
+actually used in the run row.
+
+---
+
+## Previous baseline (glm-5.1 — retired)
 
 | | |
 |---|---|

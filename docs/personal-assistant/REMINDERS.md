@@ -19,9 +19,9 @@ You:    Cancel the timesheet reminder
 Butler: Reminder cancelled
 ```
 
-## Tools (Planned)
+## Tools
 
-> **Status:** The `user_reminders` table exists in the schema. Reminder tools (`reminder.set`, `reminder.list`, `reminder.cancel`) are planned for a future release and will integrate with the scheduling system (`internal/schedule`).
+> **Status:** Shipped. `reminder.set`, `reminder.list`, and `reminder.cancel` are live (`internal/tool/reminder_tools.go`), backed by the `user_reminders` table and integrated with the scheduling system (`internal/schedule`).
 
 ### `reminder.set` -- Set a reminder
 

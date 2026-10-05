@@ -13,7 +13,7 @@ configurations:
     fallback: ""                 # Optional fallback model
 ```
 
-Planned providers include Claude (Anthropic), OpenAI, and Ollama (local models).
+Supported providers: Claude (Anthropic), OpenAI, Gemini, xAI Grok, any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, Groq, DeepSeek, Ollama Cloud).
 
 ## Is it free?
 

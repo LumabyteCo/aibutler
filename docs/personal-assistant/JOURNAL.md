@@ -29,9 +29,9 @@ The `type` field lets you categorize entries: `"journal"`, `"note"`, `"gratitude
 
 Capability: `data.journal.write`
 
-## Planned Tools
+## Read Tools
 
-- `journal.read` -- Read past entries by date range or search terms (capability: `data.journal.read`)
+- `journal.read` -- Read past entries by date range, search terms, or mood filter (capability: `data.journal.read`) — live in `internal/tool/journal_read_tools.go`
 - `journal.mood_trend` -- Show mood patterns over time
 
 ## Table: `user_journal`

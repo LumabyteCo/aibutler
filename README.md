@@ -26,7 +26,7 @@
 
 ---
 
-> **🚀 v0.1 — Public Beta.** AI Butler is an ambitious project — **120+ packages, 2,100+ passing tests, 59 internal security audit passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready. Several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release)
+> **🚀 v0.1 — Public Beta.** AI Butler is an ambitious project — **147 packages, 2,191 passing tests, 59 internal security audit passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready. Several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release)
 
 ---
 
@@ -42,10 +42,10 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | 🧠 **Memory that actually works** | Knowledge graph + FTS5 full-text search + vector embeddings, fused with reciprocal rank fusion. Ask about something you mentioned weeks ago — it remembers. A core strength of AI Butler: your memory stays local, is yours, and is never LLM-summarized. |
 | 🤖 **Any AI model** | Claude, GPT, Gemini, Grok, or fully local via Ollama, LM Studio, vLLM, Groq, DeepSeek. Bring your own key, swap models per-task, or run entirely offline. |
 | 🔗 **Agent ecosystem hub** | [Google A2A v2](https://github.com/google/A2A) (beta — handler works, conformance suite pending). Built-in MCP client + MCP server. Subprocess bridges for wrapping any CLI tool. |
-| 🛡️ **Security-first** | 59-pass internal security audit. RBAC, FIDO2/WebAuthn, OIDC SSO, capability-gated tools, WASM plugin sandbox, SSRF protection, shell allowlisting. |
-| 🖥️ **Clean built-in web UI** | 6-panel sidebar dashboard — chat, home, memories browser, connected apps, spending, settings. No framework, no build step, embedded in the binary. |
+| 🛡️ **Security-first** | Capability-gated tools with a full audit trail, RBAC, FIDO2/WebAuthn, OIDC SSO, WASM plugin sandbox, SSRF protection, shell allowlisting. Verified by repeated internal security review passes (an external audit is planned for v1.0). |
+| 🖥️ **Clean built-in web UI** | 7-panel sidebar dashboard — chat, home, memories browser, connected apps, missions, spending, settings. No framework, no build step, embedded in the binary. |
 | 💾 **Self-hosted & private** | Single Go binary. Your data stays on your machine. Runs from Raspberry Pi to cloud. Zero telemetry unless you explicitly opt in. |
-| 🌍 **Open source** | Apache 2.0 licensed (patent grant included). 2,100+ tests. 120+ packages. Zero CVEs (`govulncheck` verified). |
+| 🌍 **Open source** | Apache 2.0 licensed (patent grant included). 2,191 tests. 147 packages. Zero CVEs (`govulncheck` verified). |
 
 ---
 
@@ -61,15 +61,15 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | **Memory system** — FTS5 + knowledge graph + vector embeddings + hybrid search | `ready` |
 | **Claude integration** (Anthropic API) | `ready` |
 | **Ollama integration** (local models + embeddings, auto-detected) | `ready` |
-| **Ollama Cloud** (OpenAI-compatible, `base_url: https://ollama.com`, validated end-to-end with `glm-5.1` on a 50-test QA suite) | `ready` |
-| **Web chat interface** — 6-panel sidebar, streaming, file upload, voice upload, responsive, dark mode | `ready` |
+| **Ollama Cloud** (OpenAI-compatible, `base_url: https://ollama.com`, validated end-to-end with hosted models like `glm-5.3` on a 50-test QA suite) | `ready` |
+| **Web chat interface** — 7-panel sidebar, streaming, file upload, voice upload, responsive, dark mode | `ready` |
 | **Terminal REPL** — interactive, streaming, slash commands, session resume | `ready` |
 | **Scheduler** — natural language → cron, persistent, reliable | `ready` |
 | **Cost tracking** — per-model, per-session, live dashboard | `ready` |
 | **MCP client** — connects to external MCP servers on boot | `ready` |
 | **Vault** — credential storage with OS keyring integration | `ready` |
 | **Capability engine** — per-tool permissions + audit trail | `ready` |
-| **SQLite database** — 74 tables, 22 migrations, WAL mode | `ready` |
+| **SQLite database** — 77 tables, 22 migrations, WAL mode | `ready` |
 | **Config system** — Three-tier (Settings / Configurations / Options) + BUTLER.md project files | `ready` |
 | **File + shell + git tools** — capability-gated, sandboxed | `ready` |
 | **Single-binary distribution** — zero CGO, cross-compiles to any Go platform | `ready` |
@@ -256,13 +256,13 @@ aibutler vault set whatsapp_phone_number_id YOUR_PHONE_ID
 
 | Metric | Value |
 |--------|-------|
-| Tests (passing, race-free) | **2,148** |
-| Go packages | **120+** |
-| SQLite tables | **74** |
+| Tests (passing, race-free) | **2,191** |
+| Go packages | **147** |
+| SQLite tables | **77** |
 | Database migrations | **22** |
 | Internal security audit passes | **59** |
 | CVEs (`govulncheck` verified) | **0** |
-| External Go dependencies | **~10 direct** |
+| External Go dependencies | **16 direct** |
 | CGO required | **No** |
 | Channels wired | **12** (2 ready: web chat + terminal; 10 beta) |
 | AI providers wired | **6+** (Claude + Ollama ready, others beta) |
@@ -273,7 +273,7 @@ aibutler vault set whatsapp_phone_number_id YOUR_PHONE_ID
 
 AI Butler is built with a security-first architecture:
 
-- **59-pass internal security audit** with 74 findings found and 70+ fixed
+- Repeated internal security review passes (59 to date) surfaced 74 findings; 70+ are fixed and the rest are tracked for v1.0
 - **Capability engine** with per-tool granular permissions and audit logging
 - **RBAC** (`admin`, `user`, `viewer`, `agent` roles) with OIDC SSO and FIDO2/WebAuthn (beta)
 - **SSRF protection** blocking private/internal IP ranges
@@ -369,10 +369,11 @@ govulncheck ./...
 
 # Build
 CGO_ENABLED=0 go build -o aibutler .
-
-# Serve the docs site locally
-cd website && npm run dev
 ```
+
+The documentation website (docs.aibutler.dev) lives in a separate repository
+and is built with Astro + Starlight. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for how docs changes flow to the site.
 
 ---
 

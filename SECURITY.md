@@ -99,7 +99,7 @@ All auth methods are implemented and pass unit tests. Real-world validation in p
 
 ### Current (v0.1)
 
-- **59 internal security audit passes** across the v0.1 development cycle. 74 findings were discovered across these passes; 70+ have been fixed. The remaining items are tracked internally and will be resolved before v1.0.
+- **59 internal security review passes** across the v0.1 development cycle. 74 findings were discovered across these passes; 70+ have been fixed. The remaining items are tracked internally and will be resolved before v1.0.
 - **`govulncheck` clean** — zero known CVEs in dependencies as of the latest build. CI runs `govulncheck` on every commit.
 - **`go vet ./...` clean** — zero vet warnings.
 - **Integration tests** cover the full agent loop, capability enforcement, channel adapters, and auth flows.
@@ -112,7 +112,7 @@ All auth methods are implemented and pass unit tests. Real-world validation in p
 - **cosign-signed binaries** with transparency log
 - **CVE monitoring integration** for all dependencies
 
-**Important:** The 59 audit passes are all internal. They are deep and thorough, but they are not a substitute for an external review. If you're deploying AI Butler in a production environment with sensitive data, please treat it as beta software until the external audit is complete.
+**Important:** The 59 review passes are all internal. They are deep and thorough, but they are not a substitute for an external review. If you're deploying AI Butler in a production environment with sensitive data, please treat it as beta software until the external audit is complete.
 
 ## Threat Model
 
