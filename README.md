@@ -2,8 +2,9 @@
   <h1 align="center">AI Butler</h1>
   <p align="center"><strong>The open-source AI agent that connects everything.</strong></p>
   <p align="center">
-    Multi-channel personal assistant with exceptional memory, any AI model,<br/>
-    self-hosted. One Go binary. No dependencies. Works offline.
+    Multi-channel personal assistant with exceptional memory, any AI model, a real<br/>
+    Home Assistant smart-home integration with PIN-gated safety, self-hosted.<br/>
+    One Go binary. No dependencies. Works offline.
   </p>
   <p align="center">
     <a href="https://aibutler.dev">Website</a> ·
@@ -28,6 +29,9 @@
 
 > **🚀 v0.1 — Public Beta.** AI Butler is an ambitious project — **147 packages, 2,191 passing tests, 59 internal security audit passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready. Several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release)
 
+> **✨ Just shipped (v0.2 line, on main):**
+> **A real Home Assistant adapter** — natural-language device control with a three-tier safety model (*"unlock the front door" demands a confirmation + PIN, by default*). Plus **chat history that survives reloads**, honest cost tracking for Ollama Cloud, provider failures that explain themselves in chat, a security fix that keeps PINs out of model context, editor-extension API endpoints, and a truth pass over every number in this README. [Jump to smart home →](#connect-your-smart-home-optional--beta)
+
 ---
 
 ## Why AI Butler
@@ -39,6 +43,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 |   | What makes it different |
 |---|---|
 | 💬 **Works everywhere you chat** | 12 channels — Telegram, WhatsApp, Slack, Discord, Teams, Google Chat, LINE, IRC, web chat, terminal, custom webhook, Nostr (web chat + terminal are production-ready; the other 10 are in beta — see the release table below). One agent, shared memory, all platforms. |
+| 🏠 **Smart home, safely** | A real Home Assistant integration: discover devices, control lights/climate, and gate anything that guards your home — locks, alarms, garage doors — behind confirmation + a PIN by default. Validated live against Home Assistant 2026.9.4. |
 | 🧠 **Memory that actually works** | Knowledge graph + FTS5 full-text search + vector embeddings, fused with reciprocal rank fusion. Ask about something you mentioned weeks ago — it remembers. A core strength of AI Butler: your memory stays local, is yours, and is never LLM-summarized. |
 | 🤖 **Any AI model** | Claude, GPT, Gemini, Grok, or fully local via Ollama, LM Studio, vLLM, Groq, DeepSeek. Bring your own key, swap models per-task, or run entirely offline. |
 | 🔗 **Agent ecosystem hub** | [Google A2A v2](https://github.com/google/A2A) (beta — handler works, conformance suite pending). Built-in MCP client + MCP server. Subprocess bridges for wrapping any CLI tool. |
