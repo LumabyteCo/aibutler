@@ -355,7 +355,39 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 ## [Unreleased]
 
+Changes in `main` that haven't been released yet will be tracked here.
+
+## [0.6.0] — 2026-10-05 — Smart Home Edition
+
+The first release where AI Butler acts on your house: a real Home Assistant
+integration with a three-tier safety model, plus the reliability and honesty
+fixes from the 2026-10 live QA pass (Ollama Cloud + local models + a real
+Home Assistant 2026.9.4 instance).
+
 ### Added
+
+- **Home Assistant adapter** — `configurations.iot.adapter: homeassistant` connects to a real HA instance over its REST API: entity discovery at boot, service-call mapping (lights/switches/climate/covers/locks/alarms/media), sensor state parsing, and URL normalization. The three-tier safety model classifies entities automatically (sensors → tier 1, comfort devices → tier 2, locks/alarms/garage covers → tier 3, always PIN-gated). Tier policy is upgrade-only: config or runtime discovery can never downgrade a safety device below tier 3. Validated live against Home Assistant 2026.9.4.
+- **`aibutler iot` command** — `set-pin` (bcrypt, 4-12 digits), `verify-pin`, `status`. Previously there was no way to set the tier-3 safety PIN.
+- **`configurations.iot.safety_control_enabled`** — explicit, deny-by-default grant of the `iot.safety.control` capability. Per-call confirmation + PIN gates remain regardless.
+- **Editor extension API** — `/api/vscode/{ask,explain,fix,tests}` endpoints in the webchat power the VS Code extension, running editor commands through the full agent pipeline. (The extension previously pointed at a route that never existed and always 404'd.)
+- **Chat history survives reload** — `/api/history` rehydrates the conversation on page load; the panel no longer starts blank after a refresh. Sessions match by IP prefix (browser ports change per connection), with cross-account isolation tested. Explicit "New chat" still starts clean.
+- **Bidirectional MCP client** — protocol 2025-06-18 with elicitation and structured output; server→client traffic demultiplexed over the stdio transport; elicitation answered per `configurations.mcp.elicitation_policy` (`decline` by default, opt-in `accept-defaults`).
+
+### Fixed
+
+- **PIN values can no longer leak through model context (security)** — the agent could previously quote a working safety PIN back in prose ("the PIN that worked earlier was 2468"). Three layers: PIN patterns join the audit-log redactor; tool-call inputs stored in history are redacted (live calls still verify the real PIN); stored history redacts PINs on every model request; a system-prompt rule refuses to repeat credentials even if asked. Verified live: unlock works with the PIN, and asking "what was the PIN?" is refused *because the PIN genuinely no longer exists in context*.
+- **Failed agent runs no longer stick in `running` state** — `failWith` persists the `failed` state; a boot-time recovery janitor marks orphaned agents from crashed runs as failed.
+- **`AIBUTLER_DATA` is honored** — the Docker image, systemd unit, and Helm chart have always set it; the binary now reads it (default remains `~/.aibutler`). Containerized data paths documented in deploy guides are now real.
+- **Ollama Cloud usage is priced** — hosted models on `ollama.com` were displayed as $0.00 in the Spending panel because non-claude/gpt/gemini/grok names fell through to "local" pricing. Paid endpoints are now classified per-token; local endpoints stay free.
+- **Provider failures surface in chat** — a 401/410/404 from the model provider previously rendered an empty assistant bubble while the terminal logged the real error. The router now sends categorized, actionable messages (e.g. "model retired — pick a current one" for 410).
+- **Docker port story aligned** — the image and compose files exposed 8080 while the binary serves 3377 by default; both now match (3377 web, 8081 A2A).
+- **Stale static assets** — `/static/*` now sends `Cache-Control: no-cache` and the PWA service-worker cache version was bumped, so installed clients pick up UI updates instead of serving cached JavaScript indefinitely.
+- **CVE fixes from the weekly govulncheck** — Go toolchain 1.26.5 → 1.26.6 (GO-2026-6218 net/url, GO-2026-6090 crypto/tls) and golang.org/x/text 0.38.0 → 0.39.0 (GO-2026-5970). govulncheck reports zero.
+
+### Documentation
+
+- README: smart-home headline + "Just shipped" banner; honest counts (147 packages, 2,191 tests, 77 tables, 22 migrations, 16 direct deps); a Connect-your-smart-home quick-start; beta rows updated for shipped features.
+- The full D1–D15 truth pass: deployment guides (real launchd plist, `deploy/systemd/` paths, `AIBUTLER_DATA`), eleven "planned" labels removed from shipped features, Go 1.26+ everywhere, `llms.txt` completed, and the eval baseline re-published on a current hosted model (5/7, up from 4/7 — the old baseline's glm-5.1 was retired by Ollama Cloud on 2026-09-25).
 
 - **Home Assistant adapter** — `configurations.iot.adapter: homeassistant` now connects to a real HA instance over its REST API: entity discovery at boot, service-call mapping (lights/switches/climate/covers/locks/alarms/media), sensor state parsing, and URL normalization. The three-tier safety model classifies entities automatically (sensors → tier 1, comfort devices → tier 2, locks/alarms/garage covers → tier 3, always PIN-gated). Tier policy is upgrade-only: config or runtime discovery can never downgrade a safety device below tier 3. Validated live against Home Assistant 2026.9.4.
 - **`aibutler iot` command** — `set-pin` (bcrypt, 4-12 digits), `verify-pin`, `status` (adapter/token/PIN state). Previously there was no way to set the tier-3 safety PIN.
@@ -1141,6 +1173,7 @@ dashboard panel is read-only by design.
   running more worker instances.
 
 [0.1.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.1.0
+[0.6.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.6.0
 [0.2.0]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.0
 [0.2.1]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.1
 [0.2.2]: https://github.com/LumabyteCo/aibutler/releases/tag/v0.2.2
