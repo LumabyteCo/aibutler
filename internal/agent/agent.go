@@ -55,6 +55,10 @@ type Response struct {
 	// leave it empty. The router surfaces it to the user instead of
 	// sending a blank reply.
 	Error string
+	// Note is an optional non-error annotation from an adapter (e.g. the
+	// hybrid router marking "reduced reasoning" fallback answers). It is
+	// metadata for the caller, never user-facing on its own.
+	Note string `json:"note,omitempty"`
 }
 
 // ToolCall is a model request to invoke a tool.
