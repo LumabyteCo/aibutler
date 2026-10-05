@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LumabyteCo/aibutler/internal/audit"
 	"github.com/LumabyteCo/aibutler/internal/capability"
 )
 
@@ -242,7 +243,7 @@ func (a *Agent) Run(ctx context.Context) (Result, error) {
 			return a.result, nil
 		}
 
-		// Call model.
+		// Call model.		// Call model.
 		resp, err := a.cfg.Model.Complete(ctx, a.messages)
 		if err != nil {
 			return a.failWith(fmt.Sprintf("model error: %v", err))
@@ -271,13 +272,43 @@ func (a *Agent) Run(ctx context.Context) (Result, error) {
 		// Has tool calls → execute them.
 		_ = a.transition(StateWaiting)
 
+		// B10: before any tool executes, scrub PIN values from the
+		// conversation history the model will see in FUTURE turns. The
+		// current turn already gave the model the user's PIN (that's how
+		// it builds the tool call); from here on, history must not let
+		// later turns quote the working PIN back in prose (observed live:
+		// "the PIN that worked earlier was 2468").
+		//
+		// - The tool-call INPUT the model just produced is redacted before
+		//   being appended to history (the live call executes with the
+		//   REAL input — tools verify against the vault).
+		// - PRIOR user messages have their PIN text replaced. The
+		//   CURRENT turn's user message (the trailing one) stays intact
+		//   until the run completes: the model reads it across turns to
+		//   build follow-up tool calls (e.g. list devices first, then
+		//   unlock with the PIN it was given). Redacting it mid-run makes
+		//   the model emit "pin":"[REDACTED]" into the live tool call.
+		//   The composer redacts it from history on the NEXT request.
+		for i := range a.messages {
+			if a.messages[i].Role == "user" && a.messages[i].Content != "" && i != len(a.messages)-1 {
+				a.messages[i].Content = audit.RedactPINs(a.messages[i].Content)
+			}
+		}
+		historyCalls := make([]ToolCall, len(resp.ToolCalls))
+		for i, tc := range resp.ToolCalls {
+			htc := tc
+			htc.Input = audit.RedactPINs(tc.Input)
+			historyCalls[i] = htc
+		}
+
 		a.messages = append(a.messages, Message{
 			Role:      "assistant",
 			Content:   resp.Content,
-			ToolCalls: resp.ToolCalls,
+			ToolCalls: historyCalls,
 		})
 
-		// In multi/custom mode with multiple tool calls, execute in parallel.
+		// Execute with the ORIGINAL tool calls — the tools verify the real
+		// PIN against the vault; history is the only thing redacted.
 		if (mode == ModeMulti || mode == ModeCustom) && len(resp.ToolCalls) > 1 {
 			a.executeToolsParallel(ctx, resp.ToolCalls)
 		} else {

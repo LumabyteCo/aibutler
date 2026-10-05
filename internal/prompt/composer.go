@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent"
+	"github.com/LumabyteCo/aibutler/internal/audit"
 	"github.com/LumabyteCo/aibutler/internal/config"
 	"github.com/LumabyteCo/aibutler/internal/memory/bank"
 	"github.com/LumabyteCo/aibutler/internal/session"
@@ -176,6 +177,28 @@ func (c *Composer) Compose(ctx context.Context, sessionID, userMessage, channel 
 		if err != nil {
 			return nil, fmt.Errorf("prompt.compose: tier3: %w", err)
 		}
+		// B10: stored history is long-lived — a PIN typed in a previous
+		// message must never re-enter model context on later turns. The
+		// DB keeps the original for the user's own chat display; the
+		// model sees [REDACTED]. Tool inputs in history get the same
+		// treatment.
+		//
+		// EXCEPTION: the trailing history entry equal to the CURRENT
+		// userMessage is this turn's own message (the router stores it
+		// before the agent runs). It must stay intact — the model needs
+		// the PIN to build the safety tool call; the agent loop redacts
+		// it from history right after the tool call executes.
+		for i := range history {
+			if i == len(history)-1 && history[i].Role == "user" && history[i].Content == userMessage {
+				continue // current turn — not yet spent
+			}
+			if history[i].Content != "" {
+				history[i].Content = audit.RedactPINs(history[i].Content)
+			}
+			for j := range history[i].ToolCalls {
+				history[i].ToolCalls[j].Input = audit.RedactPINs(history[i].ToolCalls[j].Input)
+			}
+		}
 		p.History = history
 	}
 
@@ -196,6 +219,13 @@ func (c *Composer) buildTier1(ctx context.Context, channel, sessionID string) (s
 	// 1. Base system prompt (~200 tokens).
 	base := fmt.Sprintf("You are %s, a personal AI assistant. You help with tasks, answer questions, and manage daily activities. Be concise and helpful.", c.cfg.Settings.PersonaName)
 	parts = append(parts, base)
+
+	// 1b. Credential-handling rule. Security: PINs and other secrets the
+	// user provides in a message are used once for the tool call and must
+	// NEVER be repeated back in prose, stored in memory, or included in
+	// summaries — even when the user asks for them. Observed live: an
+	// agent volunteering "the PIN that worked earlier was 2468".
+	parts = append(parts, "Security rule: if the user provides a PIN, password, or key in a message, use it for the requested action and never repeat its value in your replies, memories, or summaries. If asked to recall it, say you cannot repeat credentials.")
 
 	// 2. Learned Instructions (~200 tokens, priority-ordered).
 	instrBlock := c.loadInstructions(ctx, channel, sessionID)

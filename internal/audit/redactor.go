@@ -16,6 +16,25 @@ var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`glpat-[a-zA-Z0-9\-]{20,}`),      // GitLab PAT
 	regexp.MustCompile(`AKIA[A-Z0-9]{16}`),              // AWS access key
 	regexp.MustCompile(`(?i)basic\s+[a-zA-Z0-9+/=]{20,}`), // Basic auth
+	// IoT safety PIN — "PIN: 2468", "pin is 2468", "PIN 2468",
+	// "safety PIN: 2468", `"pin":"2468"` (JSON tool input). 4-12 digits,
+	// optionally quoted. Catches the tier-3 unlock phrase before it lands
+	// in logs or model context.
+	regexp.MustCompile(`(?i)\b(?:safety\s*)?pin\b["']?[:=,\s]+["']?\d{4,12}["']?\b`),
+}
+
+// RedactPINs removes only PIN values from text, keeping other content
+// intact. Used for message history entering model context: a user message
+// legitimately contains the PIN (that's how the flow works), but once the
+// tool call is made, later turns must not be able to quote it back.
+//
+// The label and separators are preserved (including JSON quotes) so tool
+// inputs stay structurally valid — only the digit value is replaced.
+func RedactPINs(text string) string {
+	// Group 1: "pin" label plus everything up to the digits (quotes,
+	// colons, "is", whitespace). Group 2: the digits.
+	pinPattern := regexp.MustCompile(`(?i)\b((?:safety\s+)?pin\b(?:\s+is\b)?["']?[:=,]?\s*["']?)(\d{4,12})\b`)
+	return pinPattern.ReplaceAllString(text, "$1[REDACTED]")
 }
 
 // Redact replaces sensitive patterns in text with [REDACTED].
