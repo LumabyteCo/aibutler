@@ -148,6 +148,24 @@ func (r *Router) HandleMessage(ctx context.Context, env Envelope) error {
 		return r.sendBudgetPaused(ctx, ch, env)
 	}
 
+	// 5a2. Handle model/provider failure — the agent loop reports failures
+	// through result.Error (failWith returns a nil error), and streaming
+	// failures land here with an empty Output. Without this branch the user
+	// sees an empty reply while the terminal logs the real cause (401/410).
+	if result.Error != "" && result.Output == "" {
+		msg := r.modelErrorMessage(result.Error)
+		if err := r.sessions.AddMessage(ctx, sessID, agent.Message{
+			Role:    "assistant",
+			Content: msg,
+		}); err != nil {
+			log.Printf("channel: store model error: %v", err)
+		}
+		return ch.Send(ctx, env.AccountID, OutgoingMessage{
+			Text:    msg,
+			ReplyTo: env.ID,
+		})
+	}
+
 	// 5b. Handle empty response — don't send blank messages.
 	if result.Output == "" && result.Error == "" {
 		result.Output = "I processed your request but have no response to share."
@@ -322,6 +340,30 @@ func (r *Router) handleStopPhrase(ctx context.Context, env Envelope, action stop
 
 	msg := r.i18n.T(lang, key)
 	return ch.Send(ctx, env.AccountID, OutgoingMessage{Text: msg})
+}
+
+// modelErrorMessage turns a raw provider/model error into a user-facing
+// message with an actionable hint. The raw error is included (truncated)
+// because support requests always start with "what was the exact error?"
+func (r *Router) modelErrorMessage(rawErr string) string {
+	raw := rawErr
+	if len(raw) > 200 {
+		raw = raw[:200] + "…"
+	}
+	switch {
+	case strings.Contains(rawErr, "401"), strings.Contains(rawErr, "Unauthorized"):
+		return "⚠️ The AI provider rejected the request (401 Unauthorized). " +
+			"The API key is missing, invalid, or expired — check it with `aibutler vault list` and re-set it with `aibutler vault set`. Details: " + raw
+	case strings.Contains(rawErr, "410"), strings.Contains(rawErr, "retired"):
+		return "⚠️ The AI provider no longer hosts this model (410 Gone). " +
+			"The model was likely retired — pick a current one in your config. Details: " + raw
+	case strings.Contains(rawErr, "429"):
+		return "⚠️ Rate limit reached (429). The request was retried and still throttled — wait a moment and try again. Details: " + raw
+	case strings.Contains(rawErr, "404"):
+		return "⚠️ Model not found (404). The configured model name doesn't exist on the provider — check `settings.model` in your config. Details: " + raw
+	default:
+		return "⚠️ The AI provider failed to respond. Details: " + raw
+	}
 }
 
 func (r *Router) sendError(ctx context.Context, ch Channel, env Envelope) error {
