@@ -242,6 +242,9 @@ type App struct {
 	// MCPAgentAdapter is exported so cmd_run can inject the agent factory
 	// after it's constructed (the factory doesn't exist at app.New time).
 	MCPAgentAdapter   *mcpV2AgentAdapter
+	// VSCodeRunnerSetter is set by Bootstrap so cmd_run can inject the
+	// agent factory into the /api/vscode/ handler once the model resolves.
+	VSCodeRunnerSetter interface{ SetRunner(webchat.AgentRunner) }
 	SubprocessBridges map[string]*subprocpkg.Adapter
 	Marketplace       *marketplacepkg.Registry
 	BatchExecutor     *model.BatchExecutor
@@ -251,8 +254,14 @@ type App struct {
 	webChatAdapter *webchat.Adapter // reference for mounting dashboard/setup handlers
 }
 
-// DefaultDataDir returns ~/.aibutler.
+// DefaultDataDir returns the data directory: $AIBUTLER_DATA if set (used by
+// the Docker image, systemd unit, and Helm chart), else ~/.aibutler.
+// All deploy artifacts have set AIBUTLER_DATA since v0.1 — honoring it makes
+// the documented containerized data paths (/data, /var/lib/aibutler) real.
 func DefaultDataDir() string {
+	if p := os.Getenv("AIBUTLER_DATA"); p != "" {
+		return p
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".aibutler")
 }
@@ -323,6 +332,15 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		return nil, fmt.Errorf("init vault: %w", err)
 	}
 	app.Vault = v
+
+	// 3b. Crash recovery: agents left in a non-terminal state by a previous
+	// run (kill -9, panic, model-error before the state fix) are marked
+	// failed so they don't accumulate as zombies in `agent list`.
+	if n, err := agent.RecoverAgents(context.Background(), database.Conn()); err != nil {
+		log.Printf("WARNING: agent recovery failed: %v", err)
+	} else if n > 0 {
+		log.Printf("startup: recovered %d orphaned agent(s) from a previous run", n)
+	}
 
 	// 4. Capability engine with SQLite audit logging.
 	auditor := audit.NewSQLiteAuditor(database.Conn())
@@ -546,44 +564,88 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		}
 	}
 
-	// 6a. Register IoT tools (stub adapter for v0.1).
-	// The stub comes pre-populated with a small set of demo devices so the
-	// IoT tool surface is usable out-of-the-box — useful for trying the
-	// natural-language flow ("turn off the living room lights", "what's
-	// the temperature upstairs?") before the Home Assistant adapter ships
-	// in v0.2. TODO(v0.2): replace with real adapter configured via
-	// configurations.iot.adapter.
+	// 6a. Register IoT tools — adapter selected by configurations.iot.adapter.
 	//
-	// Important: devices must be registered at BOTH the adapter (for
-	// discover/read_sensor) AND the controller (for tier-aware execution
-	// of ReadSensor/ExecuteCommand). The controller keeps its own device
-	// registry that's used for tier lookups before delegating to the
-	// adapter. See internal/iot/iot.go:Controller.devices.
-	iotAdapter := iot.NewStubAdapter()
+	// "homeassistant" wires the real HA adapter: devices are discovered
+	// from the instance, entities keep their HA entity IDs, and the
+	// three-tier safety model classifies them automatically (sensors →
+	// tier 1, lights/climate → tier 2, locks/alarms → tier 3, always
+	// PIN-gated).
+	//
+	// "stub" (default) keeps the demo devices so the natural-language flow
+	// works out of the box before a real HA instance is configured.
+	//
+	// Devices must be registered at BOTH the adapter (for discover/
+	// read_sensor) AND the controller (for tier-aware execution) — the
+	// controller keeps its own registry for tier lookups before delegating.
+	var iotAdapter iot.DeviceAdapter
+	var haDevices []iot.Device
+	switch cfg.Configurations.IoT.Adapter {
+	case "homeassistant":
+		token := ""
+		if cred, err := v.Get(ctx, "homeassistant_token"); err == nil {
+			token = string(cred.Value)
+		}
+		if token == "" {
+			log.Printf("iot: adapter=homeassistant but no homeassistant_token in vault — run: aibutler vault set homeassistant_token <long-lived-token>; falling back to stub")
+			iotAdapter = iot.NewStubAdapter()
+		} else {
+			policy := make(map[string]iot.Tier, len(cfg.Configurations.IoT.HATierPolicy))
+			for k, t := range cfg.Configurations.IoT.HATierPolicy {
+				policy[k] = iot.Tier(t)
+			}
+			ha := iot.NewHomeAssistantAdapter(cfg.Configurations.IoT.HAURL, token, policy)
+			iotAdapter = ha
+			// Discover now so devices are registered before serving traffic;
+			// a down HA instance degrades to an empty registry with a warning
+			// — the iot.list tool re-discovers on demand.
+			if devices, err := ha.Discover(context.Background()); err == nil {
+				log.Printf("iot: homeassistant: discovered %d entities", len(devices))
+				haDevices = devices
+			} else {
+				log.Printf("WARNING: iot: homeassistant discover failed: %v — iot tools will retry on demand", err)
+			}
+		}
+	default:
+		iotAdapter = iot.NewStubAdapter()
+	}
 	iotCtrl := iot.NewController(iotAdapter, app.Engine, iot.NewPINVerifier(v))
 
-	demoDevices := []iot.Device{
-		{ID: "light-living-room", Name: "Living Room Light", DeviceType: "light", Adapter: "stub", Tier: iot.TierComfort, Enabled: true},
-		{ID: "light-kitchen", Name: "Kitchen Light", DeviceType: "light", Adapter: "stub", Tier: iot.TierComfort, Enabled: true},
-		{ID: "thermostat-main", Name: "Main Thermostat", DeviceType: "thermostat", Adapter: "stub", Tier: iot.TierComfort, Enabled: true},
-		{ID: "sensor-living-room", Name: "Living Room Motion + Climate Sensor", DeviceType: "sensor", Adapter: "stub", Tier: iot.TierSensor, Enabled: true},
-		{ID: "lock-front-door", Name: "Front Door Lock", DeviceType: "lock", Adapter: "stub", Tier: iot.TierSafety, Enabled: true},
-	}
-	for _, d := range demoDevices {
-		iotAdapter.AddDevice(d)
-		iotCtrl.RegisterDevice(d)
-	}
+	// Register devices with the controller (tier-aware execution).
+	// HA mode: whatever discovery returned (may be empty if HA was down —
+	// the iot.list tool re-discovers on demand). Stub mode: demo set.
+	if cfg.Configurations.IoT.Adapter == "homeassistant" && len(haDevices) > 0 {
+		for _, d := range haDevices {
+			iotCtrl.RegisterDevice(d)
+		}
+	} else if cfg.Configurations.IoT.Adapter != "homeassistant" {
+		demoDevices := []iot.Device{
+			{ID: "light-living-room", Name: "Living Room Light", DeviceType: "light", Adapter: "stub", Tier: iot.TierComfort, Enabled: true},
+			{ID: "light-kitchen", Name: "Kitchen Light", DeviceType: "light", Adapter: "stub", Tier: iot.TierComfort, Enabled: true},
+			{ID: "thermostat-main", Name: "Main Thermostat", DeviceType: "thermostat", Adapter: "stub", Tier: iot.TierComfort, Enabled: true},
+			{ID: "sensor-living-room", Name: "Living Room Motion + Climate Sensor", DeviceType: "sensor", Adapter: "stub", Tier: iot.TierSensor, Enabled: true},
+			{ID: "lock-front-door", Name: "Front Door Lock", DeviceType: "lock", Adapter: "stub", Tier: iot.TierSafety, Enabled: true},
+		}
+		for _, d := range demoDevices {
+			if stub, ok := iotAdapter.(*iot.StubAdapter); ok {
+				stub.AddDevice(d)
+			}
+			iotCtrl.RegisterDevice(d)
+		}
 
-	// Seed sample sensor readings so iot.sensor.read returns realistic data.
-	iotAdapter.AddReading("sensor-living-room",
-		iot.SensorReading{DeviceID: "sensor-living-room", Metric: "temperature", Value: 21.3, Unit: "°C"},
-		iot.SensorReading{DeviceID: "sensor-living-room", Metric: "humidity", Value: 48.5, Unit: "%"},
-		iot.SensorReading{DeviceID: "sensor-living-room", Metric: "motion", Value: 0, Unit: "bool"},
-	)
-	iotAdapter.AddReading("thermostat-main",
-		iot.SensorReading{DeviceID: "thermostat-main", Metric: "current_temperature", Value: 21.8, Unit: "°C"},
-		iot.SensorReading{DeviceID: "thermostat-main", Metric: "target_temperature", Value: 21.0, Unit: "°C"},
-	)
+		// Seed sample sensor readings so iot.sensor.read returns realistic data.
+		if stub, ok := iotAdapter.(*iot.StubAdapter); ok {
+			stub.AddReading("sensor-living-room",
+				iot.SensorReading{DeviceID: "sensor-living-room", Metric: "temperature", Value: 21.3, Unit: "°C"},
+				iot.SensorReading{DeviceID: "sensor-living-room", Metric: "humidity", Value: 48.5, Unit: "%"},
+				iot.SensorReading{DeviceID: "sensor-living-room", Metric: "motion", Value: 0, Unit: "bool"},
+			)
+			stub.AddReading("thermostat-main",
+				iot.SensorReading{DeviceID: "thermostat-main", Metric: "current_temperature", Value: 21.8, Unit: "°C"},
+				iot.SensorReading{DeviceID: "thermostat-main", Metric: "target_temperature", Value: 21.0, Unit: "°C"},
+			)
+		}
+	}
 
 	iot.RegisterIoTTools(app.Tools, iotCtrl)
 
@@ -1223,6 +1285,13 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		}
 		app.webChatAdapter.MountHandler("/api/dashboard/", dashHandler)
 		app.webChatAdapter.MountHandler("/api/setup/", app.SetupWizard.Handler())
+
+		// VS Code / editor extension endpoint. The factory is injected by
+		// cmd_run after the adapter resolves (same pattern as the MCP agent
+		// adapter); until then the handler answers 503 with a clear message.
+		vscodeHandler := &webchat.VSCodeHandler{}
+		app.webChatAdapter.MountHandler("/api/vscode/", vscodeHandler)
+		app.VSCodeRunnerSetter = vscodeHandler
 
 		// Mount PWA handlers.
 		// iOS Safari fetches /apple-touch-icon.png at the site root — redirect

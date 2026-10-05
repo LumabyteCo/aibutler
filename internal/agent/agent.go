@@ -49,6 +49,11 @@ type Response struct {
 	ToolCalls []ToolCall
 	TokensIn  int
 	TokensOut int
+	// Error carries the provider error text when the stream failed (e.g.
+	// HTTP 401/410 from the model API). Adapters that complete normally
+	// leave it empty. The router surfaces it to the user instead of
+	// sending a blank reply.
+	Error string
 }
 
 // ToolCall is a model request to invoke a tool.
@@ -391,8 +396,11 @@ func (a *Agent) failWith(msg string) (Result, error) {
 	_ = a.transition(StateFailed)
 	a.result.Status = StateFailed
 	a.result.Error = msg
-	a.result.Duration = time.Since(a.startTime)
 	a.finalize()
+	// Persist the failed state so the DB row doesn't stay "running" forever.
+	// Model errors (401/410/timeout) are the common failure path; without
+	// this, `aibutler agent list` shows zombies from every failed run.
+	a.persistState(context.Background())
 	return a.result, nil
 }
 

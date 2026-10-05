@@ -159,6 +159,26 @@ type ScheduleConfig struct {
 // IoTConfig holds IoT adapter settings.
 type IoTConfig struct {
 	Adapter string `yaml:"adapter"` // "stub" (default), "homeassistant"
+
+	// HAURL is the Home Assistant instance root URL, e.g.
+	// "http://homeassistant.local:8123". Required when adapter=homeassistant.
+	// The long-lived access token is NOT stored here — it lives in the
+	// vault under the "homeassistant_token" key.
+	HAURL string `yaml:"ha_url"`
+
+	// HATierPolicy carries per-entity tier overrides, e.g.:
+	//   tier_policy:
+	//     lock.front_door: 3
+	// Only upgrades are honored — a safety device (lock/alarm/garage)
+	// can never be downgraded below tier 3 by config.
+	HATierPolicy map[string]int `yaml:"tier_policy"`
+
+	// SafetyControlEnabled grants the iot.safety.control capability to
+	// the chat agent, allowing tier-3 commands (locks, alarms, garages)
+	// to be attempted. Each call STILL requires confirmation + the safety
+	// PIN (aibutler iot set-pin) — this flag only unlocks the capability
+	// gate, not the PIN gate. Default false: deny-by-default.
+	SafetyControlEnabled bool `yaml:"safety_control_enabled"`
 }
 
 // EmbeddingConfig holds embedding provider settings for vector search.
@@ -653,7 +673,30 @@ func Load(path string) (*Config, error) {
 }
 
 // LoadOrDefault loads from the default config path, or returns defaults if the file doesn't exist.
+// LoadOrDefault loads from the default config path, or returns defaults if
+// the file doesn't exist. Resolution order: $AIBUTLER_CONFIG (explicit file),
+// then $AIBUTLER_DATA/config.yaml (Docker/systemd/Helm data dir), then
+// ~/.aibutler/config.yaml.
 func LoadOrDefault() (*Config, error) {
+	if p := os.Getenv("AIBUTLER_CONFIG"); p != "" {
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			cfg := Default()
+			cfg.Resolve()
+			return cfg, nil
+		}
+		return Load(p)
+	}
+
+	if dataDir := os.Getenv("AIBUTLER_DATA"); dataDir != "" {
+		path := filepath.Join(dataDir, "config.yaml")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			cfg := Default()
+			cfg.Resolve()
+			return cfg, nil
+		}
+		return Load(path)
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		cfg := Default()
@@ -828,6 +871,9 @@ func (c *Config) SlidingWindowSize() int {
 func (c *Config) SkillsDir() string {
 	if c.Configurations.Prompts.SkillsDir != "" {
 		return c.Configurations.Prompts.SkillsDir
+	}
+	if dataDir := os.Getenv("AIBUTLER_DATA"); dataDir != "" {
+		return filepath.Join(dataDir, "prompts", "skills")
 	}
 	homeDir, _ := os.UserHomeDir()
 	return filepath.Join(homeDir, ".aibutler", "prompts", "skills")
