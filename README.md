@@ -27,9 +27,9 @@
 
 ---
 
-> **🚀 v0.1 — Public Beta.** AI Butler is an ambitious project — **147 packages, 2,191 passing tests, 59 internal security audit passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready. Several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release)
+> **🚀 v0.6.0 — Smart Home Edition.** AI Butler is an ambitious project — **147 packages, 2,191 passing tests, 59 internal security review passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready; several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release) · [Releases →](https://github.com/LumabyteCo/aibutler/releases)
 
-> **✨ Just shipped (v0.2 line, on main):**
+> **✨ New in v0.6.0 (this release):**
 > **A real Home Assistant adapter** — natural-language device control with a three-tier safety model (*"unlock the front door" demands a confirmation + PIN, by default*). Plus **chat history that survives reloads**, honest cost tracking for Ollama Cloud, provider failures that explain themselves in chat, a security fix that keeps PINs out of model context, editor-extension API endpoints, and a truth pass over every number in this README. [Jump to smart home →](#connect-your-smart-home-optional--beta)
 
 ---
@@ -56,9 +56,9 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 
 ## What's in this release
 
-**We're shipping honest labels instead of marketing.** Here's exactly what's production-ready, what's beta (works but needs community testing), and what's coming in v0.2:
+**We're shipping honest labels instead of marketing.** Here's exactly what's production-ready, what's beta (works but needs community testing), and what's on the roadmap next:
 
-### ✅ Production-ready (v0.1)
+### ✅ Production-ready (v0.1 → v0.6)
 
 | Feature | Status |
 |---|---|
@@ -79,7 +79,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | **File + shell + git tools** — capability-gated, sandboxed | `ready` |
 | **Single-binary distribution** — zero CGO, cross-compiles to any Go platform | `ready` |
 
-### 🟡 Beta — code complete, needs real-world validation (v0.1)
+### 🟡 Beta — code complete, needs real-world validation (v0.6)
 
 We wrote the code and it compiles + passes unit tests, but we haven't put these through end-to-end production use with real third-party APIs. **We'd love your help testing these.** Open an issue if you hit anything.
 
@@ -117,11 +117,13 @@ We wrote the code and it compiles + passes unit tests, but we haven't put these 
 | **Whisper STT** (local + cloud) | `beta` | — |
 | **Piper TTS** (local, CPU-only) | `beta` | — |
 
-### ✨ New in v0.2
+### ✨ Computer control — shipped across v0.2 → v0.5
 
-The v0.2 release theme: **AI Butler can act on your computer**. Native
+The theme of releases 0.2 through 0.5: **AI Butler can act on your computer**. Native
 OS scripting on every major platform, vision input on every major
-adapter, and a mission engine for goals that take more than one turn.
+adapter, and a mission engine for goals that take more than one turn —
+now cross-platform through Tier 3 (accessibility trees) and Tier 4
+(screen capture + input) on macOS, Linux, and Windows.
 
 | Feature | Status | What it does |
 |---|---|---|
@@ -137,29 +139,27 @@ adapter, and a mission engine for goals that take more than one turn.
 | **Action recording** — fine-grained `actions` audit log with credential redaction | `ready` | Every native-script call logged with target, payload (redacted), duration, result. |
 | **AppleScript target-app allowlist** — `tell:Mail`, `tell:Music*`, `tell:*` | `ready` | Finer-grained safe defaults than bare-verb allowlisting. |
 
-### 🔜 On the roadmap (v0.3+)
+### 🔜 On the roadmap (v0.7+)
 
 | Feature | Target |
 |---|---|
-| **Hosted demo** (`demo.aibutler.dev`) | v0.2.x |
-| **LLM-driven replanning** when a mission step fails | v0.2.x |
-| **Mid-mission user-confirmation prompts** (today: manual `mission.interrupt action=pause`) | v0.2.x |
-| **Parallel step dispatch** in supervisor (sequential today) | v0.2.x |
-| **Manager tier** — 3-level supervisor → manager → worker hierarchy (2-level today) | v0.3 |
-| **Tier 3 accessibility tree** (AX, UIAutomation, AT-SPI) — one level finer than vision-driven UI | v0.3 |
-| **Tier 4 vision + input** — screen capture + mouse/keyboard for the long tail | v0.3 |
-| **Smart home routines** — memory-driven scenes ("goodnight" = lights → locks → thermostat), reflection learns your patterns | v0.3 |
-| **Plugin marketplace** with sample plugins | v0.3 |
-| **Voice TUI mode** — terminal mic capture + playback | v0.3 |
-| **Image generation** — Flux, Stable Diffusion, DALL-E via official APIs | v0.3 |
-| **Advanced TTS** — ElevenLabs adapter | v0.3 |
+| **Hybrid local/cloud router** — tiny local model answers "lights off" in ~1-2s fully offline; cloud model handles reasoning | v0.7 |
+| **Smart home routines** — memory-driven scenes ("goodnight" = lights → locks → thermostat), reflection learns your patterns | v0.7 |
+| **Mid-mission user-confirmation prompts** (today: manual `mission.interrupt action=pause`) | v0.7 |
+| **Hosted demo** (`demo.aibutler.dev`) | v0.7.x |
+| **Voice TUI mode** — terminal mic capture + playback | v0.8 |
+| **Plugin marketplace** with sample plugins | v0.8 |
+| **Image generation** — Flux, Stable Diffusion, DALL-E via official APIs | v0.8 |
+| **Advanced TTS** — ElevenLabs adapter | v0.8 |
+| **Internet mode** with autocert + password + TOTP | v0.8 |
+| **PWA** (installable web app) | v0.8 |
+| **Homebrew formula** | v0.8 |
+| **SLSA Level 3 provenance + cosign binary signing** | v0.8 |
+| **14-language i18n** (full Arabic RTL, CJK, etc.) | v0.9 |
 | **Video generation and advanced creative tools** | Later |
-| **Internet mode** with autocert + password + TOTP | v0.3 |
-| **PWA** (installable web app) | v0.3 |
-| **Homebrew formula** | v0.3 |
-| **SLSA Level 3 provenance + cosign binary signing** | v0.3 |
-| **14-language i18n** (full Arabic RTL, CJK, etc.) | v0.3 |
 | **External security audit** + bug bounty program | v1.0 |
+
+*Already shipped across v0.2 → v0.6: LLM-driven mission replanning, parallel step dispatch, the 3-level manager hierarchy, Tier 3 accessibility trees and Tier 4 vision + input on macOS/Linux/Windows, and (v0.6.0) the Home Assistant adapter with PIN-gated safety.*
 
 **Want to help push a feature from beta → ready, or from roadmap → beta?** [Open an issue](../../issues/new) or [start a discussion](../../discussions). This project thrives on contribution.
 
@@ -291,7 +291,7 @@ aibutler vault set whatsapp_phone_number_id YOUR_PHONE_ID
 | CVEs (`govulncheck` verified) | **0** |
 | External Go dependencies | **16 direct** |
 | CGO required | **No** |
-| Channels wired | **12** (2 ready: web chat + terminal; 10 beta) |
+| Channels wired | **12** (2 ready: web chat + terminal; 10 beta) · Smart home adapter: **Home Assistant (beta, live-validated)** |
 | AI providers wired | **6+** (Claude + Ollama ready, others beta) |
 
 ---
