@@ -15,7 +15,7 @@ COPY --from=builder /app/aibutler /usr/local/bin/aibutler
 RUN mkdir -p /data && chown aibutler:aibutler /data
 ENV AIBUTLER_DATA=/data
 USER aibutler
-EXPOSE 8080 8081
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -q --spider http://localhost:8080/healthz || exit 1
+EXPOSE 3377 8081
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -q --spider http://localhost:3377/healthz || exit 1
 ENTRYPOINT ["aibutler"]
 CMD ["run"]

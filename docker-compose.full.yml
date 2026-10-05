@@ -3,7 +3,7 @@ services:
   aibutler:
     build: .
     ports:
-      - "8080:8080"
+      - "3377:3377"
     volumes:
       - aibutler-data:/data
     environment:

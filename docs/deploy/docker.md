@@ -8,7 +8,7 @@ Build and run AI Butler with Docker:
 docker compose up -d
 ```
 
-This starts AI Butler on ports 8080 (web) and 8081 (A2A).
+This starts AI Butler on ports 3377 (web) and 8081 (A2A).
 
 ## With Ollama (Local LLM)
 
@@ -26,7 +26,7 @@ docker compose -f docker-compose.full.yml up -d
 
 ```bash
 docker build -t aibutler .
-docker run -d -p 8080:8080 -v aibutler-data:/data aibutler
+docker run -d -p 3377:3377 -v aibutler-data:/data aibutler
 ```
 
 ## Health Check
@@ -34,7 +34,7 @@ docker run -d -p 8080:8080 -v aibutler-data:/data aibutler
 The container includes a built-in health check at `/healthz`:
 
 ```bash
-curl http://localhost:8080/healthz
+curl http://localhost:3377/healthz
 ```
 
 ## Data Persistence
