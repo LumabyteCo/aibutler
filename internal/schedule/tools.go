@@ -1,7 +1,9 @@
 package schedule
 
 import (
+	"strconv"
 	"context"
+	"strings"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -34,7 +36,14 @@ type createInput struct {
 }
 
 func (t *createTool) Name() string        { return "schedule.create" }
-func (t *createTool) Description() string { return "Create a scheduled task with a cron expression." }
+func (t *createTool) Description() string {
+	return "Create a scheduled task from natural language (\"every weekday at 8am\", \"every Monday at 9am\", " +
+		"\"daily at midnight\") or a cron expression. USE THIS DIRECTLY when the user asks to schedule anything — " +
+		"do NOT compute dates with shell commands. If the user asks to schedule something for a time that's already " +
+		"passed (e.g. \"8am today\" at 9am), the next occurrence will be tomorrow — create it and tell the user " +
+		"it'll fire next time, not \"yesterday\". If the request names a one-off past time, clarify: \"that time has " +
+		"already passed today; would you like it for tomorrow instead?\""
+}
 func (t *createTool) Capability() string  { return "schedule.manage" }
 
 func (t *createTool) Schema() string {
@@ -75,6 +84,26 @@ func (t *createTool) Execute(ctx context.Context, input string) (string, error) 
 	// Validate cron expression
 	if _, err := ParseCron(in.Cron); err != nil {
 		return "", fmt.Errorf("schedule.create: invalid cron: %w", err)
+	}
+
+	// One-off past-due check (when the user said "today at H:M" and that
+	// time has already passed local-time): warn instead of silently booking
+	// for tomorrow. Recurring jobs ("every day", "every weekday") don't
+	// warn — the next occurrence is tomorrow by design.
+	if strings.HasPrefix(strings.ToLower(in.Natural), "today at ") {
+		parts := strings.Fields(in.Cron)
+		if len(parts) == 5 {
+			now := time.Now()
+			hour, _ := strconv.Atoi(parts[1])
+			min, _ := strconv.Atoi(parts[0])
+			fire := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, now.Location())
+			if fire.Before(now) {
+				// Warn the caller so the model can say "that's past today;
+				// it'll fire tomorrow" instead of leaving a dead-end.
+				return fmt.Sprintf("Schedule %q saved (cron: %s). Note: the requested time %q has already passed today — it will fire tomorrow at %02d:%02d.",
+					in.Name, in.Cron, in.Natural, hour, min), nil
+			}
+		}
 	}
 
 	// Builtin task keys are reserved for code-registered maintenance —

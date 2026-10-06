@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/agent"
 )
@@ -91,6 +92,23 @@ func NLToCron(natural string) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("%d %d * * *", m, h), nil
+	}
+
+	// Pattern: "today at HH:MM" / "tomorrow at HH:MM" — one-off, date-relative.
+	// Returns the cron for *that date* plus a flag for "already passed today".
+	if strings.HasPrefix(s, "today at ") || strings.HasPrefix(s, "tomorrow at ") {
+		timeStr := s[strings.Index(s, " at ")+4:]
+		h, m, err := parseTime(timeStr)
+		if err != nil {
+			return "", err
+		}
+		n := time.Now()
+		targetDate := n
+		if strings.HasPrefix(s, "tomorrow at ") {
+			targetDate = n.AddDate(0, 0, 1)
+		}
+		// One-off cron: the date is baked in so the scheduler fires only that day.
+		return fmt.Sprintf("%d %d %d %d *", m, h, targetDate.Day(), int(targetDate.Month())), nil
 	}
 
 	// Pattern: "every <weekday> at HH:MM"

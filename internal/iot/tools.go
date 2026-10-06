@@ -69,7 +69,8 @@ type deviceControlInput struct {
 func (t *deviceControlTool) Name() string        { return "iot.device.control" }
 func (t *deviceControlTool) Description() string {
 	return "Control a comfort IoT device (lights, switches, thermostat, fans, covers, media). " +
-		"For tier-3 devices (locks, alarms, garages) use iot.safety.control instead."
+		"For tier-3 devices (locks, alarms, garages) use iot.safety.control instead. " +
+		"Call with the device ID (e.g. \"light.kitchen\" from iot.device.list), not the friendly name."
 }
 func (t *deviceControlTool) Capability() string  { return "iot.device.control" }
 

@@ -38,10 +38,25 @@ var extractionRules = []extractionRule{
 	// contradicting statement replaces rather than accumulates.
 	{regexp.MustCompile(`(?i)\bmy name is\s+(.+?)(?:\.|,|$)`), CategoryIdentity, "User's name is %s", "user.name"},
 	{regexp.MustCompile(`(?i)\bi(?:'m| am)\s+called\s+(.+?)(?:\.|,|$)`), CategoryIdentity, "User is called %s", "user.name"},
+	{regexp.MustCompile(`(?i)\bUser lives in\s+(.+?)(?:\.|,|$)`), CategoryIdentity, "User lives in %s", "user.location"},
 	{regexp.MustCompile(`(?i)\bi live in\s+(.+?)(?:\.|,|$)`), CategoryIdentity, "User lives in %s", "user.location"},
+	// Moved/relocated — the user announcing a NEW home is the same shape as
+	// "live in X": supersede the old location, never accumulate.
+	// "I moved to Tokyo", "I now live in Tokyo", "my home is in Tokyo",
+	// "I've moved to Tokyo", "I'm living in Tokyo now".
+	{regexp.MustCompile(`(?i)\bi(?:'ve| have)?\s+moved to\s+(.+?)(?:\.|,|$)`), CategoryIdentity, "User lives in %s (moved recently)", "user.location"},
+	// Third-person shape: when the agent paraphrases a user statement into
+	// a memory ("Sam moved to Tokyo", "User lives in Berlin"), the key must
+	// still match so supersession fires. This is what the model's own
+	// reply format looks like — and the memory_capture path needs a key too.
+	// The single %s receives "Person lives in City" — the capture groups are
+	// merged into "Subject lives in Location".
+	{regexp.MustCompile(`(?i)\b(\w[\w ]*?)\s+moved to\s+(.+?)(?:\.|,|$)`), CategoryIdentity, "{{SUBJECT_LOC}}", "user.location"},
+	{regexp.MustCompile(`(?i)\bi(?:'m| am)?\s+(?:now )?(?:live|living|located) in\s+(.+?)(?:\.|,|$)`), CategoryIdentity, "User lives in %s", "user.location"},
+	{regexp.MustCompile(`(?i)\bmy home (?:is|city is)\s+(?:in\s+)?(.+?)(?:\.|,|$)`), CategoryIdentity, "User lives in %s", "user.location"},
+	{regexp.MustCompile(`(?i)\bi(?:'m| am) (?:a |an )?(\w+(?:\s+\w+)?)\s+(?:developer|engineer|designer|manager|student|teacher|doctor|nurse|lawyer|writer|artist)`), CategoryIdentity, "User is a %s", "user.profession"},
 	{regexp.MustCompile(`(?i)\bi(?:'m| am)\s+(\d+)\s+years?\s+old`), CategoryIdentity, "User is %s years old", "user.age"},
 	{regexp.MustCompile(`(?i)\bi work (?:at|for)\s+(.+?)(?:\.|,|$)`), CategoryIdentity, "User works at %s", "user.employer"},
-	{regexp.MustCompile(`(?i)\bi(?:'m| am) (?:a |an )?(\w+(?:\s+\w+)?)\s+(?:developer|engineer|designer|manager|student|teacher|doctor|nurse|lawyer|writer|artist)`), CategoryIdentity, "User is a %s", "user.profession"},
 
 	// Preference patterns — multi-valued except favorites, which are
 	// single-valued per subject ("my favorite editor is X" replaces the
@@ -97,6 +112,16 @@ func ExtractKeyFacts(text string) []ExtractionResult {
 					subject := strings.TrimSpace(matches[1])
 					fact = "User's favorite " + subject + " is " + strings.TrimSpace(matches[2])
 					key = favoriteKey(subject)
+				} else {
+					continue
+				}
+			} else if rule.format == "{{SUBJECT_LOC}}" {
+				// Third-person: "Sam moved to Tokyo" → "Sam lives in Tokyo"
+				// (two captures; merge into one fact)
+				if len(matches) >= 3 {
+					subject := strings.TrimSpace(matches[1])
+					loc := strings.TrimSpace(matches[2])
+					fact = subject + " lives in " + loc
 				} else {
 					continue
 				}
