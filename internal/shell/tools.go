@@ -18,7 +18,7 @@ type execTool struct {
 }
 
 func (t *execTool) Name() string        { return "shell.exec" }
-func (t *execTool) Description() string { return "Execute a shell command in a sandboxed POSIX emulator" }
+func (t *execTool) Description() string { return "Execute a shell command in a sandboxed POSIX emulator. One command only — no ; && || | chaining. Destructive commands (rm, mv, sudo, curl, wget, git, ssh, docker, kill) are blocked by the allowlist. If a command is rejected, don't retry with a different formulation — report the rejection instead." }
 func (t *execTool) Capability() string  { return "tool.shell.exec" }
 func (t *execTool) Schema() string {
 	return `{"type":"object","properties":{"command":{"type":"string","description":"The command to execute"}},"required":["command"]}`
