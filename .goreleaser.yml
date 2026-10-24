@@ -45,8 +45,14 @@ checksum:
 
 sboms:
   - artifacts: archive
+    # One SBOM per archive, named to match its archive. A single fixed
+    # document name makes goreleaser try to upload the same file nine
+    # times (v0.7.0 shipped one SBOM by accident; v0.7.1's first attempt
+    # failed the release on duplicate uploads).
     documents:
-      - "{{ .ProjectName }}_{{ .Version }}_sbom.cdx.json"
+      - "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}_sbom.cdx.json"
+    # The file says .cdx.json — make the content CycloneDX, not SPDX.
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
 
 changelog:
   sort: asc

@@ -372,6 +372,7 @@ Changes in `main` that haven't been released yet will be tracked here.
 - Source reformatted with Go 1.27's corrected `gofmt` alignment (whitespace only; no behavior change).
 - Go 1.27's `encoding/json` v2 backing is now in effect (error text may differ; marshal/unmarshal behavior preserved by the stdlib contract).
 - CI now fails on unformatted Go files (`gofmt` gate). The weekly Security workflow opens or updates a tracking issue when a scheduled scan fails, so a red scan can't sit unnoticed for weeks.
+- Release artifacts now carry **one CycloneDX 1.7 SBOM per archive**. The previous single `aibutler_<version>_sbom.cdx.json` was actually SPDX content covering only one archive; duplicate document names also made goreleaser fail the v0.7.1 upload.
 
 ### Fixed
 
