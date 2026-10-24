@@ -81,6 +81,7 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/memory/vector"
 	missionpkg "github.com/LumabyteCo/aibutler/internal/mission"
 	"github.com/LumabyteCo/aibutler/internal/model"
+	"github.com/LumabyteCo/aibutler/internal/notification"
 	"github.com/LumabyteCo/aibutler/internal/offline"
 	permpkg "github.com/LumabyteCo/aibutler/internal/permissions"
 	pluginpkg "github.com/LumabyteCo/aibutler/internal/plugin"
@@ -141,6 +142,7 @@ type App struct {
 	Channels        *channel.Registry
 	Tools           *tool.Registry
 	Sessions        *session.Manager
+	Notifications   *notification.Store
 	Composer        *prompt.Composer
 	Tracker         *prompt.Tracker
 	Dispatcher      *tool.Dispatcher
@@ -318,6 +320,7 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 	app.DB = database
+	app.Notifications = notification.NewStore(database.Conn())
 
 	// 2b. Run integrity check on startup.
 	if err := backup.IntegrityCheck(database.Conn()); err != nil {
@@ -543,6 +546,7 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 				Pipeline:      app.MediaPipeline,
 			}
 			wa := webchat.New(webCfg)
+			wa.SetNotificationStore(app.Notifications)
 			// B5: wire the history store so the chat panel can rehydrate
 			// the recent conversation after a page reload.
 			wa.SetHistoryStore(webchat.NewHistoryStore(database.Conn()))

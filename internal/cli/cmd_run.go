@@ -450,8 +450,21 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 		// Webchat accounts are connection-scoped, so it broadcasts to the
 		// local tabs instead of targeting a stale remote-address key.
 		app.Scheduler.SetNotifier(func(ctx context.Context, chName, accountID, text string) error {
+			queueWebchat := func() error {
+				if app.Notifications == nil {
+					return fmt.Errorf("webchat is offline and no notification store is available")
+				}
+				if _, err := app.Notifications.Enqueue(ctx, "webchat", accountID, text); err != nil {
+					return err
+				}
+				log.Printf("scheduler: webchat offline; queued notification for the next connection")
+				return nil
+			}
 			ch, ok := app.Channels.Get(chName)
 			if !ok {
+				if chName == "webchat" {
+					return queueWebchat()
+				}
 				return fmt.Errorf("channel %q is not registered", chName)
 			}
 			sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -459,9 +472,21 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 			if broadcaster, ok := ch.(interface {
 				Broadcast(context.Context, channel.OutgoingMessage) error
 			}); ok {
-				return broadcaster.Broadcast(sendCtx, channel.OutgoingMessage{Text: text})
+				if err := broadcaster.Broadcast(sendCtx, channel.OutgoingMessage{Text: text}); err != nil {
+					if chName == "webchat" {
+						return queueWebchat()
+					}
+					return err
+				}
+				return nil
 			}
-			return ch.Send(sendCtx, accountID, channel.OutgoingMessage{Text: text})
+			if err := ch.Send(sendCtx, accountID, channel.OutgoingMessage{Text: text}); err != nil {
+				if chName == "webchat" {
+					return queueWebchat()
+				}
+				return err
+			}
+			return nil
 		})
 
 		// Idle-time reflection (opt-in): a scheduled, deterministic

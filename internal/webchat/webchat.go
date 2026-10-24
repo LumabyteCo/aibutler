@@ -55,7 +55,9 @@ type Adapter struct {
 	mu            sync.RWMutex
 	conns         map[string]*wsConn // accountID -> conn
 	extraHandlers map[string]http.Handler
-	history       HistoryStore // optional; enables /api/history
+	history       HistoryStore      // optional; enables /api/history
+	notifications NotificationStore // optional; queued scheduled results
+	notifyMu      sync.Mutex        // serializes pending-notification delivery
 }
 
 // New creates a WebChat adapter.
@@ -240,6 +242,9 @@ func (a *Adapter) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	a.conns[accountID] = &wsConn{conn: conn, accountID: accountID}
 	a.mu.Unlock()
+
+	// Deliver results that were queued while no tab was open.
+	a.deliverPending(conn)
 
 	defer func() {
 		a.mu.Lock()

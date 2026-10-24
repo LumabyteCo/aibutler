@@ -34,6 +34,8 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      - name: docs counts
+        run: bash scripts/check-doc-counts.sh
       - name: go mod verify
         run: go mod verify
       - name: go mod tidy check

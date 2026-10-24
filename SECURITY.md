@@ -6,8 +6,8 @@ AI Butler takes security seriously. This document explains how to report a vulne
 
 | Version | Supported |
 |---------|-----------|
-| v0.1.x  | ✅ |
-| Older development builds | ❌ |
+| v0.7.x  | ✅ |
+| Older development builds (v0.1–v0.6) | ❌ |
 
 ## Reporting a Vulnerability
 
@@ -97,16 +97,17 @@ All auth methods are implemented and pass unit tests. Real-world validation in p
 
 ## Audit Posture
 
-### Current (v0.1)
+### Current (v0.7)
 
-- **59 internal security review passes** across the v0.1 development cycle. 74 findings were discovered across these passes; 70+ have been fixed. The remaining items are tracked internally and will be resolved before v1.0.
+- **59 internal security review passes** across the v0.1–v0.7 development cycles. 74 findings were discovered across these passes; 70+ have been fixed. The remaining items are tracked internally and will be resolved before v1.0.
 - **`govulncheck` clean** — zero known CVEs in dependencies as of the latest build. CI runs `govulncheck` on every commit.
 - **`go vet ./...` clean** — zero vet warnings.
+- **gosec v2** — 210 findings: 29 high-severity, all triaged as validated paths or benign conversions. Full triage and the auditor hand-off live in [docs/security/AUDIT-READINESS.md](docs/security/AUDIT-READINESS.md).
 - **Integration tests** cover the full agent loop, capability enforcement, channel adapters, and auth flows.
 
 ### Planned (before v1.0)
 
-- **External third-party security audit** — we'll publish the full report when complete
+- **External third-party security audit** — readiness package and gosec triage are published in [docs/security/AUDIT-READINESS.md](docs/security/AUDIT-READINESS.md); the independent report will be published when complete
 - **Bug bounty program** — scope, rewards, and rules published alongside the audit
 - **SLSA Level 3 provenance** on all release binaries
 - **cosign-signed binaries** with transparency log

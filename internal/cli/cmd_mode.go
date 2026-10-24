@@ -30,7 +30,7 @@ func CmdMode(app *App, args []string, w io.Writer) error {
 
 	newMode := strings.ToLower(strings.TrimSpace(args[0]))
 	switch newMode {
-	case "auto", "single", "multi", "mission":
+	case "auto", "single", "multi", "swarm", "custom", "mission":
 		app.Config.Settings.AgentMode = newMode
 		if err := config.UpdateAgentMode(app.configPath, newMode); err != nil {
 			return fmt.Errorf("mode: save config: %w", err)
@@ -41,21 +41,18 @@ func CmdMode(app *App, args []string, w io.Writer) error {
 			fmt.Fprintln(w, "  (resolves to multi at runtime: parallel tool execution)")
 		case "multi":
 			fmt.Fprintln(w, "  (parallel tool execution — same as auto's runtime behavior)")
+		case "swarm":
+			fmt.Fprintln(w, "  (multi execution + the agent.swarm orchestration tool)")
+			fmt.Fprintln(w, "  Restart `aibutler run` to apply.")
+		case "custom":
+			fmt.Fprintln(w, "  (custom role routing via configurations.agents.custom_roles)")
+			fmt.Fprintln(w, "  Restart `aibutler run` to build the role router.")
 		case "mission":
 			fmt.Fprintln(w, "  Mission runtime will start on next `aibutler run`.")
 			fmt.Fprintln(w, "  Create missions via the mission.create tool; the runtime drives them.")
 		}
 		return nil
-	case "swarm", "custom":
-		// The agent package recognizes these modes, but their CLI/runtime
-		// wiring isn't finished. Keep the downgrade, but say so honestly.
-		fmt.Fprintf(w, "Mode %q is not available yet, using single mode.\n", newMode)
-		app.Config.Settings.AgentMode = "single"
-		if err := config.UpdateAgentMode(app.configPath, "single"); err != nil {
-			return fmt.Errorf("mode: save config: %w", err)
-		}
-		return nil
 	default:
-		return fmt.Errorf("unknown mode: %s (valid: auto, single, multi, mission)", newMode)
+		return fmt.Errorf("unknown mode: %s (valid: auto, single, multi, swarm, custom, mission)", newMode)
 	}
 }

@@ -161,8 +161,9 @@ Agent mode switched to: multi
 ```
 
 Switches persist to `config.yaml`. Valid modes: `auto`, `single`,
-`multi`, `mission`. Modes `swarm` and `custom` are not available yet
-and downgrade to `single` with a message saying so.
+`multi`, `swarm`, `custom`, `mission`. `swarm` and `custom` print a
+reminder to restart `aibutler run` because their runtime is built at
+startup.
 
 ### auth list | status | revoke
 

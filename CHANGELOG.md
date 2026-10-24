@@ -359,7 +359,11 @@ Changes in `main` that haven't been released yet will be tracked here.
 
 ### Added
 
+- **Durable webchat notifications.** When a scheduled result cannot be broadcast (no webchat tab open), the scheduler queues it in the `notifications` table; the next webchat connection receives up to 10 queued messages and marks them delivered. Migration 023. Prevents briefings/routine safety notes from vanishing when the browser is closed.
+- **Docs count guard in CI.** `scripts/check-doc-counts.sh` compares tests, packages, SQLite tables, migrations, and direct dependencies in the README against the tree and fails the lint job on drift (it immediately caught the voice package addition).
+- **External-audit readiness package.** `docs/security/AUDIT-READINESS.md` records scope, trust boundaries, controls, evidence (govulncheck, gosec with high-severity triage, race suite, SBOMs), known gaps, and suggested audit workstreams. The independent audit itself remains planned for v1.0.
 - **Offline voice (wake word + local STT/TTS).** A new voice channel runs `wake word → command capture → local STT → normal agent/hybrid router → system TTS → playback`. Audio never leaves the machine: the wake detector requires `stt_provider: local` or `command` and refuses cloud providers. Providers: OpenAI-compatible local endpoints (whisper.cpp server, faster-whisper) and local commands (whisper.cpp, Python whisper) for STT; macOS `say`, Linux `espeak-ng`, and Windows SAPI for TTS. Wake matching is fuzzy because small models mishear "Butler" as "Buggler". Opt in with `active_channels: [voice]`, `voice.wake_enabled: true`, and a local STT provider. See [docs/voice/OVERVIEW.md](docs/voice/OVERVIEW.md).
+- **`aibutler voice mic-test`** records a short microphone sample, reports the speech gate, and transcribes it — the permissioned hardware check. (This host has no audio input device; the command reports that honestly.)
 - **Voice CLI diagnostics.** `aibutler voice test <audio>` transcribes a file with the configured local STT, `voice simulate <audio>` transcribes and checks the wake phrase without a microphone, and `voice speak <text>` renders WAV (system TTS) with optional playback.
 - **`voice.stt_env`** — extra environment for the local STT command (e.g. `PYTHONPATH` when Butler's `HOME` differs from the Python install, or a model cache path).
 - **Scheduled runs deliver their outcome.** Briefings and routines used to execute and record history but never send the result anywhere. A scheduler notifier now delivers the run's output (or failure) to the schedule's channel; webchat broadcasts to open tabs because its account IDs are connection-scoped.
@@ -368,6 +372,7 @@ Changes in `main` that haven't been released yet will be tracked here.
 
 ### Changed
 
+- **Swarm and custom agent modes are selectable.** `aibutler mode swarm` now persists `swarm` (multi execution + the `agent.swarm` orchestration tool) and `aibutler mode custom` persists `custom` (role routing from `configurations.agents.custom_roles` or DB roles). Both print a restart reminder because their runtime is built at startup. Previously the CLI downgraded both to `single` while config validation accepted them.
 - **Home Assistant adapter resilience.** Requests now retry transient failures (network errors, 408/429/5xx) with 250ms/500ms backoff, honor `Retry-After`, and use a warm connection pool. Replays are idempotency-aware: `toggle` is never retried after an ambiguous failure (it would flip twice); `turn_on`/`turn_off`/`lock`/`unlock`/`set_*` are. 401/403/404 errors now explain the fix (rotate the token, refresh the registry).
 
 ### Fixed

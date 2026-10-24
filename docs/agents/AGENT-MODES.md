@@ -62,23 +62,28 @@ record an audit trail, and surface mission state to the dashboard.
 See [MISSIONS.md](MISSIONS.md) for the full mission lifecycle, bus
 protocol, and tool reference.
 
-## Planned Modes (Not Yet Available)
+### `swarm`
 
-Requesting these modes downgrades to `single`, and the command says so:
+Multi execution plus the `agent.swarm` orchestration tool. The mode itself
+resolves to `multi`; the swarm tool is registered independently, so this
+selection is about intent and tool visibility rather than a second runtime.
+Restart `aibutler run` after switching.
 
-```bash
-aibutler mode swarm
-# Mode "swarm" is not available yet, using single mode.
-```
+### `custom`
+
+Routes each turn to a user-defined role from
+`configurations.agents.custom_roles` (or roles stored in the database).
+With no roles configured it behaves like `multi`. The role router is built
+at startup, so **restart `aibutler run`** after switching.
 
 | Mode      | Status     | Description                                |
 |-----------|------------|--------------------------------------------|
 | `auto`    | available  | Resolves to `multi` at runtime             |
 | `single`  | available  | One agent, sequential tool execution       |
 | `multi`   | available  | Parallel tool execution, delegation enabled |
+| `swarm`   | available  | Multi execution + `agent.swarm` tool       |
+| `custom`  | available  | Role routing from configured custom roles  |
 | `mission` | available  | Mission engine runtime (supervisor + worker pairs) |
-| `swarm`   | planned    | Dynamic agent swarm with router overlay    |
-| `custom`  | planned    | User-defined orchestration                 |
 
 ## Setting via Config
 
@@ -86,7 +91,7 @@ In `~/.aibutler/config.yaml`:
 
 ```yaml
 settings:
-  agent_mode: "auto"    # auto | single | multi | mission
+  agent_mode: "auto"    # auto | single | multi | swarm | custom | mission
 ```
 
 Invalid modes are rejected during config validation:

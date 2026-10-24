@@ -252,21 +252,47 @@ func TestModeMultiPersists(t *testing.T) {
 	}
 }
 
-func TestModeDowngradeSwarm(t *testing.T) {
+func TestModeSwarmPersists(t *testing.T) {
 	app := testApp(t)
 
 	var buf bytes.Buffer
 	if err := CmdMode(app, []string{"swarm"}, &buf); err != nil {
 		t.Fatalf("CmdMode swarm: %v", err)
 	}
-	out := buf.String()
-	// Should say "not available yet" — not the stale "v0.1" message.
-	if !strings.Contains(out, "not available yet") {
-		t.Errorf("expected not-available message, got: %s", out)
+	if !strings.Contains(buf.String(), "switched to: swarm") {
+		t.Errorf("expected swarm switch message, got: %s", buf.String())
 	}
-	// Config should be set to single.
-	if app.Config.Settings.AgentMode != "single" {
-		t.Fatalf("expected mode 'single' after downgrade, got: %s", app.Config.Settings.AgentMode)
+	if app.Config.Settings.AgentMode != "swarm" {
+		t.Fatalf("mode = %q, want swarm", app.Config.Settings.AgentMode)
+	}
+	reloaded, err := config.Load(app.configPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Settings.AgentMode != "swarm" {
+		t.Fatalf("persisted mode = %q, want swarm", reloaded.Settings.AgentMode)
+	}
+}
+
+func TestModeCustomPersists(t *testing.T) {
+	app := testApp(t)
+
+	var buf bytes.Buffer
+	if err := CmdMode(app, []string{"custom"}, &buf); err != nil {
+		t.Fatalf("CmdMode custom: %v", err)
+	}
+	if !strings.Contains(buf.String(), "switched to: custom") {
+		t.Errorf("expected custom switch message, got: %s", buf.String())
+	}
+	if app.Config.Settings.AgentMode != "custom" {
+		t.Fatalf("mode = %q, want custom", app.Config.Settings.AgentMode)
+	}
+	reloaded, err := config.Load(app.configPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Settings.AgentMode != "custom" {
+		t.Fatalf("persisted mode = %q, want custom", reloaded.Settings.AgentMode)
 	}
 }
 

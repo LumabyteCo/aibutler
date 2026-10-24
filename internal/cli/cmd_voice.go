@@ -27,6 +27,8 @@ func CmdVoice(app *App, args []string, w io.Writer) error {
 		return cmdVoiceSpeak(app, args[1:], w)
 	case "simulate":
 		return cmdVoiceSimulate(app, args[1:], w)
+	case "mic-test":
+		return cmdVoiceMicTest(app, args[1:], w)
 	default:
 		return fmt.Errorf("unknown voice subcommand: %s (want status, providers, test, speak, or simulate)", args[0])
 	}
@@ -170,6 +172,66 @@ func cmdVoiceSpeak(app *App, args []string, w io.Writer) error {
 			return fmt.Errorf("voice speak: play: %w", err)
 		}
 		fmt.Fprintln(w, "Played.")
+	}
+	return nil
+}
+
+// cmdVoiceMicTest records a short microphone sample, reports the speech
+// gate, and transcribes it with the configured local STT. This is the
+// hardware path: macOS prompts for microphone permission the first time.
+func cmdVoiceMicTest(app *App, args []string, w io.Writer) error {
+	seconds := 3
+	speak := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--seconds":
+			if i+1 >= len(args) {
+				return fmt.Errorf("voice mic-test: --seconds requires a number")
+			}
+			i++
+			if _, err := fmt.Sscanf(args[i], "%d", &seconds); err != nil || seconds < 1 || seconds > 30 {
+				return fmt.Errorf("voice mic-test: invalid --seconds %q (1..30)", args[i])
+			}
+		case "--speak":
+			speak = true
+		default:
+			return fmt.Errorf("unknown flag %q (want --seconds or --speak)", args[i])
+		}
+	}
+
+	recorder := voice.NewSystemRecorder()
+	if !recorder.Available() {
+		return fmt.Errorf("voice mic-test: no recorder — install sox or arecord")
+	}
+	fmt.Fprintf(w, "Recording %ds with %s — grant microphone permission if prompted...\n", seconds, recorder.Name())
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(seconds+15)*time.Second)
+	defer cancel()
+	audio, format, err := recorder.Record(ctx, time.Duration(seconds)*time.Second)
+	if err != nil {
+		return fmt.Errorf("voice mic-test: %w", err)
+	}
+	fmt.Fprintf(w, "Captured %s (%s)\n", byteCount(len(audio)), format)
+	if !voice.HasSpeech(audio, 150) {
+		fmt.Fprintln(w, "Speech gate: quiet (low RMS) — speak closer to the microphone")
+	} else {
+		fmt.Fprintln(w, "Speech gate: passed")
+	}
+
+	res, err := app.Voice.ProcessVoiceInput(ctx, audio, format)
+	if err != nil {
+		return fmt.Errorf("voice mic-test: transcribe: %w", err)
+	}
+	fmt.Fprintf(w, "Transcript: %s\n", res.Text)
+	if speak {
+		reply := "I heard: " + res.Text
+		out, terr := app.Voice.Synthesize(ctx, reply, "")
+		if terr != nil {
+			return fmt.Errorf("voice mic-test: speak: %w", terr)
+		}
+		if perr := voice.NewSystemPlayer().Play(ctx, out.Data, out.Format); perr != nil {
+			return fmt.Errorf("voice mic-test: play: %w", perr)
+		}
 	}
 	return nil
 }

@@ -27,7 +27,7 @@
 
 ---
 
-> **🚀 v0.7.1 — Fast Intents & Routines (security patch).** AI Butler is an ambitious project — **147 packages, 2,258 passing tests, 59 internal security review passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready; several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release) · [Releases →](https://github.com/LumabyteCo/aibutler/releases)
+> **🚀 v0.7.1 — Fast Intents & Routines (security patch).** AI Butler is an ambitious project — **149 packages, 2,262 passing tests, 59 internal security review passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready; several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release) · [Releases →](https://github.com/LumabyteCo/aibutler/releases)
 
 > **✨ New in v0.6.0:**
 > **A real Home Assistant adapter** — natural-language device control with a three-tier safety model (*"unlock the front door" demands a confirmation + PIN, by default*). Plus **chat history that survives reloads**, honest cost tracking for Ollama Cloud, provider failures that explain themselves in chat, a security fix that keeps PINs out of model context, editor-extension API endpoints, and a truth pass over every number in this README. [Jump to smart home →](#connect-your-smart-home-optional--beta)
@@ -52,7 +52,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | 🛡️ **Security-first** | Capability-gated tools with a full audit trail, RBAC, FIDO2/WebAuthn, OIDC SSO, WASM plugin sandbox, SSRF protection, shell allowlisting. Verified by repeated internal security review passes (an external audit is planned for v1.0). |
 | 🖥️ **Clean built-in web UI** | 7-panel sidebar dashboard — chat, home, memories browser, connected apps, missions, spending, settings. No framework, no build step, embedded in the binary. |
 | 💾 **Self-hosted & private** | Single Go binary. Your data stays on your machine. Runs from Raspberry Pi to cloud. Zero telemetry unless you explicitly opt in. |
-| 🌍 **Open source** | Apache 2.0 licensed (patent grant included). 2,258 tests. 147 packages. Zero CVEs (`govulncheck` verified). |
+| 🌍 **Open source** | Apache 2.0 licensed (patent grant included). 2,262 tests. 149 packages. Zero CVEs (`govulncheck` verified). |
 
 ---
 
@@ -76,7 +76,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | **MCP client** — connects to external MCP servers on boot | `ready` |
 | **Vault** — credential storage with OS keyring integration | `ready` |
 | **Capability engine** — per-tool permissions + audit trail | `ready` |
-| **SQLite database** — 77 tables, 22 migrations, WAL mode | `ready` |
+| **SQLite database** — 78 tables, 23 migrations, WAL mode | `ready` |
 | **Config system** — Three-tier (Settings / Configurations / Options) + BUTLER.md project files | `ready` |
 | **File + shell + git tools** — capability-gated, sandboxed | `ready` |
 | **Single-binary distribution** — zero CGO, cross-compiles to any Go platform | `ready` |
@@ -285,10 +285,10 @@ aibutler vault set whatsapp_phone_number_id YOUR_PHONE_ID
 
 | Metric | Value |
 |--------|-------|
-| Tests (passing, race-free) | **2,258** |
-| Go packages | **147** |
-| SQLite tables | **77** |
-| Database migrations | **22** |
+| Tests (passing, race-free) | **2,262** |
+| Go packages | **149** |
+| SQLite tables | **78** |
+| Database migrations | **23** |
 | Internal security audit passes | **59** |
 | CVEs (`govulncheck` verified) | **0** |
 | External Go dependencies | **12 direct** |

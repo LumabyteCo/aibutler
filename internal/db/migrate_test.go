@@ -26,8 +26,8 @@ func TestMigrateUpAndDown(t *testing.T) {
 		t.Fatalf("apply schema: %v", err)
 	}
 	v, _ = database.SchemaVersion(ctx)
-	if v != 22 {
-		t.Fatalf("after up version = %d, want 22", v)
+	if v != 23 {
+		t.Fatalf("after up version = %d, want 23", v)
 	}
 
 	// Verify tables exist
@@ -41,6 +41,15 @@ func TestMigrateUpAndDown(t *testing.T) {
 	// agent_proposals, eval_runs, eval_results, agent_changes, checkpoints = ~74
 	if count < 70 {
 		t.Errorf("table count = %d, want >= 70", count)
+	}
+
+	// Migrate down (reverts migration 023 — Durable notifications)
+	if err := database.MigrateDown(ctx); err != nil {
+		t.Fatalf("migrate down 023: %v", err)
+	}
+	v, _ = database.SchemaVersion(ctx)
+	if v != 22 {
+		t.Fatalf("after down 023 version = %d, want 22", v)
 	}
 
 	// Migrate down (reverts migration 022 — Memory quality & measured learning)
