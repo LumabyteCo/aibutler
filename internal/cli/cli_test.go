@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/LumabyteCo/aibutler/internal/config"
 )
 
 // testApp bootstraps an in-memory App for testing.
@@ -195,8 +197,10 @@ func TestModeShow(t *testing.T) {
 	if !strings.Contains(out, "auto") {
 		t.Errorf("output missing 'auto':\n%s", out)
 	}
-	if !strings.Contains(out, "v0.1") {
-		t.Errorf("output missing 'v0.1':\n%s", out)
+	// auto resolves to multi (parallel tool execution) — the note must
+	// describe real behavior, not the retired "behaves as single" text.
+	if !strings.Contains(out, "resolves to multi") {
+		t.Errorf("output missing auto→multi note:\n%s", out)
 	}
 }
 
@@ -220,7 +224,7 @@ func TestModeSwitch(t *testing.T) {
 	}
 }
 
-func TestModeDowngrade(t *testing.T) {
+func TestModeMultiPersists(t *testing.T) {
 	app := testApp(t)
 
 	var buf bytes.Buffer
@@ -228,9 +232,37 @@ func TestModeDowngrade(t *testing.T) {
 		t.Fatalf("CmdMode multi: %v", err)
 	}
 	out := buf.String()
-	// Should mention v0.1 downgrade.
-	if !strings.Contains(out, "not available in v0.1") {
-		t.Errorf("expected downgrade message, got: %s", out)
+	if !strings.Contains(out, "switched to: multi") {
+		t.Errorf("expected multi switch message, got: %s", out)
+	}
+	if app.Config.Settings.AgentMode != "multi" {
+		t.Fatalf("expected mode 'multi', got: %s", app.Config.Settings.AgentMode)
+	}
+
+	// The switch must be persisted: re-reading the config from disk has to
+	// show multi, not the previous value. (The old implementation only
+	// mutated the in-memory struct, so `aibutler mode single` printed
+	// success and then forgot it on exit.)
+	reloaded, err := config.Load(app.configPath)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if reloaded.Settings.AgentMode != "multi" {
+		t.Fatalf("persisted mode = %q, want multi", reloaded.Settings.AgentMode)
+	}
+}
+
+func TestModeDowngradeSwarm(t *testing.T) {
+	app := testApp(t)
+
+	var buf bytes.Buffer
+	if err := CmdMode(app, []string{"swarm"}, &buf); err != nil {
+		t.Fatalf("CmdMode swarm: %v", err)
+	}
+	out := buf.String()
+	// Should say "not available yet" — not the stale "v0.1" message.
+	if !strings.Contains(out, "not available yet") {
+		t.Errorf("expected not-available message, got: %s", out)
 	}
 	// Config should be set to single.
 	if app.Config.Settings.AgentMode != "single" {

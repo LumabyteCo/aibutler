@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 // CmdMode handles the "mode" command for switching agent modes.
@@ -14,37 +15,45 @@ func CmdMode(app *App, args []string, w io.Writer) error {
 			mode = "auto"
 		}
 		fmt.Fprintf(w, "Current agent mode: %s\n", mode)
-		if mode == "auto" {
-			fmt.Fprintln(w, "  (behaves as single in v0.1)")
+		switch mode {
+		case "auto":
+			fmt.Fprintln(w, "  (resolves to multi at runtime: parallel tool execution)")
+		case "multi":
+			fmt.Fprintln(w, "  (parallel tool execution — the runtime behavior of auto)")
+		case "mission":
+			fmt.Fprintln(w, "  (mission runtime starts on next `aibutler run`)")
 		}
 		return nil
 	}
 
-	newMode := args[0]
+	newMode := strings.ToLower(strings.TrimSpace(args[0]))
 	switch newMode {
-	case "auto", "single":
+	case "auto", "single", "multi", "mission":
 		app.Config.Settings.AgentMode = newMode
+		if err := app.SaveConfig(); err != nil {
+			return fmt.Errorf("mode: save config: %w", err)
+		}
 		fmt.Fprintf(w, "Agent mode switched to: %s\n", newMode)
-		if newMode == "auto" {
-			fmt.Fprintln(w, "  (behaves as single in v0.1)")
+		switch newMode {
+		case "auto":
+			fmt.Fprintln(w, "  (resolves to multi at runtime: parallel tool execution)")
+		case "multi":
+			fmt.Fprintln(w, "  (parallel tool execution — same as auto's runtime behavior)")
+		case "mission":
+			fmt.Fprintln(w, "  Mission runtime will start on next `aibutler run`.")
+			fmt.Fprintln(w, "  Create missions via the mission.create tool; the runtime drives them.")
 		}
 		return nil
-	case "mission":
-		// Mission mode runs the mission engine runtime: it polls for
-		// planned missions and spawns a supervisor + worker pair for
-		// each. The pair drives the mission to a terminal state and
-		// then the runtime picks up the next pending mission.
-		app.Config.Settings.AgentMode = newMode
-		fmt.Fprintf(w, "Agent mode switched to: %s\n", newMode)
-		fmt.Fprintln(w, "  Mission runtime will start on next `aibutler run`.")
-		fmt.Fprintln(w, "  Create missions via the mission.create tool; the runtime drives them.")
-		return nil
-	case "multi", "swarm", "custom":
-		// Downgrade to single in v0.1.
-		fmt.Fprintf(w, "Mode %q is not available in v0.1, using single mode.\n", newMode)
+	case "swarm", "custom":
+		// The agent package recognizes these modes, but their CLI/runtime
+		// wiring isn't finished. Keep the downgrade, but say so honestly.
+		fmt.Fprintf(w, "Mode %q is not available yet, using single mode.\n", newMode)
 		app.Config.Settings.AgentMode = "single"
+		if err := app.SaveConfig(); err != nil {
+			return fmt.Errorf("mode: save config: %w", err)
+		}
 		return nil
 	default:
-		return fmt.Errorf("unknown mode: %s (valid: auto, single, mission)", newMode)
+		return fmt.Errorf("unknown mode: %s (valid: auto, single, multi, mission)", newMode)
 	}
 }

@@ -150,13 +150,19 @@ a1b2c3d4-...                         primary      done       Summarize weekly re
 ```bash
 $ aibutler mode
 Current agent mode: auto
-  (behaves as single in v0.1)
+  (resolves to multi at runtime: parallel tool execution)
 
 $ aibutler mode single
 Agent mode switched to: single
+
+$ aibutler mode multi
+Agent mode switched to: multi
+  (parallel tool execution — same as auto's runtime behavior)
 ```
 
-Valid modes in v0.1: `auto`, `single`. Modes `multi`, `swarm`, `custom` downgrade to `single`.
+Switches persist to `config.yaml`. Valid modes: `auto`, `single`,
+`multi`, `mission`. Modes `swarm` and `custom` are not available yet
+and downgrade to `single` with a message saying so.
 
 ### auth list | status | revoke
 

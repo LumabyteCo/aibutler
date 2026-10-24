@@ -367,6 +367,13 @@ Changes in `main` that haven't been released yet will be tracked here.
 - Toolchain and `go` directive: 1.26.2/1.26.6 → **1.27.3**; Docker builder image → `golang:1.27-alpine`; docs and README badge updated to "Go 1.27+".
 - Source reformatted with Go 1.27's corrected `gofmt` alignment (whitespace only; no behavior change).
 - Go 1.27's `encoding/json` v2 backing is now in effect (error text may differ; marshal/unmarshal behavior preserved by the stdlib contract).
+- CI now fails on unformatted Go files (`gofmt` gate). The weekly Security workflow opens or updates a tracking issue when a scheduled scan fails, so a red scan can't sit unnoticed for weeks.
+
+### Fixed
+
+- **`aibutler mode` now actually persists the switch.** It previously printed "Agent mode switched to: …" and changed only the in-memory config; the next command read the old value. Every accepted mode now writes `config.yaml` before reporting success.
+- **`aibutler mode multi` is available.** `auto` has resolved to multi (parallel tool execution) at runtime for several releases, but the CLI still claimed multi was unavailable and downgraded it to single. Multi is now accepted explicitly; `swarm` and `custom` still downgrade (runtime wiring unfinished) with an honest "not available yet" message instead of "not available in v0.1".
+- **Docs truth pass:** `docs/agents/AGENT-MODES.md`, `docs/cli/CLI-REFERENCE.md`, and `docs/ROADMAP.md` now match shipped behavior — auto→multi, multi available, current v0.7.0 status, and shipped/outstanding gaps corrected (browser automation, Tier 3, and Tier 4 are done).
 
 ## [0.7.0] — 2026-10-05 — Fast Intents & Routines
 

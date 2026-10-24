@@ -9,10 +9,16 @@ the mission engine runtime is active.
 # Check current mode
 aibutler mode
 # Current agent mode: auto
+#   (resolves to multi at runtime: parallel tool execution)
 
 # Switch to single explicitly
 aibutler mode single
 # Agent mode switched to: single
+
+# Switch to multi (parallel tool execution; same as auto's runtime behavior)
+aibutler mode multi
+# Agent mode switched to: multi
+#   (parallel tool execution — same as auto's runtime behavior)
 
 # Switch to mission mode (runtime starts on next `aibutler run`)
 aibutler mode mission
@@ -21,12 +27,22 @@ aibutler mode mission
 #   Create missions via the mission.create tool; the runtime drives them.
 ```
 
+Switches are written to `config.yaml` immediately, so the next
+`aibutler mode` (or new process) sees the new value.
+
 ## Available Modes
 
 ### `auto` (default)
 
-Resolves to `single` in the current release. The recommended setting —
-it automatically picks up smarter behaviour as future modes mature.
+Resolves to `multi` at runtime: the agent executes independent tool
+calls in parallel and has delegation enabled. The recommended setting —
+the resolver picks up smarter behavior as future modes mature.
+
+### `multi`
+
+Parallel tool execution with delegation enabled. This is the behavior
+`auto` already resolves to; select it explicitly if you want the mode
+pinned rather than resolved.
 
 ### `single`
 
@@ -48,20 +64,20 @@ protocol, and tool reference.
 
 ## Planned Modes (Not Yet Available)
 
-Requesting these modes downgrades to `single`:
+Requesting these modes downgrades to `single`, and the command says so:
 
 ```bash
-aibutler mode multi
-# Mode "multi" is not available in v0.1, using single mode.
+aibutler mode swarm
+# Mode "swarm" is not available yet, using single mode.
 ```
 
 | Mode      | Status     | Description                                |
 |-----------|------------|--------------------------------------------|
-| `auto`    | available  | Resolves to `single` now                   |
+| `auto`    | available  | Resolves to `multi` at runtime             |
 | `single`  | available  | One agent, sequential tool execution       |
+| `multi`   | available  | Parallel tool execution, delegation enabled |
 | `mission` | available  | Mission engine runtime (supervisor + worker pairs) |
-| `multi`   | planned    | Multiple sub-agents in parallel            |
-| `swarm`   | planned    | Dynamic agent swarm                        |
+| `swarm`   | planned    | Dynamic agent swarm with router overlay    |
 | `custom`  | planned    | User-defined orchestration                 |
 
 ## Setting via Config
@@ -70,7 +86,7 @@ In `~/.aibutler/config.yaml`:
 
 ```yaml
 settings:
-  agent_mode: "auto"    # auto | single | mission
+  agent_mode: "auto"    # auto | single | multi | mission
 ```
 
 Invalid modes are rejected during config validation:
