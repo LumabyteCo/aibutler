@@ -26,6 +26,14 @@ jobs:
           cache: true
       - name: go vet
         run: go vet ./...
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::Files need gofmt — run 'gofmt -w .' and commit the result"
+            echo "$unformatted"
+            exit 1
+          fi
       - name: go mod verify
         run: go mod verify
       - name: go mod tidy check
