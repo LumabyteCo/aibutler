@@ -49,6 +49,31 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+// EnsureSession creates the sessions row a scheduled run uses as its
+// foreign-key parent. Chat channels create a session before running an
+// agent; the scheduler passes the schedule ID as the session ID, so
+// without this row every agent state checkpoint fails with a FOREIGN KEY
+// constraint (visible in the logs as "state update failed") and the run
+// never appears in history.
+func (s *Store) EnsureSession(ctx context.Context, id, channel string) error {
+	if id == "" {
+		return nil
+	}
+	if channel == "" {
+		channel = "scheduler"
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO sessions (id, channel, account_id, scope, created_at, updated_at)
+		 VALUES (?, ?, 'scheduler', 'schedule', ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
+		id, channel, now, now)
+	if err != nil {
+		return fmt.Errorf("schedule.ensure_session: %w", err)
+	}
+	return nil
+}
+
 // Create inserts a new schedule. Builtin task keys are reserved for
 // code-registered maintenance — enforced here so EVERY creation surface
 // (agent tool, MCP adapters, HTTP) inherits the rule; no caller can alias
@@ -208,7 +233,7 @@ func (s *Store) LastRun(ctx context.Context, scheduleID string) (*Run, error) {
 
 func scanSchedule(row *sql.Row) (*Schedule, error) {
 	var sched Schedule
-	var skillsJSON, capsJSON string
+	var skillsJSON, capsJSON sql.NullString
 	var enabled int
 	var createdStr, updatedStr string
 	err := row.Scan(&sched.ID, &sched.Name, &sched.CronExpr, &sched.Task,
@@ -231,18 +256,18 @@ func scanSchedule(row *sql.Row) (*Schedule, error) {
 	} else {
 		sched.UpdatedAt = t
 	}
-	if skillsJSON != "" {
-		json.Unmarshal([]byte(skillsJSON), &sched.Skills)
+	if skillsJSON.Valid && skillsJSON.String != "" {
+		json.Unmarshal([]byte(skillsJSON.String), &sched.Skills)
 	}
-	if capsJSON != "" {
-		json.Unmarshal([]byte(capsJSON), &sched.Capabilities)
+	if capsJSON.Valid && capsJSON.String != "" {
+		json.Unmarshal([]byte(capsJSON.String), &sched.Capabilities)
 	}
 	return &sched, nil
 }
 
 func scanScheduleRow(rows *sql.Rows) (*Schedule, error) {
 	var sched Schedule
-	var skillsJSON, capsJSON string
+	var skillsJSON, capsJSON sql.NullString
 	var enabled int
 	var createdStr, updatedStr string
 	err := rows.Scan(&sched.ID, &sched.Name, &sched.CronExpr, &sched.Task,
@@ -262,11 +287,11 @@ func scanScheduleRow(rows *sql.Rows) (*Schedule, error) {
 	} else {
 		sched.UpdatedAt = t
 	}
-	if skillsJSON != "" {
-		json.Unmarshal([]byte(skillsJSON), &sched.Skills)
+	if skillsJSON.Valid && skillsJSON.String != "" {
+		json.Unmarshal([]byte(skillsJSON.String), &sched.Skills)
 	}
-	if capsJSON != "" {
-		json.Unmarshal([]byte(capsJSON), &sched.Capabilities)
+	if capsJSON.Valid && capsJSON.String != "" {
+		json.Unmarshal([]byte(capsJSON.String), &sched.Capabilities)
 	}
 	return &sched, nil
 }

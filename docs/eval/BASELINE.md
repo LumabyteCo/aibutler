@@ -34,6 +34,13 @@ Hosted models rotate — before reproducing, check what's available
 (`base_url: https://ollama.com`, `GET /v1/models`) and record the model
 actually used in the run row.
 
+### Re-validation — 2026-10-24 (v0.7.1)
+
+After the Go 1.27.3 upgrade and the Home Assistant retry hardening, the
+same suite was re-run on the same model: **5/7 (71%)**, identical per-task
+outcomes. `eval compare` against the 2026-10-05 run: **+0.0% success
+rate**, −7 tool calls, −6 tool errors, −1,949 tokens.
+
 ---
 
 ## Previous baseline (glm-5.1 — retired)

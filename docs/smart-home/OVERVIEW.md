@@ -96,6 +96,15 @@ every call still demands confirmation + the safety PIN
 log, and `iot.device.discover` retries the connection on demand — the rest
 of the assistant is unaffected.
 
+**Transient failures and HA restarts:** requests retry network errors,
+`408`/`429`/`5xx` with backoff (and honor `Retry-After`). Replays are
+idempotency-aware: `turn_on`, `turn_off`, `lock`, `unlock`, and `set_*` are
+safe to retry, while a `toggle` is only retried when HA explicitly says it
+did not run the service (`429`/`503`) — an ambiguous failure is never
+replayed, so a light cannot flip twice. A `401` reports that the token was
+rejected (rotate the long-lived token), and a `404` points at refreshing the
+device registry.
+
 ### Fast intents + the hybrid router (offline smart home)
 
 Smart-home commands are usually short — "turn off the kitchen light",

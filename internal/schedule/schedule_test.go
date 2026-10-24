@@ -477,6 +477,80 @@ func TestSchedulerTick(t *testing.T) {
 	}
 }
 
+// TestSchedulerCreatesSessionForRun guards the FK parent row. Scheduled
+// agents write `agents.session_id → sessions.id` using the schedule ID;
+// without the row, every persistState call fails with a FOREIGN KEY
+// constraint (the "state update failed" log line) and the run disappears
+// from history.
+func TestSchedulerCreatesSessionForRun(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	sched := &schedule.Schedule{
+		ID: "s-session", Name: "SessionTest", CronExpr: "*/5 * * * *",
+		Task: "do something", Channel: "telegram", AccountID: "u1", Enabled: true,
+	}
+	if err := env.store.Create(ctx, sched); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, _ = env.conn.ExecContext(ctx,
+		`UPDATE schedules SET created_at = datetime('now', '-10 minutes') WHERE id = ?`, sched.ID)
+
+	runner := &fakeRunner{
+		result: &agent.Result{ID: "agent-session", Status: agent.StateCompleted},
+	}
+	scheduler := schedule.NewScheduler(env.store, runner, time.Second)
+	if err := scheduler.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	var channel, scope string
+	if err := env.conn.QueryRowContext(ctx,
+		`SELECT channel, scope FROM sessions WHERE id = ?`, sched.ID).Scan(&channel, &scope); err != nil {
+		t.Fatalf("scheduled run has no session row: %v", err)
+	}
+	if channel != "telegram" {
+		t.Errorf("session channel = %q, want telegram", channel)
+	}
+	if scope != "schedule" {
+		t.Errorf("session scope = %q, want schedule", scope)
+	}
+}
+
+// TestSchedulerToleratesNullSkills guards rows migrated from before the
+// skills column existed: scanning NULL into a string failed the whole
+// tick, which stopped every schedule (not just the affected row).
+func TestSchedulerToleratesNullSkills(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	_, err := env.conn.ExecContext(ctx,
+		`INSERT INTO schedules (id, name, cron_expr, task, channel, account_id, skills, enabled, created_at, updated_at)
+		 VALUES ('s-null-skills', 'Null Skills', '*/5 * * * *', 'run it', 'webchat', 'u', NULL, 1,
+		         datetime('now', '-10 minutes'), datetime('now', '-10 minutes'))`)
+	if err != nil {
+		t.Fatalf("insert NULL-skills schedule: %v", err)
+	}
+
+	if _, err := env.store.List(ctx); err != nil {
+		t.Fatalf("List with NULL skills: %v", err)
+	}
+
+	runner := &fakeRunner{
+		result: &agent.Result{ID: "agent-null", Status: agent.StateCompleted},
+	}
+	scheduler := schedule.NewScheduler(env.store, runner, time.Second)
+	if err := scheduler.Tick(ctx); err != nil {
+		t.Fatalf("Tick with NULL skills: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	if called, _ := runner.wasCalled(); !called {
+		t.Error("schedule with NULL skills did not run")
+	}
+}
+
 func TestSchedulerTickNotDue(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()

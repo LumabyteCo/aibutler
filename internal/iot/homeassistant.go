@@ -8,9 +8,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	// Home Assistant restarts take a few seconds; a single failed request
+	// shouldn't surface as "the house is offline". Three attempts with
+	// 250ms/500ms backoff bridge a short restart without making a dead
+	// instance feel unresponsive.
+	haMaxAttempts  = 3
+	haBaseBackoff  = 250 * time.Millisecond
+	haMaxRetryWait = 5 * time.Second
 )
 
 // HomeAssistantAdapter talks to a Home Assistant instance over its REST API
@@ -63,10 +74,16 @@ func NewHomeAssistantAdapter(baseURL, token string, tierPolicy map[string]Tier) 
 	if tierPolicy == nil {
 		tierPolicy = map[string]Tier{}
 	}
+	// Clone the default transport so a long-lived butler keeps its
+	// connections warm across the many small HA calls a routine makes.
+	// (The default MaxIdleConnsPerHost of 2 causes churn under bursts.)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 4
+	transport.IdleConnTimeout = 90 * time.Second
 	return &HomeAssistantAdapter{
 		baseURL:    baseURL,
 		token:      token,
-		client:     &http.Client{Timeout: 10 * time.Second},
+		client:     &http.Client{Timeout: 10 * time.Second, Transport: transport},
 		known:      map[string]haEntity{},
 		tierPolicy: tierPolicy,
 	}
@@ -164,7 +181,12 @@ func (h *HomeAssistantAdapter) Execute(ctx context.Context, cmd Command) error {
 	for k, v := range payload {
 		body[k] = v
 	}
-	if err := h.post(ctx, "/services/"+domain+"/"+service, body, nil); err != nil {
+	// Retrying a POST is only safe when replaying it cannot double-apply
+	// the effect. turn_on/turn_off/lock/unlock/set_* are idempotent;
+	// toggle flips state and must never be replayed after an ambiguous
+	// failure (timeout, connection reset, 5xx).
+	idempotent := service != "toggle"
+	if err := h.post(ctx, "/services/"+domain+"/"+service, body, idempotent, nil); err != nil {
 		return fmt.Errorf("ha: %s.%s on %s: %w", domain, service, cmd.DeviceID, err)
 	}
 	return nil
@@ -257,55 +279,170 @@ func (h *HomeAssistantAdapter) serviceFor(domain string, cmd Command) (string, m
 
 // --- HTTP plumbing ---
 
-func (h *HomeAssistantAdapter) get(ctx context.Context, path string, out interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", h.baseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+h.token)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+// haStatusError is a non-2xx response. It carries retry metadata and adds
+// actionable hints for the failures users actually hit.
+type haStatusError struct {
+	StatusCode int
+	Body       string
+	RetryAfter time.Duration
 }
 
-func (h *HomeAssistantAdapter) post(ctx context.Context, path string, body interface{}, out interface{}) error {
+func (e *haStatusError) Error() string {
+	msg := fmt.Sprintf("status %d", e.StatusCode)
+	if e.Body != "" {
+		msg += ": " + e.Body
+	}
+	switch e.StatusCode {
+	case http.StatusUnauthorized:
+		msg += " (token rejected — check the homeassistant_token vault entry; rotate the long-lived token if it was revoked)"
+	case http.StatusForbidden:
+		msg += " (token lacks permission for this entity)"
+	case http.StatusNotFound:
+		msg += " (entity not found — refresh the registry with iot.device.list)"
+	}
+	return msg
+}
+
+// retryable reports whether the status is transient.
+func (e *haStatusError) retryable() bool {
+	switch e.StatusCode {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests,
+		http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// explicitlyNotProcessed reports whether HA said "I did not run this" —
+// the only 5xx/4xx classes where replaying a non-idempotent action is safe.
+func (e *haStatusError) explicitlyNotProcessed() bool {
+	return e.StatusCode == http.StatusTooManyRequests ||
+		e.StatusCode == http.StatusServiceUnavailable
+}
+
+func (h *HomeAssistantAdapter) get(ctx context.Context, path string, out interface{}) error {
+	return h.do(ctx, http.MethodGet, path, nil, true, out)
+}
+
+func (h *HomeAssistantAdapter) post(ctx context.Context, path string, body interface{}, idempotent bool, out interface{}) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", h.baseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+h.token)
-	req.Header.Set("Content-Type", "application/json")
+	return h.do(ctx, http.MethodPost, path, data, idempotent, out)
+}
 
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+// do executes one HA API call with bounded retries. GETs and idempotent
+// POSTs retry transient failures; a non-idempotent POST (toggle) retries
+// only when HA explicitly said it did not process the request. This is the
+// difference between a brief HA restart being invisible and a toggle being
+// applied twice.
+func (h *HomeAssistantAdapter) do(ctx context.Context, method, path string, payload []byte, idempotent bool, out interface{}) error {
+	for attempt := 1; attempt <= haMaxAttempts; attempt++ {
+		var body io.Reader
+		if payload != nil {
+			body = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, h.baseURL+path, body)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+h.token)
+		req.Header.Set("Accept", "application/json")
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := h.client.Do(req)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			// A non-idempotent POST may have been applied before the
+			// connection broke. Replay is unsafe; surface the error.
+			if method == http.MethodPost && !idempotent {
+				return err
+			}
+			if attempt == haMaxAttempts {
+				return err
+			}
+			if err := haSleep(ctx, haBackoff(attempt)); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			defer resp.Body.Close()
+			if out == nil {
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+				return nil
+			}
+			return json.NewDecoder(resp.Body).Decode(out)
+		}
+
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		resp.Body.Close()
+		statusErr := &haStatusError{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(respBody)),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
+
+		canRetry := statusErr.retryable()
+		if method == http.MethodPost && !idempotent && !statusErr.explicitlyNotProcessed() {
+			canRetry = false
+		}
+		if !canRetry || attempt == haMaxAttempts {
+			return statusErr
+		}
+
+		delay := haBackoff(attempt)
+		if statusErr.RetryAfter > delay {
+			delay = statusErr.RetryAfter
+		}
+		if delay > haMaxRetryWait {
+			delay = haMaxRetryWait
+		}
+		if err := haSleep(ctx, delay); err != nil {
+			return err
+		}
 	}
-	if out == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
+	return fmt.Errorf("ha: exhausted retries")
+}
+
+func haBackoff(attempt int) time.Duration {
+	return haBaseBackoff << (attempt - 1)
+}
+
+func haSleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// parseRetryAfter understands both forms of the Retry-After header
+// (delta-seconds and HTTP-date). Zero means "no header / unparseable".
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // --- classification helpers ---

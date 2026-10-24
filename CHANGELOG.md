@@ -357,6 +357,19 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 Changes in `main` that haven't been released yet will be tracked here.
 
+### Added
+
+- **Tag-driven release workflow.** Pushing a `v*` tag now runs goreleaser v2 with syft SBOM generation on GitHub Actions (`.github/workflows/release.yml`). Releases are created as drafts for review, matching the existing process; `workflow_dispatch` can re-run an existing tag.
+
+### Changed
+
+- **Home Assistant adapter resilience.** Requests now retry transient failures (network errors, 408/429/5xx) with 250ms/500ms backoff, honor `Retry-After`, and use a warm connection pool. Replays are idempotency-aware: `toggle` is never retried after an ambiguous failure (it would flip twice); `turn_on`/`turn_off`/`lock`/`unlock`/`set_*` are. 401/403/404 errors now explain the fix (rotate the token, refresh the registry).
+
+### Fixed
+
+- **Scheduled runs persist agent state.** The scheduler passed the schedule ID as the session ID without creating the `sessions` row, so every state checkpoint failed with `FOREIGN KEY constraint failed` and runs were missing from history. The row is now created (scope `schedule`) before dispatch.
+- **A single NULL `skills` row no longer stops the scheduler.** The scan converted NULL to string, which failed the whole tick — one migrated/edited row blocked every schedule. Both scan paths now tolerate NULL (live-verified: the recovered tick ran the affected job and persisted its agent state).
+
 ---
 
 ## [0.7.1] — 2026-10-24 — Security & CLI Truth
@@ -378,7 +391,7 @@ Changes in `main` that haven't been released yet will be tracked here.
 
 - **`aibutler mode` now actually persists the switch.** It previously printed "Agent mode switched to: …" and changed only the in-memory config; the next command read the old value. Every accepted mode now writes `config.yaml` before reporting success — and the edit is surgical: comments, ordering, and unknown keys in the file are preserved (a whole-file rewrite would silently drop them).
 - **`aibutler mode multi` is available.** `auto` has resolved to multi (parallel tool execution) at runtime for several releases, but the CLI still claimed multi was unavailable and downgraded it to single. Multi is now accepted explicitly; `swarm` and `custom` still downgrade (runtime wiring unfinished) with an honest "not available yet" message instead of "not available in v0.1".
-- **Docs truth pass:** `docs/agents/AGENT-MODES.md`, `docs/cli/CLI-REFERENCE.md`, and `docs/ROADMAP.md` now match shipped behavior — auto→multi, multi available, current v0.7.1 status, and shipped/outstanding gaps corrected (browser automation, Tier 3, and Tier 4 are done).
+- **Docs truth pass:** `docs/agents/AGENT-MODES.md` and `docs/cli/CLI-REFERENCE.md` now match shipped behavior — auto→multi and multi available. (The long-form roadmap stays local-only by convention.)
 
 ## [0.7.0] — 2026-10-05 — Fast Intents & Routines
 

@@ -232,6 +232,14 @@ func (s *Scheduler) executeAndRecord(ctx context.Context, sched Schedule, run *R
 	var agentID string
 	var runErr error
 
+	// The agent row has a foreign key to sessions. Chat channels create
+	// the session before running; scheduled runs historically did not, so
+	// every state checkpoint failed with a FOREIGN KEY constraint. Create
+	// (or touch) the row before any runner path.
+	if err := s.store.EnsureSession(ctx, sched.ID, sched.Channel); err != nil {
+		log.Printf("scheduler: ensure session %q: %v", security.SanitizeLogValue(sched.Name), err)
+	}
+
 	switch {
 	case hasBuiltinPrefix(sched.Task):
 		if fn, ok := s.builtinFor(sched.Task); ok {
