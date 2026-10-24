@@ -63,11 +63,11 @@ func (n *NewsProvider) Headlines(ctx context.Context, query, category, country s
 
 	var data struct {
 		Articles []struct {
-			Title       string `json:"title"`
+			Title       string                `json:"title"`
 			Source      struct{ Name string } `json:"source"`
-			Description string `json:"description"`
-			URL         string `json:"url"`
-			PublishedAt string `json:"publishedAt"`
+			Description string                `json:"description"`
+			URL         string                `json:"url"`
+			PublishedAt string                `json:"publishedAt"`
 		} `json:"articles"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {

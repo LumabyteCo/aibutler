@@ -14,8 +14,8 @@ import (
 type taskAddTool struct{ db *sql.DB }
 
 func (t *taskAddTool) Name() string        { return "task.add" }
-func (t *taskAddTool) Description() string  { return "Add a new task to a list" }
-func (t *taskAddTool) Capability() string   { return "data.tasks.write" }
+func (t *taskAddTool) Description() string { return "Add a new task to a list" }
+func (t *taskAddTool) Capability() string  { return "data.tasks.write" }
 func (t *taskAddTool) Schema() string {
 	return `{"type":"object","properties":{"content":{"type":"string"},"list":{"type":"string"},"priority":{"type":"integer"}},"required":["content"]}`
 }
@@ -50,9 +50,11 @@ func (t *taskAddTool) Execute(ctx context.Context, input string) (string, error)
 
 type taskListTool struct{ db *sql.DB }
 
-func (t *taskListTool) Name() string        { return "task.list" }
-func (t *taskListTool) Description() string  { return "List tasks, optionally filtered by list name and status" }
-func (t *taskListTool) Capability() string   { return "data.tasks.read" }
+func (t *taskListTool) Name() string { return "task.list" }
+func (t *taskListTool) Description() string {
+	return "List tasks, optionally filtered by list name and status"
+}
+func (t *taskListTool) Capability() string { return "data.tasks.read" }
 func (t *taskListTool) Schema() string {
 	return `{"type":"object","properties":{"list":{"type":"string"},"status":{"type":"string"}}}`
 }
@@ -113,8 +115,8 @@ func (t *taskListTool) Execute(ctx context.Context, input string) (string, error
 type taskCompleteTool struct{ db *sql.DB }
 
 func (t *taskCompleteTool) Name() string        { return "task.complete" }
-func (t *taskCompleteTool) Description() string  { return "Mark a task as completed by ID" }
-func (t *taskCompleteTool) Capability() string   { return "data.tasks.write" }
+func (t *taskCompleteTool) Description() string { return "Mark a task as completed by ID" }
+func (t *taskCompleteTool) Capability() string  { return "data.tasks.write" }
 func (t *taskCompleteTool) Schema() string {
 	return `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`
 }
@@ -146,8 +148,8 @@ func (t *taskCompleteTool) Execute(ctx context.Context, input string) (string, e
 type expenseLogTool struct{ db *sql.DB }
 
 func (t *expenseLogTool) Name() string        { return "expense.log" }
-func (t *expenseLogTool) Description() string  { return "Log an expense" }
-func (t *expenseLogTool) Capability() string   { return "data.finance.write" }
+func (t *expenseLogTool) Description() string { return "Log an expense" }
+func (t *expenseLogTool) Capability() string  { return "data.finance.write" }
 func (t *expenseLogTool) Schema() string {
 	return `{"type":"object","properties":{"amount":{"type":"number"},"category":{"type":"string"},"description":{"type":"string"},"currency":{"type":"string"}},"required":["amount","category"]}`
 }
@@ -181,8 +183,8 @@ func (t *expenseLogTool) Execute(ctx context.Context, input string) (string, err
 type expenseSummaryTool struct{ db *sql.DB }
 
 func (t *expenseSummaryTool) Name() string        { return "expense.summary" }
-func (t *expenseSummaryTool) Description() string  { return "Get expense summary by category" }
-func (t *expenseSummaryTool) Capability() string   { return "data.finance.read" }
+func (t *expenseSummaryTool) Description() string { return "Get expense summary by category" }
+func (t *expenseSummaryTool) Capability() string  { return "data.finance.read" }
 func (t *expenseSummaryTool) Schema() string {
 	return `{"type":"object","properties":{"period":{"type":"string","description":"month (YYYY-MM) or date range"}}}`
 }
@@ -237,8 +239,8 @@ func (t *expenseSummaryTool) Execute(ctx context.Context, input string) (string,
 type contactAddTool struct{ db *sql.DB }
 
 func (t *contactAddTool) Name() string        { return "contact.add" }
-func (t *contactAddTool) Description() string  { return "Add a new contact" }
-func (t *contactAddTool) Capability() string   { return "data.contacts.write" }
+func (t *contactAddTool) Description() string { return "Add a new contact" }
+func (t *contactAddTool) Capability() string  { return "data.contacts.write" }
 func (t *contactAddTool) Schema() string {
 	return `{"type":"object","properties":{"name":{"type":"string"},"email":{"type":"string"},"phone":{"type":"string"},"relationship":{"type":"string"}},"required":["name"]}`
 }
@@ -272,8 +274,8 @@ func (t *contactAddTool) Execute(ctx context.Context, input string) (string, err
 type contactSearchTool struct{ db *sql.DB }
 
 func (t *contactSearchTool) Name() string        { return "contact.search" }
-func (t *contactSearchTool) Description() string  { return "Search contacts by name" }
-func (t *contactSearchTool) Capability() string   { return "data.contacts.read" }
+func (t *contactSearchTool) Description() string { return "Search contacts by name" }
+func (t *contactSearchTool) Capability() string  { return "data.contacts.read" }
 func (t *contactSearchTool) Schema() string {
 	return `{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`
 }
@@ -323,8 +325,8 @@ func (t *contactSearchTool) Execute(ctx context.Context, input string) (string, 
 type journalWriteTool struct{ db *sql.DB }
 
 func (t *journalWriteTool) Name() string        { return "journal.write" }
-func (t *journalWriteTool) Description() string  { return "Write a journal entry" }
-func (t *journalWriteTool) Capability() string   { return "data.journal.write" }
+func (t *journalWriteTool) Description() string { return "Write a journal entry" }
+func (t *journalWriteTool) Capability() string  { return "data.journal.write" }
 func (t *journalWriteTool) Schema() string {
 	return `{"type":"object","properties":{"content":{"type":"string"},"mood":{"type":"string"},"type":{"type":"string"}},"required":["content"]}`
 }
@@ -366,8 +368,8 @@ type healthLogTool struct {
 }
 
 func (t *healthLogTool) Name() string        { return "health.log" }
-func (t *healthLogTool) Description() string  { return "Log a health metric" }
-func (t *healthLogTool) Capability() string   { return "data.health.write" }
+func (t *healthLogTool) Description() string { return "Log a health metric" }
+func (t *healthLogTool) Capability() string  { return "data.health.write" }
 func (t *healthLogTool) Schema() string {
 	return `{"type":"object","properties":{"metric":{"type":"string"},"value":{"type":"string"},"unit":{"type":"string"},"notes":{"type":"string"}},"required":["metric","value"]}`
 }
@@ -486,8 +488,8 @@ func (t *healthReadTool) Execute(ctx context.Context, input string) (string, err
 type costStatusTool struct{ db *sql.DB }
 
 func (t *costStatusTool) Name() string        { return "cost.status" }
-func (t *costStatusTool) Description() string  { return "Check current month's token usage and cost" }
-func (t *costStatusTool) Capability() string   { return "" } // Always available
+func (t *costStatusTool) Description() string { return "Check current month's token usage and cost" }
+func (t *costStatusTool) Capability() string  { return "" } // Always available
 func (t *costStatusTool) Schema() string {
 	return `{"type":"object","properties":{}}`
 }

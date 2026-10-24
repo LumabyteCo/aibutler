@@ -14,9 +14,9 @@ type fakeToolLike struct {
 }
 
 func (f *fakeToolLike) Name() string        { return f.name }
-func (f *fakeToolLike) Description() string  { return f.desc }
-func (f *fakeToolLike) Schema() string       { return f.schema }
-func (f *fakeToolLike) Capability() string   { return f.cap }
+func (f *fakeToolLike) Description() string { return f.desc }
+func (f *fakeToolLike) Schema() string      { return f.schema }
+func (f *fakeToolLike) Capability() string  { return f.cap }
 func (f *fakeToolLike) Execute(_ context.Context, input string) (string, error) {
 	return "executed:" + input, nil
 }

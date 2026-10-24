@@ -5,7 +5,7 @@ Run AI Butler as a persistent service on your own machine.
 ## Build from Source
 
 ```bash
-# Prerequisites: Go 1.26+
+# Prerequisites: Go 1.27+
 git clone https://github.com/LumabyteCo/aibutler.git
 cd aibutler
 CGO_ENABLED=0 go build -o aibutler .

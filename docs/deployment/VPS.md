@@ -6,7 +6,7 @@ for the binary; add RAM if you run local models alongside it.
 ## 1. Install
 
 ```bash
-# Go 1.26+
+# Go 1.27+
 git clone https://github.com/LumabyteCo/aibutler.git
 cd aibutler
 CGO_ENABLED=0 go build -o aibutler .

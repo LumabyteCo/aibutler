@@ -440,7 +440,6 @@ func TestReliableOpts_ClampedToSafeRange(t *testing.T) {
 	}
 }
 
-
 // --- Competing-consumer (queue-group) tests ---
 
 func TestCompeting_SingleSubscriberReceives(t *testing.T) {
@@ -632,4 +631,3 @@ func TestCompeting_BroadcastAndCompetingAreIndependent(t *testing.T) {
 		// Good — broadcast channel stayed empty.
 	}
 }
-

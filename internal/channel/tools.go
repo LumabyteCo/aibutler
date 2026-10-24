@@ -146,9 +146,11 @@ type relayInput struct {
 	Channel string `json:"channel"` // Optional explicit channel override.
 }
 
-func (t *relayTool) Name() string        { return "channel.relay" }
-func (t *relayTool) Description() string { return "Send a message to a contact via their preferred channel." }
-func (t *relayTool) Capability() string  { return "channel.relay" }
+func (t *relayTool) Name() string { return "channel.relay" }
+func (t *relayTool) Description() string {
+	return "Send a message to a contact via their preferred channel."
+}
+func (t *relayTool) Capability() string { return "channel.relay" }
 
 func (t *relayTool) Schema() string {
 	return `{

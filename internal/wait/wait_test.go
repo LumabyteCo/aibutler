@@ -267,7 +267,7 @@ func TestUntil_Duration_ClampedToTimeout(t *testing.T) {
 	start := time.Now()
 	res := w.Until(context.Background(), Input{
 		Type:           TypeDuration,
-		Seconds:        10, // request long sleep
+		Seconds:        10,  // request long sleep
 		TimeoutSeconds: 0.2, // but timeout is short
 	})
 	elapsed := time.Since(start)

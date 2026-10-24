@@ -14,10 +14,10 @@ type mockStreamChannel struct {
 	messages []OutgoingMessage
 }
 
-func (m *mockStreamChannel) Name() string                                         { return m.name }
+func (m *mockStreamChannel) Name() string                                            { return m.name }
 func (m *mockStreamChannel) Start(ctx context.Context, handler MessageHandler) error { return nil }
-func (m *mockStreamChannel) Stop(ctx context.Context) error                        { return nil }
-func (m *mockStreamChannel) SendTyping(ctx context.Context, accountID string) error { return nil }
+func (m *mockStreamChannel) Stop(ctx context.Context) error                          { return nil }
+func (m *mockStreamChannel) SendTyping(ctx context.Context, accountID string) error  { return nil }
 
 func (m *mockStreamChannel) Send(ctx context.Context, accountID string, msg OutgoingMessage) error {
 	m.mu.Lock()

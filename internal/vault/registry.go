@@ -9,11 +9,11 @@ import (
 
 // ServiceEntry describes how a service authenticates.
 type ServiceEntry struct {
-	Name          string   `yaml:"name"`
-	Domains       []string `yaml:"domains"`
-	AuthType      string   `yaml:"auth_type"` // api_key, oauth2, bot_token, app_password, platform_token
-	CredentialKey string   `yaml:"credential_key"`
-	Header        string   `yaml:"header"` // e.g., "Authorization: Bearer {key}"
+	Name          string       `yaml:"name"`
+	Domains       []string     `yaml:"domains"`
+	AuthType      string       `yaml:"auth_type"` // api_key, oauth2, bot_token, app_password, platform_token
+	CredentialKey string       `yaml:"credential_key"`
+	Header        string       `yaml:"header"` // e.g., "Authorization: Bearer {key}"
 	OAuth         *OAuthConfig `yaml:"oauth,omitempty"`
 }
 

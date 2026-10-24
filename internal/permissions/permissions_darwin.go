@@ -18,9 +18,9 @@ const probeTimeout = 5 * time.Second
 // or via "Open URL" in any browser. macOS resolves these to the matching
 // pane in System Settings.
 const (
-	urlAutomation     = "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
-	urlScreenCapture  = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-	urlAccessibility  = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+	urlAutomation    = "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
+	urlScreenCapture = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+	urlAccessibility = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 )
 
 // Check runs the macOS permission probes and returns a Report.

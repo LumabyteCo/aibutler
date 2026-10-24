@@ -5,19 +5,19 @@
 // carrying SubSteps, the Supervisor delegates that step to a Manager
 // rather than a Worker. The Manager:
 //
-//   1. Receives the parent step (with its sub-step list) on the
-//      mission's manager_dispatch topic.
-//   2. Decomposes the sub-step list and dispatches each one to the
-//      same worker dispatch topic the Supervisor would have used.
-//      Sub-steps therefore compete with any other worker traffic for
-//      the same pool — the Manager does not own a separate pool.
-//   3. Awaits each sub-step's worker.Result on the mission events
-//      topic and continues to the next sub-step. Failure of any
-//      sub-step terminates the group with a parent-level error.
-//   4. Aggregates the sub-step outputs into a single parent-level
-//      worker.Result and publishes it on the events topic so the
-//      Supervisor sees a single "group complete" result for the
-//      parent step.
+//  1. Receives the parent step (with its sub-step list) on the
+//     mission's manager_dispatch topic.
+//  2. Decomposes the sub-step list and dispatches each one to the
+//     same worker dispatch topic the Supervisor would have used.
+//     Sub-steps therefore compete with any other worker traffic for
+//     the same pool — the Manager does not own a separate pool.
+//  3. Awaits each sub-step's worker.Result on the mission events
+//     topic and continues to the next sub-step. Failure of any
+//     sub-step terminates the group with a parent-level error.
+//  4. Aggregates the sub-step outputs into a single parent-level
+//     worker.Result and publishes it on the events topic so the
+//     Supervisor sees a single "group complete" result for the
+//     parent step.
 //
 // Backwards compatibility: missions without any SubSteps never trigger
 // the Manager — the Supervisor dispatches every step directly to a

@@ -719,8 +719,8 @@ func TestCompat_AgentRunWithToolExecution(t *testing.T) {
 	})
 
 	a := agent.New(agent.Config{
-		Model:    model,
-		Tools:    tools,
+		Model:        model,
+		Tools:        tools,
 		Mode:         agent.ModeMulti,
 		MaxToolCalls: 5,
 	})

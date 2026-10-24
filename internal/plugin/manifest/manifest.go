@@ -52,7 +52,7 @@ type ModelAdapterDef struct {
 
 // ParamDef describes a configuration parameter.
 type ParamDef struct {
-	Type        string      `toml:"type"`        // string, int, bool, float
+	Type        string      `toml:"type"` // string, int, bool, float
 	Default     interface{} `toml:"default"`
 	Description string      `toml:"description"`
 	Required    bool        `toml:"required"`

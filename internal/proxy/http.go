@@ -20,9 +20,9 @@ type OfflineChecker interface {
 
 // HTTPExecutor makes HTTP requests with credential injection.
 type HTTPExecutor struct {
-	client    *http.Client
-	offline   OfflineChecker
-	skipSSRF  bool
+	client   *http.Client
+	offline  OfflineChecker
+	skipSSRF bool
 }
 
 // NewHTTPExecutor creates an executor with the given timeout.

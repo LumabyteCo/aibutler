@@ -16,9 +16,9 @@ const (
 // Envelope is the normalized message container that flows through the system.
 type Envelope struct {
 	ID          string
-	Channel     string            // "webchat", "telegram", etc.
+	Channel     string // "webchat", "telegram", etc.
 	AccountID   string
-	ThreadID    string            // For threading (Slack threads, Telegram topics)
+	ThreadID    string // For threading (Slack threads, Telegram topics)
 	Type        MessageType
 	Text        string
 	Attachments []Attachment

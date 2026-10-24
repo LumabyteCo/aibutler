@@ -112,12 +112,12 @@ func capString(s string, n int) string {
 
 // QueryFilter selects which Actions to return from a Query call.
 type QueryFilter struct {
-	AgentID    string
-	Type       string
-	Status     string
-	Since      *time.Time
-	Until      *time.Time
-	Limit      int // default 50, max 500
+	AgentID string
+	Type    string
+	Status  string
+	Since   *time.Time
+	Until   *time.Time
+	Limit   int // default 50, max 500
 }
 
 // Query returns recent actions matching the filter, newest first.

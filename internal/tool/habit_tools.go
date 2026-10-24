@@ -13,8 +13,8 @@ import (
 type habitCreateTool struct{ db *sql.DB }
 
 func (t *habitCreateTool) Name() string        { return "habit.create" }
-func (t *habitCreateTool) Description() string  { return "Create a new habit to track" }
-func (t *habitCreateTool) Capability() string   { return "data.habits.write" }
+func (t *habitCreateTool) Description() string { return "Create a new habit to track" }
+func (t *habitCreateTool) Capability() string  { return "data.habits.write" }
 func (t *habitCreateTool) Schema() string {
 	return `{"type":"object","properties":{"name":{"type":"string"},"frequency":{"type":"string","description":"daily, weekly, or custom"}},"required":["name"]}`
 }
@@ -48,9 +48,11 @@ func (t *habitCreateTool) Execute(ctx context.Context, input string) (string, er
 
 type habitLogTool struct{ db *sql.DB }
 
-func (t *habitLogTool) Name() string        { return "habit.log" }
-func (t *habitLogTool) Description() string  { return "Log completion of a habit for today (or a specific date)" }
-func (t *habitLogTool) Capability() string   { return "data.habits.write" }
+func (t *habitLogTool) Name() string { return "habit.log" }
+func (t *habitLogTool) Description() string {
+	return "Log completion of a habit for today (or a specific date)"
+}
+func (t *habitLogTool) Capability() string { return "data.habits.write" }
 func (t *habitLogTool) Schema() string {
 	return `{"type":"object","properties":{"name":{"type":"string","description":"Habit name"},"date":{"type":"string","description":"YYYY-MM-DD, defaults to today"},"notes":{"type":"string"}},"required":["name"]}`
 }
@@ -95,8 +97,8 @@ func (t *habitLogTool) Execute(ctx context.Context, input string) (string, error
 type habitStreakTool struct{ db *sql.DB }
 
 func (t *habitStreakTool) Name() string        { return "habit.streak" }
-func (t *habitStreakTool) Description() string  { return "Get the current streak for a habit" }
-func (t *habitStreakTool) Capability() string   { return "data.habits.read" }
+func (t *habitStreakTool) Description() string { return "Get the current streak for a habit" }
+func (t *habitStreakTool) Capability() string  { return "data.habits.read" }
 func (t *habitStreakTool) Schema() string {
 	return `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`
 }

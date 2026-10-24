@@ -43,8 +43,8 @@ func TestRedactPINsKeepsNonPINNumbers(t *testing.T) {
 	cases := []string{
 		"set temperature to 21.5 degrees",
 		"temperature is 5 to 32",
-		"room 12 is available",      // short numbers not preceded by pin
-		"call me at 5551234567",     // not PIN-labeled
+		"room 12 is available",  // short numbers not preceded by pin
+		"call me at 5551234567", // not PIN-labeled
 		"2026-10-05 the 5th of October",
 	}
 	for _, in := range cases {

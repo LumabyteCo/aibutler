@@ -15,11 +15,11 @@ import (
 type Event string
 
 const (
-	PreToolUse     Event = "PreToolUse"
-	PostToolUse    Event = "PostToolUse"
-	OnAgentSpawn   Event = "OnAgentSpawn"
+	PreToolUse      Event = "PreToolUse"
+	PostToolUse     Event = "PostToolUse"
+	OnAgentSpawn    Event = "OnAgentSpawn"
 	OnAgentComplete Event = "OnAgentComplete"
-	OnAgentFail    Event = "OnAgentFail"
+	OnAgentFail     Event = "OnAgentFail"
 )
 
 // HookConfig describes a single hook entry.
@@ -30,12 +30,12 @@ type HookConfig struct {
 
 // Payload is the JSON sent to hook commands on stdin.
 type Payload struct {
-	HookEventName    string      `json:"hook_event_name"`
-	ToolName         string      `json:"tool_name"`
-	ToolInput        interface{} `json:"tool_input"`
-	ToolInputJSON    string      `json:"tool_input_json"`
-	ToolOutput       *string     `json:"tool_output"`
-	ToolResultIsError bool       `json:"tool_result_is_error"`
+	HookEventName     string      `json:"hook_event_name"`
+	ToolName          string      `json:"tool_name"`
+	ToolInput         interface{} `json:"tool_input"`
+	ToolInputJSON     string      `json:"tool_input_json"`
+	ToolOutput        *string     `json:"tool_output"`
+	ToolResultIsError bool        `json:"tool_result_is_error"`
 }
 
 // RunResult holds the aggregated outcome of running hooks.
@@ -46,10 +46,10 @@ type RunResult struct {
 
 // Engine manages pre and post tool-use hooks.
 type Engine struct {
-	preHooks  []HookConfig
-	postHooks []HookConfig
+	preHooks   []HookConfig
+	postHooks  []HookConfig
 	agentHooks map[Event][]HookConfig
-	timeout   time.Duration
+	timeout    time.Duration
 }
 
 // New creates a hook engine with the given hook configurations.
@@ -70,9 +70,9 @@ func (e *Engine) SetAgentHooks(event Event, hooks []HookConfig) {
 // RunPreToolUse runs all matching pre-tool hooks. If any exits 2, the tool is denied.
 func (e *Engine) RunPreToolUse(ctx context.Context, toolName, toolInput string) (*RunResult, error) {
 	payload := Payload{
-		HookEventName:    string(PreToolUse),
-		ToolName:         toolName,
-		ToolInputJSON:    toolInput,
+		HookEventName:     string(PreToolUse),
+		ToolName:          toolName,
+		ToolInputJSON:     toolInput,
 		ToolResultIsError: false,
 	}
 	// Try to parse tool input as JSON for the structured field.
@@ -93,10 +93,10 @@ func (e *Engine) RunPreToolUse(ctx context.Context, toolName, toolInput string) 
 // RunPostToolUse runs all matching post-tool hooks. Feedback is merged into RunResult.Messages.
 func (e *Engine) RunPostToolUse(ctx context.Context, toolName, toolInput, toolOutput string, isError bool) (*RunResult, error) {
 	payload := Payload{
-		HookEventName:    string(PostToolUse),
-		ToolName:         toolName,
-		ToolInputJSON:    toolInput,
-		ToolOutput:       &toolOutput,
+		HookEventName:     string(PostToolUse),
+		ToolName:          toolName,
+		ToolInputJSON:     toolInput,
+		ToolOutput:        &toolOutput,
 		ToolResultIsError: isError,
 	}
 	var parsed interface{}
@@ -111,10 +111,10 @@ func (e *Engine) RunPostToolUse(ctx context.Context, toolName, toolInput, toolOu
 		isErrStr = "true"
 	}
 	return e.runHooks(ctx, e.postHooks, toolName, payload, map[string]string{
-		"HOOK_EVENT":       string(PostToolUse),
-		"HOOK_TOOL_NAME":   toolName,
-		"HOOK_TOOL_INPUT":  toolInput,
-		"HOOK_TOOL_OUTPUT": toolOutput,
+		"HOOK_EVENT":         string(PostToolUse),
+		"HOOK_TOOL_NAME":     toolName,
+		"HOOK_TOOL_INPUT":    toolInput,
+		"HOOK_TOOL_OUTPUT":   toolOutput,
 		"HOOK_TOOL_IS_ERROR": isErrStr,
 	})
 }
@@ -160,9 +160,9 @@ func (e *Engine) OnAgentFailHook(ctx context.Context, agentName, errMsg string) 
 		return &RunResult{}, nil
 	}
 	payload := Payload{
-		HookEventName:    string(OnAgentFail),
-		ToolName:         agentName,
-		ToolOutput:       &errMsg,
+		HookEventName:     string(OnAgentFail),
+		ToolName:          agentName,
+		ToolOutput:        &errMsg,
 		ToolResultIsError: true,
 	}
 	return e.runHooks(ctx, hooks, agentName, payload, map[string]string{

@@ -19,7 +19,7 @@
   <a href="https://github.com/LumabyteCo/aibutler/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/LumabyteCo/aibutler/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/LumabyteCo/aibutler/actions/workflows/security.yml"><img alt="Security" src="https://github.com/LumabyteCo/aibutler/actions/workflows/security.yml/badge.svg?branch=main"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
-  <img alt="Go" src="https://img.shields.io/badge/go-1.26%2B-00ADD8">
+  <img alt="Go" src="https://img.shields.io/badge/go-1.27%2B-00ADD8">
   <img alt="CGO" src="https://img.shields.io/badge/CGO-not%20required-success">
   <img alt="Status" src="https://img.shields.io/badge/status-v0.7%20fast%20intents%20routines-orange">
   <a href="https://github.com/LumabyteCo/aibutler/releases"><img alt="Release" src="https://img.shields.io/github/v/release/LumabyteCo/aibutler?include_prereleases&label=release"></a>
@@ -170,7 +170,7 @@ now cross-platform through Tier 3 (accessibility trees) and Tier 4
 ### Install
 
 ```bash
-# Clone + build from source (Go 1.26+)
+# Clone + build from source (Go 1.27+)
 git clone https://github.com/LumabyteCo/aibutler.git
 cd aibutler
 CGO_ENABLED=0 go build -o aibutler .
@@ -291,7 +291,7 @@ aibutler vault set whatsapp_phone_number_id YOUR_PHONE_ID
 | Database migrations | **22** |
 | Internal security audit passes | **59** |
 | CVEs (`govulncheck` verified) | **0** |
-| External Go dependencies | **16 direct** |
+| External Go dependencies | **12 direct** |
 | CGO required | **No** |
 | Channels wired | **12** (2 ready: web chat + terminal; 10 beta) · Smart home adapter: **Home Assistant (beta, live-validated)** |
 | AI providers wired | **6+** (Claude + Ollama ready, others beta) |

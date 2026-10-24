@@ -506,10 +506,10 @@ type fakeTool struct {
 	result string
 }
 
-func (f *fakeTool) Name() string                                            { return f.name }
-func (f *fakeTool) Description() string                                     { return "fake tool" }
-func (f *fakeTool) Schema() string                                          { return `{}` }
-func (f *fakeTool) Capability() string                                      { return f.cap }
+func (f *fakeTool) Name() string                                        { return f.name }
+func (f *fakeTool) Description() string                                 { return "fake tool" }
+func (f *fakeTool) Schema() string                                      { return `{}` }
+func (f *fakeTool) Capability() string                                  { return f.cap }
 func (f *fakeTool) Execute(_ context.Context, _ string) (string, error) { return f.result, nil }
 
 // --- SanitizeHookFeedback Tests ---

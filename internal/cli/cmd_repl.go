@@ -279,4 +279,3 @@ func resolveProviderName(modelName string) string {
 // appCompatBaseURL is set from the loaded config at REPL start so
 // resolveProviderName can distinguish Ollama Cloud from local endpoints.
 var appCompatBaseURL string
-

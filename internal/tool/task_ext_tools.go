@@ -12,8 +12,8 @@ import (
 type taskRemoveTool struct{ db *sql.DB }
 
 func (t *taskRemoveTool) Name() string        { return "task.remove" }
-func (t *taskRemoveTool) Description() string  { return "Remove a task by ID" }
-func (t *taskRemoveTool) Capability() string   { return "data.tasks.write" }
+func (t *taskRemoveTool) Description() string { return "Remove a task by ID" }
+func (t *taskRemoveTool) Capability() string  { return "data.tasks.write" }
 func (t *taskRemoveTool) Schema() string {
 	return `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`
 }
@@ -42,8 +42,8 @@ func (t *taskRemoveTool) Execute(ctx context.Context, input string) (string, err
 type taskClearTool struct{ db *sql.DB }
 
 func (t *taskClearTool) Name() string        { return "task.clear" }
-func (t *taskClearTool) Description() string  { return "Clear all completed tasks from a list" }
-func (t *taskClearTool) Capability() string   { return "data.tasks.write" }
+func (t *taskClearTool) Description() string { return "Clear all completed tasks from a list" }
+func (t *taskClearTool) Capability() string  { return "data.tasks.write" }
 func (t *taskClearTool) Schema() string {
 	return `{"type":"object","properties":{"list":{"type":"string","description":"List name (default: all lists)"}}}`
 }
@@ -75,9 +75,11 @@ func (t *taskClearTool) Execute(ctx context.Context, input string) (string, erro
 
 type taskPrioritizeTool struct{ db *sql.DB }
 
-func (t *taskPrioritizeTool) Name() string        { return "task.prioritize" }
-func (t *taskPrioritizeTool) Description() string  { return "Set priority of a task (0=low, 1=normal, 2=high, 3=urgent)" }
-func (t *taskPrioritizeTool) Capability() string   { return "data.tasks.write" }
+func (t *taskPrioritizeTool) Name() string { return "task.prioritize" }
+func (t *taskPrioritizeTool) Description() string {
+	return "Set priority of a task (0=low, 1=normal, 2=high, 3=urgent)"
+}
+func (t *taskPrioritizeTool) Capability() string { return "data.tasks.write" }
 func (t *taskPrioritizeTool) Schema() string {
 	return `{"type":"object","properties":{"id":{"type":"integer"},"priority":{"type":"integer","minimum":0,"maximum":3}},"required":["id","priority"]}`
 }
@@ -113,9 +115,11 @@ func (t *taskPrioritizeTool) Execute(ctx context.Context, input string) (string,
 
 type expenseBudgetCheckTool struct{ db *sql.DB }
 
-func (t *expenseBudgetCheckTool) Name() string        { return "expense.budget_check" }
-func (t *expenseBudgetCheckTool) Description() string  { return "Check spending against budget for a category" }
-func (t *expenseBudgetCheckTool) Capability() string   { return "data.finance.read" }
+func (t *expenseBudgetCheckTool) Name() string { return "expense.budget_check" }
+func (t *expenseBudgetCheckTool) Description() string {
+	return "Check spending against budget for a category"
+}
+func (t *expenseBudgetCheckTool) Capability() string { return "data.finance.read" }
 func (t *expenseBudgetCheckTool) Schema() string {
 	return `{"type":"object","properties":{"category":{"type":"string"},"period":{"type":"string","description":"YYYY-MM for monthly"}},"required":["category"]}`
 }

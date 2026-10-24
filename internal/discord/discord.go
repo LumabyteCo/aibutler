@@ -298,10 +298,10 @@ func (a *Adapter) readLoop(ctx context.Context) {
 
 // gatewayEvent is a Discord Gateway WebSocket event.
 type gatewayEvent struct {
-	Op int              `json:"op"`
-	D  json.RawMessage  `json:"d,omitempty"`
-	S  *int64           `json:"s,omitempty"`
-	T  string           `json:"t,omitempty"`
+	Op int             `json:"op"`
+	D  json.RawMessage `json:"d,omitempty"`
+	S  *int64          `json:"s,omitempty"`
+	T  string          `json:"t,omitempty"`
 }
 
 // discordMessage is a Discord MESSAGE_CREATE payload.

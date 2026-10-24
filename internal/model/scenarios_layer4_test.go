@@ -927,7 +927,7 @@ func TestScenario129_AgentMemorySearchAfterImport(t *testing.T) {
 
 	factory := model.NewFactory(model.FactoryConfig{
 		Composer: composer, Model: fake, Tools: dispatcher,
-		Caps: capability.NewCapabilitySet(capability.MessagingDefaults()),
+		Caps:    capability.NewCapabilitySet(capability.MessagingDefaults()),
 		Tracker: tracker, DB: conn, Config: cfg,
 	})
 
@@ -1137,7 +1137,7 @@ func TestScenario136_CostTrackingWithMemoryTools(t *testing.T) {
 
 	factory := model.NewFactory(model.FactoryConfig{
 		Composer: composer, Model: fake, Tools: dispatcher,
-		Caps: capability.NewCapabilitySet(capability.MessagingDefaults()),
+		Caps:    capability.NewCapabilitySet(capability.MessagingDefaults()),
 		Tracker: tracker, DB: conn, Config: cfg,
 	})
 

@@ -4,7 +4,7 @@
 
 - Linux server (Ubuntu 22.04+ recommended)
 - 1 GB RAM minimum
-- Go 1.26+ (for building from source) or pre-built binary
+- Go 1.27+ (for building from source) or pre-built binary
 
 ## Install from Binary
 

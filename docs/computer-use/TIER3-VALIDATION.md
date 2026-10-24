@@ -51,7 +51,7 @@ job (`.github/workflows/ci.yml`). To reproduce locally with Docker:
 ```bash
 docker run --rm -v "$PWD":/src -w /src \
   -e GOTOOLCHAIN=auto -e CGO_ENABLED=0 \
-  golang:1.26-bookworm bash -c '
+  golang:1.27-bookworm bash -c '
     apt-get update -qq && apt-get install -y -qq xvfb dbus-x11 at-spi2-core zenity
     dbus-run-session -- bash -c "
       Xvfb :99 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &

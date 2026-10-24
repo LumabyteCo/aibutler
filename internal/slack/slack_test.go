@@ -65,9 +65,9 @@ func socketModeServer(t *testing.T) (srv *httptest.Server, sendEvent func(data [
 	t.Helper()
 
 	var (
-		mu       sync.Mutex
-		received []json.RawMessage
-		conn     *websocket.Conn
+		mu        sync.Mutex
+		received  []json.RawMessage
+		conn      *websocket.Conn
 		connReady = make(chan struct{})
 	)
 

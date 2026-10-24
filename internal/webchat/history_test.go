@@ -51,7 +51,7 @@ func TestHistoryEndpoint(t *testing.T) {
 
 	var out struct {
 		Entries []webchat.HistoryEntry `json:"entries"`
-		Count    int                    `json:"count"`
+		Count   int                    `json:"count"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)

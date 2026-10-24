@@ -15,8 +15,8 @@ import (
 func TestWeatherProvider(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"name": "London",
-			"main": map[string]interface{}{"temp": 15.5, "humidity": 72},
+			"name":    "London",
+			"main":    map[string]interface{}{"temp": 15.5, "humidity": 72},
 			"weather": []map[string]string{{"description": "cloudy"}},
 			"wind":    map[string]interface{}{"speed": 5.2},
 		})

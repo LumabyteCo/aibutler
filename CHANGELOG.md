@@ -357,6 +357,17 @@ ships Tiers 0-2 in v0.2; Tier 3 (accessibility tree) and Tier 4
 
 Changes in `main` that haven't been released yet will be tracked here.
 
+### Security
+
+- **Go 1.27.3 upgrade** — clears the four reachable stdlib CVEs that had the weekly govulncheck failing since 2026-10-12: GO-2026-6809 (crypto/x509), GO-2026-6617 / GO-2026-6613 / GO-2026-6612 (net/http), all fixed in the 1.26.9+/1.27 line. `govulncheck` on Go 1.27.3 reports zero vulnerabilities.
+- **Dependency refresh** (via `go mod tidy` on 1.27): chromedp 0.15.1, ncruces/go-sqlite3 0.35.1, pelletier/go-toml v2.4.0, golang.org/x/crypto 0.53.0. Direct dependency count corrected to 12.
+
+### Changed
+
+- Toolchain and `go` directive: 1.26.2/1.26.6 → **1.27.3**; Docker builder image → `golang:1.27-alpine`; docs and README badge updated to "Go 1.27+".
+- Source reformatted with Go 1.27's corrected `gofmt` alignment (whitespace only; no behavior change).
+- Go 1.27's `encoding/json` v2 backing is now in effect (error text may differ; marshal/unmarshal behavior preserved by the stdlib contract).
+
 ## [0.7.0] — 2026-10-05 — Fast Intents & Routines
 
 The house now obeys in one word, offline. This release completes the

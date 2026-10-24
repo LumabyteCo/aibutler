@@ -172,14 +172,14 @@ func (e *Executor) inAllowlist(command string) bool {
 // new statement, pipeline stage, sub-expression, call, or line — any of
 // which lets a command reach beyond the single allowlisted first cmdlet.
 var statementChainingChars = []string{
-	";",   // statement separator
-	"|",   // pipeline
-	"&",   // call operator / background (covers && too)
-	"`",   // backtick: line continuation / escape, can hide separators
-	"$(",  // sub-expression
-	"@(",  // array sub-expression
-	"\n",  // newline statement separator
-	"\r",  // carriage-return separator
+	";",    // statement separator
+	"|",    // pipeline
+	"&",    // call operator / background (covers && too)
+	"`",    // backtick: line continuation / escape, can hide separators
+	"$(",   // sub-expression
+	"@(",   // array sub-expression
+	"\n",   // newline statement separator
+	"\r",   // carriage-return separator
 	"\x00", // NUL — defensive
 }
 

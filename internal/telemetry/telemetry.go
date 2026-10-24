@@ -5,10 +5,10 @@ import "sync/atomic"
 // Collector collects anonymous usage metrics.
 // When disabled (default), all operations are no-ops.
 type Collector struct {
-	enabled     bool
-	toolCalls   atomic.Int64
-	sessions    atomic.Int64
-	errors      atomic.Int64
+	enabled   bool
+	toolCalls atomic.Int64
+	sessions  atomic.Int64
+	errors    atomic.Int64
 }
 
 // NewCollector creates a telemetry collector.

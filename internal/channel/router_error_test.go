@@ -80,9 +80,9 @@ func (h *RouterHarness) Dispatch() {
 // saw when their API key was rejected or the model was retired.
 func TestRouterSurfacesModelError(t *testing.T) {
 	cases := []struct {
-		name    string
-		rawErr  string
-		wantIn  string
+		name   string
+		rawErr string
+		wantIn string
 	}{
 		{"401 unauthorized", "model error: openai: all 3 attempts failed: openai: status 401: unauthorized", "401"},
 		{"410 retired model", "model error: openai: all 3 attempts failed: openai: status 410: {\"error\":{\"message\":\"glm-5.1 was retired at 2026-09-25\"}}", "retired"},

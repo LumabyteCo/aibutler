@@ -22,8 +22,8 @@ func (m *pinCaptureModel) Complete(_ context.Context, messages []agent.Message) 
 		// First turn: request the unlock with the PIN the user supplied.
 		return agent.Response{
 			ToolCalls: []agent.ToolCall{{
-				ID:   "tc-1",
-				Name: "iot.safety.control",
+				ID:    "tc-1",
+				Name:  "iot.safety.control",
 				Input: `{"device_id":"lock.front_door","action":"unlock","confirmed":true,"pin":"2468"}`,
 			}},
 		}, nil

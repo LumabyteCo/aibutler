@@ -65,8 +65,8 @@ func (c *Client) SendFlexMessage(ctx context.Context, to string, altText string,
 		"to": to,
 		"messages": []map[string]interface{}{
 			{
-				"type":    "flex",
-				"altText": altText,
+				"type":     "flex",
+				"altText":  altText,
 				"contents": contents,
 			},
 		},

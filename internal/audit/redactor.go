@@ -9,12 +9,12 @@ import (
 // Patterns that look like API keys, tokens, or secrets.
 var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(api[_-]?key|api[_-]?secret|token|bearer|password|secret)[=:\s]+["']?[\w\-./+=]{16,}["']?`),
-	regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),          // OpenAI-style
-	regexp.MustCompile(`xox[bprs]-[a-zA-Z0-9\-]+`),     // Slack tokens
-	regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),           // GitHub PAT
-	regexp.MustCompile(`gho_[a-zA-Z0-9]{36}`),           // GitHub OAuth
-	regexp.MustCompile(`glpat-[a-zA-Z0-9\-]{20,}`),      // GitLab PAT
-	regexp.MustCompile(`AKIA[A-Z0-9]{16}`),              // AWS access key
+	regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),             // OpenAI-style
+	regexp.MustCompile(`xox[bprs]-[a-zA-Z0-9\-]+`),        // Slack tokens
+	regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),             // GitHub PAT
+	regexp.MustCompile(`gho_[a-zA-Z0-9]{36}`),             // GitHub OAuth
+	regexp.MustCompile(`glpat-[a-zA-Z0-9\-]{20,}`),        // GitLab PAT
+	regexp.MustCompile(`AKIA[A-Z0-9]{16}`),                // AWS access key
 	regexp.MustCompile(`(?i)basic\s+[a-zA-Z0-9+/=]{20,}`), // Basic auth
 	// IoT safety PIN — "PIN: 2468", "pin is 2468", "PIN 2468",
 	// "safety PIN: 2468", `"pin":"2468"` (JSON tool input). 4-12 digits,

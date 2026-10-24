@@ -47,7 +47,7 @@ func NewRouter(cfg RouterConfig) *Router {
 }
 
 // Name labels for diagnostics.
-func (r *Router) LocalName() string  { return r.cfg.LocalName }
+func (r *Router) LocalName() string   { return r.cfg.LocalName }
 func (r *Router) PrimaryName() string { return r.cfg.PrimaryName }
 
 // Complete implements agent.ModelAdapter. It inspects the message shape

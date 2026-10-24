@@ -10,7 +10,7 @@
 CGO_ENABLED=0 go build -o aibutler .
 ```
 
-Also verify Go 1.26+ is installed:
+Also verify Go 1.27+ is installed:
 
 ```bash
 go version

@@ -17,12 +17,12 @@ import (
 
 // fakePostProcessor records AfterAgentRun calls.
 type fakePostProcessor struct {
-	mu          sync.Mutex
-	sessionID   string
-	userMsg     string
+	mu           sync.Mutex
+	sessionID    string
+	userMsg      string
 	assistantMsg string
-	toolOutputs []agent.ToolOutput
-	callCount   int
+	toolOutputs  []agent.ToolOutput
+	callCount    int
 }
 
 func (p *fakePostProcessor) AfterAgentRun(_ context.Context, sessID, user, assistant, _ string, outputs []agent.ToolOutput) {

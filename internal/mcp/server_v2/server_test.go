@@ -196,7 +196,7 @@ func TestScheduleCreateDispatches(t *testing.T) {
 	srv := New(&mockMemory{}, sched, &mockChannels{}, &mockAgents{})
 
 	params := mcp.ToolCallParams{
-		Name: "butler.schedule.create",
+		Name:      "butler.schedule.create",
 		Arguments: json.RawMessage(`{"description":"daily standup","cron":"0 9 * * 1-5","task":"summarize yesterday","channel":"webchat","account_id":"user-1"}`),
 	}
 	resp := stdioRoundTrip(t, srv, mcp.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: "tools/call", Params: params})
@@ -235,7 +235,7 @@ func TestScheduleCreateValidation(t *testing.T) {
 
 	for _, body := range []string{
 		`{}`,
-		`{"description":"x"}`, // missing cron
+		`{"description":"x"}`,  // missing cron
 		`{"cron":"* * * * *"}`, // missing description
 	} {
 		params := mcp.ToolCallParams{Name: "butler.schedule.create", Arguments: json.RawMessage(body)}

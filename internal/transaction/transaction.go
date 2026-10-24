@@ -15,9 +15,9 @@ import (
 type Phase string
 
 const (
-	PhasePrepare Phase = "prepare"  // search, compare — no money
-	PhaseConfirm Phase = "confirm"  // user reviews details
-	PhaseExecute Phase = "execute"  // actual booking/order
+	PhasePrepare Phase = "prepare" // search, compare — no money
+	PhaseConfirm Phase = "confirm" // user reviews details
+	PhaseExecute Phase = "execute" // actual booking/order
 	PhaseCancel  Phase = "cancel"
 )
 
@@ -41,12 +41,12 @@ var (
 // Transaction represents a transactional action (booking, order, etc.).
 type Transaction struct {
 	ID          string     `json:"id"`
-	Service     string     `json:"service"`     // "opentable", "uber", "doordash"
-	Category    string     `json:"category"`    // "restaurant", "rideshare", "delivery"
+	Service     string     `json:"service"`  // "opentable", "uber", "doordash"
+	Category    string     `json:"category"` // "restaurant", "rideshare", "delivery"
 	Phase       Phase      `json:"phase"`
-	Details     string     `json:"details"`     // JSON details (items, price, etc.)
-	Amount      float64    `json:"amount"`      // total cost
-	Status      string     `json:"status"`      // "pending", "confirmed", "executed", "cancelled"
+	Details     string     `json:"details"` // JSON details (items, price, etc.)
+	Amount      float64    `json:"amount"`  // total cost
+	Status      string     `json:"status"`  // "pending", "confirmed", "executed", "cancelled"
 	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
 	ExecutedAt  *time.Time `json:"executed_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`

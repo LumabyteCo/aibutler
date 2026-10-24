@@ -20,16 +20,16 @@ var knownEmbedDimensions = map[string]int{
 	"text-embedding-3-large": 3072,
 	"text-embedding-ada-002": 1536,
 	// Ollama / open-source
-	"nomic-embed-text":          768,
-	"nomic-embed-text:v1.5":     768,
-	"nomic-embed-text:latest":   768,
-	"mxbai-embed-large":         1024,
-	"mxbai-embed-large:latest":  1024,
-	"all-minilm":                384,
-	"all-minilm:latest":         384,
-	"snowflake-arctic-embed":    1024,
-	"bge-m3":                    1024,
-	"bge-m3:latest":             1024,
+	"nomic-embed-text":         768,
+	"nomic-embed-text:v1.5":    768,
+	"nomic-embed-text:latest":  768,
+	"mxbai-embed-large":        1024,
+	"mxbai-embed-large:latest": 1024,
+	"all-minilm":               384,
+	"all-minilm:latest":        384,
+	"snowflake-arctic-embed":   1024,
+	"bge-m3":                   1024,
+	"bge-m3:latest":            1024,
 }
 
 // EmbeddingOpenAI implements vector.Embedder for the OpenAI Embeddings API.

@@ -196,7 +196,7 @@ func TestWhisperProviderError(t *testing.T) {
 
 	wp := NewWhisperProvider("test-key", nil)
 	wp.client = &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:   5 * time.Second,
 		Transport: &rewriteTransport{url: srv.URL},
 	}
 

@@ -415,8 +415,8 @@ func (b *Bus) UnsubscribeCompeting(topic string, ch <-chan ReliableMessage) {
 // Errors:
 //   - ErrNoSubscribers — no competing subscribers exist at publish time.
 //   - ErrAckTimeout    — every subscriber either had a full buffer
-//                        (busy with a prior message) or accepted but
-//                        didn't ack within opts.Timeout.
+//     (busy with a prior message) or accepted but
+//     didn't ack within opts.Timeout.
 //   - ErrAllNacked     — every subscriber explicitly nacked.
 //   - ctx.Err()        — context cancelled mid-publish.
 //

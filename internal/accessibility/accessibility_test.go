@@ -125,10 +125,10 @@ func TestWinUIAScript_Shape(t *testing.T) {
 	for _, want := range []string{
 		"Add-Type -AssemblyName UIAutomationClient",
 		"Add-Type -AssemblyName UIAutomationTypes",
-		"$args[0]",      // app name passed positionally
-		"$args[1]",      // depth passed positionally
-		"[char]9",       // tab separator (no backtick-escape)
-		"FromHandle",    // walks the main-window element tree
+		"$args[0]",   // app name passed positionally
+		"$args[1]",   // depth passed positionally
+		"[char]9",    // tab separator (no backtick-escape)
+		"FromHandle", // walks the main-window element tree
 		"ProgrammaticName",
 	} {
 		if !strings.Contains(s, want) {

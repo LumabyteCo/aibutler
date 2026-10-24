@@ -7,7 +7,7 @@ func TestEffectiveMode(t *testing.T) {
 		input Mode
 		want  Mode
 	}{
-		{ModeAuto, ModeMulti},   // auto resolves to multi (delegation enabled)
+		{ModeAuto, ModeMulti}, // auto resolves to multi (delegation enabled)
 		{ModeSingle, ModeSingle},
 		{ModeMulti, ModeMulti},
 		{ModeCustom, ModeCustom},

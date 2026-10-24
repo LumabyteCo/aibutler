@@ -12,8 +12,8 @@ import (
 type placeSaveTool struct{ db *sql.DB }
 
 func (t *placeSaveTool) Name() string        { return "place.save" }
-func (t *placeSaveTool) Description() string  { return "Save a place/location" }
-func (t *placeSaveTool) Capability() string   { return "data.places.write" }
+func (t *placeSaveTool) Description() string { return "Save a place/location" }
+func (t *placeSaveTool) Capability() string  { return "data.places.write" }
 func (t *placeSaveTool) Schema() string {
 	return `{"type":"object","properties":{"name":{"type":"string"},"address":{"type":"string"},"lat":{"type":"number"},"lon":{"type":"number"},"category":{"type":"string"},"notes":{"type":"string"},"rating":{"type":"integer","minimum":1,"maximum":5}},"required":["name"]}`
 }
@@ -50,8 +50,8 @@ func (t *placeSaveTool) Execute(ctx context.Context, input string) (string, erro
 type placeSearchTool struct{ db *sql.DB }
 
 func (t *placeSearchTool) Name() string        { return "place.search" }
-func (t *placeSearchTool) Description() string  { return "Search saved places by name or category" }
-func (t *placeSearchTool) Capability() string   { return "data.places.read" }
+func (t *placeSearchTool) Description() string { return "Search saved places by name or category" }
+func (t *placeSearchTool) Capability() string  { return "data.places.read" }
 func (t *placeSearchTool) Schema() string {
 	return `{"type":"object","properties":{"query":{"type":"string"},"category":{"type":"string"}}}`
 }
@@ -115,8 +115,8 @@ func (t *placeSearchTool) Execute(ctx context.Context, input string) (string, er
 type placeUpdateTool struct{ db *sql.DB }
 
 func (t *placeUpdateTool) Name() string        { return "place.update" }
-func (t *placeUpdateTool) Description() string  { return "Update a saved place by ID" }
-func (t *placeUpdateTool) Capability() string   { return "data.places.write" }
+func (t *placeUpdateTool) Description() string { return "Update a saved place by ID" }
+func (t *placeUpdateTool) Capability() string  { return "data.places.write" }
 func (t *placeUpdateTool) Schema() string {
 	return `{"type":"object","properties":{"id":{"type":"integer"},"name":{"type":"string"},"address":{"type":"string"},"category":{"type":"string"},"notes":{"type":"string"},"rating":{"type":"integer","minimum":1,"maximum":5}},"required":["id"]}`
 }
@@ -187,8 +187,8 @@ func (t *placeUpdateTool) Execute(ctx context.Context, input string) (string, er
 type placeDeleteTool struct{ db *sql.DB }
 
 func (t *placeDeleteTool) Name() string        { return "place.delete" }
-func (t *placeDeleteTool) Description() string  { return "Delete a saved place by ID" }
-func (t *placeDeleteTool) Capability() string   { return "data.places.write" }
+func (t *placeDeleteTool) Description() string { return "Delete a saved place by ID" }
+func (t *placeDeleteTool) Capability() string  { return "data.places.write" }
 func (t *placeDeleteTool) Schema() string {
 	return `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`
 }

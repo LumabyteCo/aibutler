@@ -77,9 +77,9 @@ func (g *GeminiAdapter) SetTools(tools []agent.ToolDef) {
 
 // internal Gemini API types
 type geminiPart struct {
-	Text             string           `json:"text,omitempty"`
-	FunctionCall     *geminiFuncCall  `json:"functionCall,omitempty"`
-	FunctionResponse *geminiFuncResp  `json:"functionResponse,omitempty"`
+	Text             string          `json:"text,omitempty"`
+	FunctionCall     *geminiFuncCall `json:"functionCall,omitempty"`
+	FunctionResponse *geminiFuncResp `json:"functionResponse,omitempty"`
 }
 
 type geminiFuncCall struct {

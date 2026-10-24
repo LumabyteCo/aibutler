@@ -57,8 +57,8 @@ type Server struct {
 	cfg            Config
 	db             *sql.DB
 	mu             sync.Mutex
-	regChallenges  map[string]*RegistrationChallenge     // userID -> challenge
-	authChallenges map[string]*AuthenticationChallenge    // userID -> challenge
+	regChallenges  map[string]*RegistrationChallenge   // userID -> challenge
+	authChallenges map[string]*AuthenticationChallenge // userID -> challenge
 }
 
 // New creates a WebAuthn server with the given config and database connection.

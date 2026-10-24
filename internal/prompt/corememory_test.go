@@ -61,7 +61,7 @@ func TestLoadCoreFactsScoredSelection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	seed("User's name is Ahmed", 9, 30, 0, old)      // important, much used, old
+	seed("User's name is Ahmed", 9, 30, 0, old)        // important, much used, old
 	seed("User mentioned the weather", 2, 0, 0, fresh) // fresh noise
 	seed("User ships on Fridays", 5, 0, 1, old)        // pinned, old
 

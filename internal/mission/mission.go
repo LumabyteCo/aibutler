@@ -137,10 +137,10 @@ type Plan struct {
 
 // Sentinel errors.
 var (
-	ErrNotFound           = errors.New("mission: not found")
-	ErrInvalidTransition  = errors.New("mission: invalid state transition")
-	ErrTerminal           = errors.New("mission: already in terminal state")
-	ErrEmptyGoal          = errors.New("mission: goal is required")
+	ErrNotFound          = errors.New("mission: not found")
+	ErrInvalidTransition = errors.New("mission: invalid state transition")
+	ErrTerminal          = errors.New("mission: already in terminal state")
+	ErrEmptyGoal         = errors.New("mission: goal is required")
 )
 
 // CanTransition reports whether the state machine permits moving from

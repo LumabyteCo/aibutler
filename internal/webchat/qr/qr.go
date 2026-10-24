@@ -194,7 +194,7 @@ func placeBits(modules, reserved [][]bool, bits []bool, size int) {
 		if col == 6 {
 			col-- // Skip timing column.
 		}
-		upward := ((size - 1 - col) / 2) % 2 == 0
+		upward := ((size-1-col)/2)%2 == 0
 		for i := 0; i < size; i++ {
 			row := i
 			if upward {
@@ -244,7 +244,7 @@ func writeFormatInfo(modules [][]bool, size int) {
 
 // renderPNG renders a boolean module matrix as a minimal PNG image.
 func renderPNG(modules [][]bool) []byte {
-	scale := 4 // pixels per module
+	scale := 4  // pixels per module
 	border := 4 // quiet zone modules
 	size := len(modules)
 	imgSize := (size + border*2) * scale

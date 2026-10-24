@@ -107,9 +107,9 @@ func TestNormalizeArabicHamzaFolding(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"أحمد", "احمد"},   // Hamza above → bare alef
+		{"أحمد", "احمد"},       // Hamza above → bare alef
 		{"إبراهيم", "ابراهيم"}, // Hamza below → bare alef
-		{"آدم", "ادم"},     // Madda → bare alef
+		{"آدم", "ادم"},         // Madda → bare alef
 	}
 	for _, tc := range tests {
 		got := contact.NormalizeArabic(tc.input)

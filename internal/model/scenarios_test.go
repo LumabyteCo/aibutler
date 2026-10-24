@@ -1095,7 +1095,7 @@ func TestScenario76_PostProcessorCalled(t *testing.T) {
 	proc := &recordingPostProcessor{}
 	factory := model.NewFactory(model.FactoryConfig{
 		Composer: composer, Model: fake, Tools: dispatcher,
-		Caps: capability.NewCapabilitySet(capability.MessagingDefaults()),
+		Caps:    capability.NewCapabilitySet(capability.MessagingDefaults()),
 		Tracker: tracker, DB: database.Conn(), Config: cfg, PostProcessor: proc,
 	})
 	ctx := context.Background()
@@ -1134,7 +1134,7 @@ func TestScenario77_PostProcessorRecordsToolOutputs(t *testing.T) {
 	proc := &recordingPostProcessor{}
 	factory := model.NewFactory(model.FactoryConfig{
 		Composer: composer, Model: fake, Tools: dispatcher,
-		Caps: capability.NewCapabilitySet(capability.MessagingDefaults()),
+		Caps:    capability.NewCapabilitySet(capability.MessagingDefaults()),
 		Tracker: tracker, DB: database.Conn(), Config: cfg, PostProcessor: proc,
 	})
 	ctx := context.Background()
@@ -1220,7 +1220,7 @@ func TestScenario81_ToolOutputTruncatedInResult(t *testing.T) {
 	dispatcher := tool.NewDispatcher(registry, capability.NewEngine(nil), nil)
 	factory := model.NewFactory(model.FactoryConfig{
 		Composer: composer, Model: fake, Tools: dispatcher,
-		Caps: capability.NewCapabilitySet(capability.MessagingDefaults()),
+		Caps:    capability.NewCapabilitySet(capability.MessagingDefaults()),
 		Tracker: tracker, DB: database.Conn(), Config: cfg,
 	})
 	ctx := context.Background()
@@ -1322,7 +1322,7 @@ func TestScenario85_ToolReturnsError(t *testing.T) {
 	dispatcher := tool.NewDispatcher(registry, capability.NewEngine(nil), nil)
 	factory := model.NewFactory(model.FactoryConfig{
 		Composer: composer, Model: fake, Tools: dispatcher,
-		Caps: capability.NewCapabilitySet(capability.MessagingDefaults()),
+		Caps:    capability.NewCapabilitySet(capability.MessagingDefaults()),
 		Tracker: tracker, DB: database.Conn(), Config: cfg,
 	})
 	ctx := context.Background()

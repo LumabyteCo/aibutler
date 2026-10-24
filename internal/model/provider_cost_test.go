@@ -12,10 +12,10 @@ import (
 // the Spending panel showed a full day of paid usage as free.
 func TestResolveProviderForCost(t *testing.T) {
 	tests := []struct {
-		name      string
-		model     string
-		baseURL   string
-		want      string
+		name    string
+		model   string
+		baseURL string
+		want    string
 	}{
 		{"claude routes by name", "claude-sonnet-4-6", "", "anthropic"},
 		{"gpt routes by name", "gpt-4o", "", "openai"},

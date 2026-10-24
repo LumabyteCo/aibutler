@@ -166,6 +166,7 @@ func parseLimit(v string) (int, error) {
 	}
 	return n, nil
 }
+
 // HistoryHandlerForTest exposes the history route in isolation for tests.
 // In production the route is mounted by the adapter's mux.
 func (a *Adapter) HistoryHandlerForTest() http.Handler {

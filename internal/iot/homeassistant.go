@@ -34,8 +34,8 @@ type HomeAssistantAdapter struct {
 	client  *http.Client
 
 	mu         sync.RWMutex
-	known      map[string]haEntity   // entity_id → last seen state
-	tierPolicy map[string]Tier        // user overrides from config (id → tier)
+	known      map[string]haEntity // entity_id → last seen state
+	tierPolicy map[string]Tier     // user overrides from config (id → tier)
 }
 
 // haEntity is the subset of the HA /api/states payload we consume.

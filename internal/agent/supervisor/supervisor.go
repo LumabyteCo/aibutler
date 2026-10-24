@@ -5,18 +5,18 @@
 //
 // Sequence:
 //
-//   1. Subscribe to mission.{id}.events                     (results inbound)
-//   2. Read the plan's dispatch mode (sequential or parallel):
-//      - SEQUENTIAL (default, set by Manager.SetPlan):
-//          Walk plan steps one at a time. Dispatch, wait for the
-//          matching worker result, persist, advance.
-//      - PARALLEL (set by Manager.SetPlanParallel):
-//          Walk Step.DependsOn as a DAG. Dispatch every step whose
-//          dependencies are completed. Wait for ANY result, persist,
-//          re-evaluate the DAG, dispatch newly-ready steps. Loop until
-//          done or any step fails.
-//   3. When all steps complete (or any fails), transition the mission
-//      to its terminal state via the Manager.
+//  1. Subscribe to mission.{id}.events                     (results inbound)
+//  2. Read the plan's dispatch mode (sequential or parallel):
+//     - SEQUENTIAL (default, set by Manager.SetPlan):
+//     Walk plan steps one at a time. Dispatch, wait for the
+//     matching worker result, persist, advance.
+//     - PARALLEL (set by Manager.SetPlanParallel):
+//     Walk Step.DependsOn as a DAG. Dispatch every step whose
+//     dependencies are completed. Wait for ANY result, persist,
+//     re-evaluate the DAG, dispatch newly-ready steps. Loop until
+//     done or any step fails.
+//  3. When all steps complete (or any fails), transition the mission
+//     to its terminal state via the Manager.
 //
 // Failure policy:
 //
@@ -380,15 +380,15 @@ func (s *Supervisor) tryReplan(
 }
 
 // runParallel drives the mission as a DAG. At each iteration:
-//   1. Find every step whose state isn't terminal and whose DependsOn
-//      are all completed.
-//   2. Dispatch each ready step (concurrently).
-//   3. Block on the next worker result event; update the matching
-//      step's state.
-//   4. If the result was a failure, stop dispatching new work and
-//      fail the mission.
-//   5. Loop until no in-flight work remains and either every step is
-//      completed (success) or the failure was observed.
+//  1. Find every step whose state isn't terminal and whose DependsOn
+//     are all completed.
+//  2. Dispatch each ready step (concurrently).
+//  3. Block on the next worker result event; update the matching
+//     step's state.
+//  4. If the result was a failure, stop dispatching new work and
+//     fail the mission.
+//  5. Loop until no in-flight work remains and either every step is
+//     completed (success) or the failure was observed.
 //
 // Deadlocks (a step's DependsOn references a step that doesn't exist,
 // or a cycle) are detected when scan() returns no ready steps AND

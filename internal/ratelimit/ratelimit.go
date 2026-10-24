@@ -10,8 +10,8 @@ import (
 
 // window tracks requests within a time window.
 type window struct {
-	count    int
-	resetAt  time.Time
+	count   int
+	resetAt time.Time
 }
 
 // Limiter is a sliding-window rate limiter.

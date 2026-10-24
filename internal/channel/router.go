@@ -43,10 +43,10 @@ type RouterConfig struct {
 	I18n          *i18n.Bundle
 	DB            *sql.DB
 	Agent         AgentFactory
-	Voice         *voice.Pipeline      // Optional: voice STT/TTS processing
-	Media         *media.Pipeline      // Optional: file/image/PDF processing
-	Tracker       BudgetTracker        // Optional: budget alert checking
-	StreamDeliver StreamDeliverFunc    // Optional: streaming token delivery to channels
+	Voice         *voice.Pipeline   // Optional: voice STT/TTS processing
+	Media         *media.Pipeline   // Optional: file/image/PDF processing
+	Tracker       BudgetTracker     // Optional: budget alert checking
+	StreamDeliver StreamDeliverFunc // Optional: streaming token delivery to channels
 }
 
 // Router dispatches incoming messages to the agent and sends responses.

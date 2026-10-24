@@ -28,8 +28,8 @@ func TestForecast_Sonnet_KnownPrefix(t *testing.T) {
 		t.Errorf("expected PriceSource=table, got %q", got.PriceSource)
 	}
 	// Sonnet starter price is $3/M input + $15/M output.
-	wantInputCost := 3.0   // 1M tokens × $3
-	wantOutputCost := 7.5  // 0.5M × $15
+	wantInputCost := 3.0  // 1M tokens × $3
+	wantOutputCost := 7.5 // 0.5M × $15
 	wantTotal := 10.5
 	if got.InputCostUSD != wantInputCost {
 		t.Errorf("InputCostUSD = %v, want %v", got.InputCostUSD, wantInputCost)

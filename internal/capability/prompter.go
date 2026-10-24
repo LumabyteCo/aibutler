@@ -11,7 +11,7 @@ import (
 type PermissionMode int
 
 const (
-	ModeReadOnly       PermissionMode = iota
+	ModeReadOnly PermissionMode = iota
 	ModeWorkspaceWrite
 	ModeFullAccess
 )

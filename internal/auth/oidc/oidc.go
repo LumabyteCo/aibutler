@@ -20,7 +20,7 @@ import (
 
 // Config holds OIDC client configuration.
 type Config struct {
-	DiscoveryURL string   // e.g., "https://accounts.google.com/.well-known/openid-configuration"
+	DiscoveryURL string // e.g., "https://accounts.google.com/.well-known/openid-configuration"
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
@@ -118,11 +118,11 @@ func (c *Client) AuthURL(state, codeVerifier string) string {
 
 	params := url.Values{
 		"client_id":             {c.cfg.ClientID},
-		"response_type":        {"code"},
-		"redirect_uri":         {c.cfg.RedirectURL},
-		"scope":                {strings.Join(c.cfg.Scopes, " ")},
-		"state":                {state},
-		"code_challenge":       {challenge},
+		"response_type":         {"code"},
+		"redirect_uri":          {c.cfg.RedirectURL},
+		"scope":                 {strings.Join(c.cfg.Scopes, " ")},
+		"state":                 {state},
+		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
 	}
 

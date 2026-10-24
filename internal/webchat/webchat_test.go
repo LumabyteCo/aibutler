@@ -322,12 +322,12 @@ func TestIndexContainsMissionsPanel(t *testing.T) {
 	html := string(body)
 
 	wantMarkers := []string{
-		`data-panel="missions"`,        // sidebar nav button + panel section both carry this
-		`id="missions-list"`,           // mission list container
-		`id="mission-detail"`,          // detail subview container
-		`id="mission-detail-events"`,   // live event tail
-		`id="missions-include-done"`,   // filter toggle
-		`id="missions-stat-active"`,    // header stats tile
+		`data-panel="missions"`,      // sidebar nav button + panel section both carry this
+		`id="missions-list"`,         // mission list container
+		`id="mission-detail"`,        // detail subview container
+		`id="mission-detail-events"`, // live event tail
+		`id="missions-include-done"`, // filter toggle
+		`id="missions-stat-active"`,  // header stats tile
 	}
 	for _, want := range wantMarkers {
 		if !strings.Contains(html, want) {

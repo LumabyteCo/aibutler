@@ -12,8 +12,8 @@ import (
 type journalReadTool struct{ db *sql.DB }
 
 func (t *journalReadTool) Name() string        { return "journal.read" }
-func (t *journalReadTool) Description() string  { return "Read journal entries by date range" }
-func (t *journalReadTool) Capability() string   { return "data.journal.read" }
+func (t *journalReadTool) Description() string { return "Read journal entries by date range" }
+func (t *journalReadTool) Capability() string  { return "data.journal.read" }
 func (t *journalReadTool) Schema() string {
 	return `{"type":"object","properties":{"from":{"type":"string","description":"Start date YYYY-MM-DD"},"to":{"type":"string","description":"End date YYYY-MM-DD"},"mood":{"type":"string","description":"Filter by mood"},"limit":{"type":"integer"}}}`
 }
@@ -84,8 +84,8 @@ func (t *journalReadTool) Execute(ctx context.Context, input string) (string, er
 type journalMoodTrendTool struct{ db *sql.DB }
 
 func (t *journalMoodTrendTool) Name() string        { return "journal.mood_trend" }
-func (t *journalMoodTrendTool) Description() string  { return "Get mood trends over time" }
-func (t *journalMoodTrendTool) Capability() string   { return "data.journal.read" }
+func (t *journalMoodTrendTool) Description() string { return "Get mood trends over time" }
+func (t *journalMoodTrendTool) Capability() string  { return "data.journal.read" }
 func (t *journalMoodTrendTool) Schema() string {
 	return `{"type":"object","properties":{"from":{"type":"string","description":"Start date YYYY-MM-DD"},"to":{"type":"string","description":"End date YYYY-MM-DD"}}}`
 }

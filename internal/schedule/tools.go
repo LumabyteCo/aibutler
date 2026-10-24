@@ -1,11 +1,11 @@
 package schedule
 
 import (
-	"strconv"
 	"context"
-	"strings"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/LumabyteCo/aibutler/internal/tool"
@@ -35,7 +35,7 @@ type createInput struct {
 	Capabilities []string `json:"capabilities"`
 }
 
-func (t *createTool) Name() string        { return "schedule.create" }
+func (t *createTool) Name() string { return "schedule.create" }
 func (t *createTool) Description() string {
 	return "Create a scheduled task from natural language (\"every weekday at 8am\", \"every Monday at 9am\", " +
 		"\"daily at midnight\") or a cron expression. USE THIS DIRECTLY when the user asks to schedule anything — " +
@@ -44,7 +44,7 @@ func (t *createTool) Description() string {
 		"it'll fire next time, not \"yesterday\". If the request names a one-off past time, clarify: \"that time has " +
 		"already passed today; would you like it for tomorrow instead?\""
 }
-func (t *createTool) Capability() string  { return "schedule.manage" }
+func (t *createTool) Capability() string { return "schedule.manage" }
 
 func (t *createTool) Schema() string {
 	return `{

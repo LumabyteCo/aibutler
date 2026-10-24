@@ -41,7 +41,7 @@ This runs on every push in the `Desktop Tier 4 (Linux live)` CI job
 docker run --rm -v "$PWD":/src -w /src \
   -e GOTOOLCHAIN=auto -e CGO_ENABLED=0 \
   -e AIBUTLER_DESKTOP_TESTS=1 -e AIBUTLER_ENABLE_SYNTHETIC_INPUT=1 \
-  golang:1.26-bookworm bash -c '
+  golang:1.27-bookworm bash -c '
     apt-get update -qq && apt-get install -y -qq xvfb scrot xdotool
     Xvfb :99 -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 &
     export DISPLAY=:99 && sleep 2

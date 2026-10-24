@@ -18,9 +18,11 @@ func RegisterTaskContextTools(registry *tool.Registry, store *Store) {
 
 type taskContextSaveTool struct{ store *Store }
 
-func (t *taskContextSaveTool) Name() string        { return "task.context.save" }
-func (t *taskContextSaveTool) Description() string  { return "Save multi-step task state for continuation" }
-func (t *taskContextSaveTool) Capability() string   { return "data.tasks.write" }
+func (t *taskContextSaveTool) Name() string { return "task.context.save" }
+func (t *taskContextSaveTool) Description() string {
+	return "Save multi-step task state for continuation"
+}
+func (t *taskContextSaveTool) Capability() string { return "data.tasks.write" }
 func (t *taskContextSaveTool) Schema() string {
 	return `{"type":"object","properties":{"session_id":{"type":"string"},"task_type":{"type":"string"},"state":{"type":"string"},"context":{"type":"object"}},"required":["session_id","task_type","context"]}`
 }
@@ -55,9 +57,11 @@ func (t *taskContextSaveTool) Execute(ctx context.Context, input string) (string
 
 type taskContextLoadTool struct{ store *Store }
 
-func (t *taskContextLoadTool) Name() string        { return "task.context.load" }
-func (t *taskContextLoadTool) Description() string  { return "Load the active task context for a session" }
-func (t *taskContextLoadTool) Capability() string   { return "data.tasks.read" }
+func (t *taskContextLoadTool) Name() string { return "task.context.load" }
+func (t *taskContextLoadTool) Description() string {
+	return "Load the active task context for a session"
+}
+func (t *taskContextLoadTool) Capability() string { return "data.tasks.read" }
 func (t *taskContextLoadTool) Schema() string {
 	return `{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]}`
 }

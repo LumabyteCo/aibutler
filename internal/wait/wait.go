@@ -52,11 +52,11 @@ const (
 
 // Condition types accepted by the wait.until tool.
 const (
-	TypeFileExists      = "file_exists"
-	TypeProcessRunning  = "process_running"
-	TypePortOpen        = "port_open"
-	TypeHTTPReady       = "http_ready"
-	TypeDuration        = "duration"
+	TypeFileExists     = "file_exists"
+	TypeProcessRunning = "process_running"
+	TypePortOpen       = "port_open"
+	TypeHTTPReady      = "http_ready"
+	TypeDuration       = "duration"
 )
 
 // toolRegistry is the narrow interface for registering tools (avoids import cycles).

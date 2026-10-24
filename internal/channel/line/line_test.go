@@ -89,7 +89,7 @@ func TestSendFlexMessage_Success(t *testing.T) {
 	contents := map[string]interface{}{
 		"type": "bubble",
 		"body": map[string]interface{}{
-			"type": "box",
+			"type":   "box",
 			"layout": "vertical",
 		},
 	}

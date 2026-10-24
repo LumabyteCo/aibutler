@@ -20,7 +20,7 @@ type transcribeTool struct {
 	pipeline *Pipeline
 }
 
-func (t *transcribeTool) Name() string      { return "voice.transcribe" }
+func (t *transcribeTool) Name() string       { return "voice.transcribe" }
 func (t *transcribeTool) Capability() string { return "voice.transcribe" }
 func (t *transcribeTool) Description() string {
 	return "Transcribe audio data to text using the configured STT provider (e.g., Whisper). Input is base64-encoded audio with format specification."
@@ -67,7 +67,7 @@ type speakTool struct {
 	pipeline *Pipeline
 }
 
-func (t *speakTool) Name() string      { return "voice.speak" }
+func (t *speakTool) Name() string       { return "voice.speak" }
 func (t *speakTool) Capability() string { return "voice.speak" }
 func (t *speakTool) Description() string {
 	return "Convert text to speech audio using the configured TTS provider. Returns base64-encoded audio data."

@@ -26,10 +26,10 @@ func newRouter() (*model.Router, *recordingAdapter, *recordingAdapter) {
 	local := &recordingAdapter{name: "local", resp: agent.Response{Content: "local-answer"}}
 	primary := &recordingAdapter{name: "primary", resp: agent.Response{Content: "primary-answer"}}
 	r := model.NewRouter(model.RouterConfig{
-		Local:        local,
-		LocalName:    "Local (test)",
-		Primary:      primary,
-		PrimaryName:  "Cloud (test)",
+		Local:       local,
+		LocalName:   "Local (test)",
+		Primary:     primary,
+		PrimaryName: "Cloud (test)",
 	})
 	return r, local, primary
 }
@@ -187,6 +187,7 @@ func TestRouterNilSides(t *testing.T) {
 		t.Errorf("nil-primary router should route local: %d", local.calls)
 	}
 }
+
 // TestRouterFastIntentWithHistory — regression for the live-found bug: a
 // short device command must route local even when the session carries
 // PRIOR conversation history (the sliding window grows with the chat, so

@@ -21,8 +21,8 @@ type MockRuntime struct {
 	mu      sync.Mutex
 	plugins map[string]*manifest.Manifest
 	calls   []MockCall
-	results map[string][]byte  // key: "plugin.function"
-	errors  map[string]error   // key: "plugin.function"
+	results map[string][]byte // key: "plugin.function"
+	errors  map[string]error  // key: "plugin.function"
 }
 
 // NewMockRuntime creates a MockRuntime with empty state.

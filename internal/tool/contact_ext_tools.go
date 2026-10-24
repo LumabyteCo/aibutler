@@ -13,8 +13,8 @@ import (
 type contactUpdateTool struct{ db *sql.DB }
 
 func (t *contactUpdateTool) Name() string        { return "contact.update" }
-func (t *contactUpdateTool) Description() string  { return "Update a contact's information by ID" }
-func (t *contactUpdateTool) Capability() string   { return "data.contacts.write" }
+func (t *contactUpdateTool) Description() string { return "Update a contact's information by ID" }
+func (t *contactUpdateTool) Capability() string  { return "data.contacts.write" }
 func (t *contactUpdateTool) Schema() string {
 	return `{"type":"object","properties":{"id":{"type":"integer"},"name":{"type":"string"},"email":{"type":"string"},"phone":{"type":"string"},"relationship":{"type":"string"},"birthday":{"type":"string","description":"YYYY-MM-DD"},"notes":{"type":"string"},"preferred_channel":{"type":"string"}},"required":["id"]}`
 }
@@ -94,9 +94,11 @@ func (t *contactUpdateTool) Execute(ctx context.Context, input string) (string, 
 
 type contactBirthdaysTool struct{ db *sql.DB }
 
-func (t *contactBirthdaysTool) Name() string        { return "contact.birthdays" }
-func (t *contactBirthdaysTool) Description() string  { return "List upcoming birthdays within the next N days" }
-func (t *contactBirthdaysTool) Capability() string   { return "data.contacts.read" }
+func (t *contactBirthdaysTool) Name() string { return "contact.birthdays" }
+func (t *contactBirthdaysTool) Description() string {
+	return "List upcoming birthdays within the next N days"
+}
+func (t *contactBirthdaysTool) Capability() string { return "data.contacts.read" }
 func (t *contactBirthdaysTool) Schema() string {
 	return `{"type":"object","properties":{"days":{"type":"integer","description":"Look ahead window in days (default 30)"}}}`
 }

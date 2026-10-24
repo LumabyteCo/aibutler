@@ -186,7 +186,7 @@ func TestSanitizeToolName(t *testing.T) {
 		{"cost.status", "cost__status"},
 		{"simple", "simple"},                    // no dots → unchanged
 		{"a.b.c", "a__b__c"},                    // multiple dots
-		{"my_tool", "my_tool"},                   // underscores preserved
+		{"my_tool", "my_tool"},                  // underscores preserved
 		{"my_tool.sub_cmd", "my_tool__sub_cmd"}, // mixed
 	}
 	for _, tc := range tests {
@@ -205,7 +205,7 @@ func TestUnsanitizeToolName(t *testing.T) {
 		{"expense__log", "expense.log"},
 		{"simple", "simple"},
 		{"a__b__c", "a.b.c"},
-		{"my_tool", "my_tool"},                   // single underscores preserved
+		{"my_tool", "my_tool"}, // single underscores preserved
 		{"my_tool__sub_cmd", "my_tool.sub_cmd"},
 	}
 	for _, tc := range tests {

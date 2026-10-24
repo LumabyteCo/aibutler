@@ -5,7 +5,7 @@
 //
 //   - macOS:    pbcopy (write) / pbpaste (read)
 //   - Linux:    wl-copy / wl-paste under Wayland (auto-detected via
-//                WAYLAND_DISPLAY env var); falls back to xclip on X11
+//     WAYLAND_DISPLAY env var); falls back to xclip on X11
 //   - Windows:  clip.exe (write) and PowerShell Get-Clipboard (read)
 //
 // Security:

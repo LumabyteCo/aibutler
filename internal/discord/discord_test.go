@@ -67,10 +67,10 @@ func (m *mockAPI) GetGatewayURL(_ context.Context) (string, error) {
 
 // gatewayEvent mirrors the wire format.
 type gatewayEvent struct {
-	Op int              `json:"op"`
-	D  json.RawMessage  `json:"d,omitempty"`
-	S  *int64           `json:"s,omitempty"`
-	T  string           `json:"t,omitempty"`
+	Op int             `json:"op"`
+	D  json.RawMessage `json:"d,omitempty"`
+	S  *int64          `json:"s,omitempty"`
+	T  string          `json:"t,omitempty"`
 }
 
 // testGateway is a fake Discord Gateway WebSocket server.

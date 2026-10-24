@@ -39,7 +39,9 @@ func testCard() a2a.AgentCard {
 	}
 }
 
-func testHandler(db interface{ ExecContext(context.Context, string, ...interface{}) (interface{ LastInsertId() (int64, error) }, error) }) *a2a.Handler {
+func testHandler(db interface {
+	ExecContext(context.Context, string, ...interface{}) (interface{ LastInsertId() (int64, error) }, error)
+}) *a2a.Handler {
 	return nil // placeholder, we need the real DB
 }
 

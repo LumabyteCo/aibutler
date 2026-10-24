@@ -24,7 +24,7 @@ const (
 
 // Credential represents a stored credential.
 type Credential struct {
-	Key          string            // Service key: "openai", "telegram", "gmail.access"
+	Key          string // Service key: "openai", "telegram", "gmail.access"
 	Type         CredentialType
 	Value        []byte            // The secret material
 	ExpiresAt    *time.Time        // nil = never expires

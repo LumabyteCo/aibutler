@@ -10,7 +10,6 @@ import (
 	"github.com/LumabyteCo/aibutler/internal/tool"
 )
 
-
 // RegisterEverydayServices registers weather, news, and maps tools.
 // If client is nil, a default client with 15s timeout is used.
 func RegisterEverydayServices(registry *tool.Registry, weatherKey, newsKey, sportsKey, transitKey, flightKey, trackingKey, recipeKey string, client *http.Client) {

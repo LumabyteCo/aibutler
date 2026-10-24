@@ -21,9 +21,11 @@ func RegisterInstructionTools(registry *tool.Registry, store *Store) {
 
 type saveTool struct{ store *Store }
 
-func (t *saveTool) Name() string        { return "instruction.save" }
-func (t *saveTool) Description() string { return "Save a learned instruction or rule that persists across sessions" }
-func (t *saveTool) Capability() string  { return "instruction.write" }
+func (t *saveTool) Name() string { return "instruction.save" }
+func (t *saveTool) Description() string {
+	return "Save a learned instruction or rule that persists across sessions"
+}
+func (t *saveTool) Capability() string { return "instruction.write" }
 func (t *saveTool) Schema() string {
 	return `{"type":"object","properties":{"content":{"type":"string","description":"The instruction or rule to save"},"category":{"type":"string","enum":["style","behavior","rule","knowledge","preference"],"description":"Category of instruction"},"priority":{"type":"integer","minimum":0,"maximum":100,"description":"Priority (0-100, higher = more important, default 50)"},"scope":{"type":"string","enum":["global","channel","session"],"description":"Scope (default: global)"},"scope_value":{"type":"string","description":"Channel name or session ID (required for channel/session scope)"}},"required":["content"]}`
 }
@@ -122,9 +124,11 @@ func (t *listTool) Execute(ctx context.Context, input string) (string, error) {
 
 type updateTool struct{ store *Store }
 
-func (t *updateTool) Name() string        { return "instruction.update" }
-func (t *updateTool) Description() string { return "Update a learned instruction's content, priority, or status" }
-func (t *updateTool) Capability() string  { return "instruction.write" }
+func (t *updateTool) Name() string { return "instruction.update" }
+func (t *updateTool) Description() string {
+	return "Update a learned instruction's content, priority, or status"
+}
+func (t *updateTool) Capability() string { return "instruction.write" }
 func (t *updateTool) Schema() string {
 	return `{"type":"object","properties":{"id":{"type":"integer","description":"Instruction ID to update"},"content":{"type":"string","description":"New instruction text"},"priority":{"type":"integer","minimum":0,"maximum":100},"category":{"type":"string","enum":["style","behavior","rule","knowledge","preference"]},"active":{"type":"boolean","description":"Enable or disable the instruction"}},"required":["id"]}`
 }

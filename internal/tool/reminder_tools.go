@@ -13,8 +13,8 @@ import (
 type reminderSetTool struct{ db *sql.DB }
 
 func (t *reminderSetTool) Name() string        { return "reminder.set" }
-func (t *reminderSetTool) Description() string  { return "Set a reminder with a message and time" }
-func (t *reminderSetTool) Capability() string   { return "data.reminders.write" }
+func (t *reminderSetTool) Description() string { return "Set a reminder with a message and time" }
+func (t *reminderSetTool) Capability() string  { return "data.reminders.write" }
 func (t *reminderSetTool) Schema() string {
 	return `{"type":"object","properties":{"message":{"type":"string"},"remind_at":{"type":"string","description":"ISO 8601 datetime"},"recurrence":{"type":"string","description":"cron expression for recurring reminders"},"channel":{"type":"string"}},"required":["message","remind_at"]}`
 }
@@ -61,8 +61,8 @@ func (t *reminderSetTool) Execute(ctx context.Context, input string) (string, er
 type reminderListTool struct{ db *sql.DB }
 
 func (t *reminderListTool) Name() string        { return "reminder.list" }
-func (t *reminderListTool) Description() string  { return "List active reminders" }
-func (t *reminderListTool) Capability() string   { return "data.reminders.read" }
+func (t *reminderListTool) Description() string { return "List active reminders" }
+func (t *reminderListTool) Capability() string  { return "data.reminders.read" }
 func (t *reminderListTool) Schema() string {
 	return `{"type":"object","properties":{"status":{"type":"string","description":"Filter by status: active, fired, cancelled"}}}`
 }
@@ -113,8 +113,8 @@ func (t *reminderListTool) Execute(ctx context.Context, input string) (string, e
 type reminderCancelTool struct{ db *sql.DB }
 
 func (t *reminderCancelTool) Name() string        { return "reminder.cancel" }
-func (t *reminderCancelTool) Description() string  { return "Cancel a reminder by ID" }
-func (t *reminderCancelTool) Capability() string   { return "data.reminders.write" }
+func (t *reminderCancelTool) Description() string { return "Cancel a reminder by ID" }
+func (t *reminderCancelTool) Capability() string  { return "data.reminders.write" }
 func (t *reminderCancelTool) Schema() string {
 	return `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`
 }

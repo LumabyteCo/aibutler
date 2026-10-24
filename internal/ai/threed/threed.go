@@ -36,9 +36,9 @@ func (p *MeshyProvider) Generate(ctx context.Context, prompt string) (string, er
 	}
 
 	reqBody := map[string]interface{}{
-		"mode":        "preview",
-		"prompt":      prompt,
-		"art_style":   "realistic",
+		"mode":            "preview",
+		"prompt":          prompt,
+		"art_style":       "realistic",
 		"negative_prompt": "",
 	}
 

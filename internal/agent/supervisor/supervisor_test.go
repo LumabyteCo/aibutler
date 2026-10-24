@@ -180,11 +180,11 @@ func TestRun_HappyPath_TwoSteps(t *testing.T) {
 	// Event log should contain mission-level events.
 	events, _ := store.GetEvents(ctx, m.ID, 100)
 	wantTypes := map[string]bool{
-		"mission.created":       false,
-		"mission.planned":       false,
-		"mission.started":       false,
-		"supervisor.step_done":  false,
-		"mission.completed":     false,
+		"mission.created":      false,
+		"mission.planned":      false,
+		"mission.started":      false,
+		"supervisor.step_done": false,
+		"mission.completed":    false,
 	}
 	for _, e := range events {
 		if _, ok := wantTypes[e.Type]; ok {
@@ -755,9 +755,9 @@ func TestRun_ResumeAfterPause_PicksUpRemainingSteps(t *testing.T) {
 // the args.
 
 type stubReplanner struct {
-	mu       sync.Mutex
-	calls    []supervisor.ReplanRequest
-	respond  func(req supervisor.ReplanRequest) ([]mission.Step, error)
+	mu      sync.Mutex
+	calls   []supervisor.ReplanRequest
+	respond func(req supervisor.ReplanRequest) ([]mission.Step, error)
 }
 
 func (r *stubReplanner) Replan(_ context.Context, req supervisor.ReplanRequest) ([]mission.Step, error) {

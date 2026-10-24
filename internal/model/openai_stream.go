@@ -231,8 +231,8 @@ type openaiStreamChoice struct {
 }
 
 type openaiStreamDelta struct {
-	Content   string                   `json:"content"`
-	ToolCalls []openaiStreamToolCall   `json:"tool_calls"`
+	Content   string                 `json:"content"`
+	ToolCalls []openaiStreamToolCall `json:"tool_calls"`
 }
 
 type openaiStreamToolCall struct {

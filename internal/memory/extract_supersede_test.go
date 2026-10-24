@@ -15,10 +15,10 @@ import (
 // instead of accumulating both cities.
 func TestExtractMovedToLocation(t *testing.T) {
 	tests := []struct {
-		name     string
-		in       string
-		wantHas  string
-		wantKey  string
+		name    string
+		in      string
+		wantHas string
+		wantKey string
 	}{
 		{"moved to", "I moved to Tokyo, Japan", "Tokyo", "user.location"},
 		{"moved with period-only", "I moved to Tokyo.", "Tokyo", "user.location"},
@@ -59,9 +59,9 @@ func TestSaveFactSupersedesOnLocationChange(t *testing.T) {
 
 	// 1. User states Berlin (the pattern the old extractor caught).
 	if _, err := store.SaveFact(ctx, memory.FactInput{
-		Fact:    "User lives in Berlin",
-		Category: memory.CategoryIdentity,
-		FactKey: "user.location",
+		Fact:       "User lives in Berlin",
+		Category:   memory.CategoryIdentity,
+		FactKey:    "user.location",
 		SourceType: "thought",
 	}); err != nil {
 		t.Fatalf("save Berlin: %v", err)
@@ -95,9 +95,9 @@ func TestSaveFactSupersedesOnLocationChange(t *testing.T) {
 	}
 
 	if _, err := store.SaveFact(ctx, memory.FactInput{
-		Fact:    tokyoFact.Fact,
-		Category: memory.CategoryIdentity,
-		FactKey: tokyoFact.Key,
+		Fact:       tokyoFact.Fact,
+		Category:   memory.CategoryIdentity,
+		FactKey:    tokyoFact.Key,
 		SourceType: "thought",
 		Confidence: memory.ConfidenceUserStated,
 	}); err != nil {

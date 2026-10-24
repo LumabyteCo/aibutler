@@ -75,7 +75,7 @@ func (d *Dashboard) RegisterMissionRoutes(mux *http.ServeMux) {
 
 // handleMissions — list missions with filters.
 //
-//   GET /api/dashboard/missions?state=running&limit=20&include_done=true
+//	GET /api/dashboard/missions?state=running&limit=20&include_done=true
 func (d *Dashboard) handleMissions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -136,7 +136,7 @@ func (d *Dashboard) handleMissions(w http.ResponseWriter, r *http.Request) {
 
 // handleMissionStats — quick numbers for the panel header.
 //
-//   GET /api/dashboard/missions/stats
+//	GET /api/dashboard/missions/stats
 func (d *Dashboard) handleMissionStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

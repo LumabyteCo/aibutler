@@ -56,9 +56,9 @@ func TestRegisteredTool_ReturnsValidJSON(t *testing.T) {
 
 func TestSummarize(t *testing.T) {
 	cases := []struct {
-		name   string
-		perms  []Permission
-		want   string // substring that must appear in summary
+		name  string
+		perms []Permission
+		want  string // substring that must appear in summary
 	}{
 		{
 			name:  "empty",

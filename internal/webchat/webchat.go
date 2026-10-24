@@ -55,7 +55,7 @@ type Adapter struct {
 	mu            sync.RWMutex
 	conns         map[string]*wsConn // accountID -> conn
 	extraHandlers map[string]http.Handler
-	history       HistoryStore       // optional; enables /api/history
+	history       HistoryStore // optional; enables /api/history
 }
 
 // New creates a WebChat adapter.

@@ -123,8 +123,8 @@ func (s *Server) handleRequest(ctx context.Context, req mcp.JSONRPCRequest) *mcp
 }
 
 type initializeResultWithCaps struct {
-	ProtocolVersion string            `json:"protocolVersion"`
-	ServerInfo      mcp.ServerInfo    `json:"serverInfo"`
+	ProtocolVersion string             `json:"protocolVersion"`
+	ServerInfo      mcp.ServerInfo     `json:"serverInfo"`
 	Capabilities    serverCapabilities `json:"capabilities"`
 }
 

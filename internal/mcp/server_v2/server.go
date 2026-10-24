@@ -20,7 +20,7 @@ type MemorySearcher interface {
 
 // SearchResult is a single memory search result.
 type SearchResult struct {
-	Content string `json:"content"`
+	Content string  `json:"content"`
 	Score   float64 `json:"score,omitempty"`
 }
 
@@ -263,9 +263,9 @@ func (s *Server) handleInitialize(req mcp.JSONRPCRequest) *mcp.JSONRPCResponse {
 		Resources *struct{} `json:"resources"`
 	}
 	type initResult struct {
-		ProtocolVersion string       `json:"protocolVersion"`
+		ProtocolVersion string         `json:"protocolVersion"`
 		ServerInfo      mcp.ServerInfo `json:"serverInfo"`
-		Capabilities    caps         `json:"capabilities"`
+		Capabilities    caps           `json:"capabilities"`
 	}
 	result := initResult{
 		ProtocolVersion: "2024-11-05",

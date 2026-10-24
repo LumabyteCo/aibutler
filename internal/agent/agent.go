@@ -14,7 +14,7 @@ import (
 
 // Message is a single conversation turn.
 type Message struct {
-	Role      string     // "system", "user", "assistant", "tool"
+	Role      string // "system", "user", "assistant", "tool"
 	Content   string
 	Images    []Image    // Optional multimodal images attached to a user message
 	ToolID    string     // For tool results
@@ -63,9 +63,9 @@ type Response struct {
 
 // ToolCall is a model request to invoke a tool.
 type ToolCall struct {
-	ID     string
-	Name   string
-	Input  string // JSON
+	ID    string
+	Name  string
+	Input string // JSON
 }
 
 // ToolDef describes an available tool.
@@ -95,14 +95,14 @@ type BudgetChecker interface {
 
 // Config holds everything needed to create an agent.
 type Config struct {
-	ID        string
-	SessionID string
-	ParentID  string
-	Task      string
-	Type      AgentType
-	Model     ModelAdapter
-	Tools     ToolExecutor
-	Caps      *capability.CapabilitySet
+	ID           string
+	SessionID    string
+	ParentID     string
+	Task         string
+	Type         AgentType
+	Model        ModelAdapter
+	Tools        ToolExecutor
+	Caps         *capability.CapabilitySet
 	Mode         Mode
 	DB           *sql.DB   // For state persistence
 	InitMessages []Message // Pre-composed messages (system + history + user); if nil, uses Task

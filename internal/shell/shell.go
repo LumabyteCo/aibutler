@@ -32,7 +32,7 @@ func NewExecutor(cfg config.ShellConfig, auditor capability.Auditor) *Executor {
 	return &Executor{
 		cfg:            cfg,
 		auditor:        auditor,
-		maxOutputBytes: 512 * 1024,   // 512 KB
+		maxOutputBytes: 512 * 1024, // 512 KB
 		defaultTimeout: 30 * time.Second,
 	}
 }

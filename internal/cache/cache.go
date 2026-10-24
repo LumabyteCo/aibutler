@@ -14,8 +14,8 @@ import (
 // Config holds response cache settings.
 type Config struct {
 	Enabled    bool
-	DefaultTTL time.Duration          // default 5min
-	MaxEntries int                    // default 1000
+	DefaultTTL time.Duration            // default 5min
+	MaxEntries int                      // default 1000
 	ToolTTLs   map[string]time.Duration // per-tool overrides (e.g., "web.fetch": 5min, "shell.exec": 0)
 }
 
@@ -39,9 +39,9 @@ type CacheStats struct {
 
 // Cache provides a SQLite-backed response cache with TTL support.
 type Cache struct {
-	db       *sql.DB
-	cfg      Config
-	hitCount int64
+	db        *sql.DB
+	cfg       Config
+	hitCount  int64
 	missCount int64
 }
 

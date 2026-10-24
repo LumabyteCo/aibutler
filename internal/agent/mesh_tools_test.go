@@ -31,16 +31,16 @@ func (m *mockTaskRunner) RunTask(_ context.Context, _ string) (string, error) {
 
 // mockA2AResult implements agent.A2ATaskResult.
 type mockA2AResult struct {
-	status  string
-	output  string
-	errMsg  string
-	taskID  string
+	status string
+	output string
+	errMsg string
+	taskID string
 }
 
-func (r *mockA2AResult) GetStatus() string  { return r.status }
-func (r *mockA2AResult) GetOutput() string  { return r.output }
-func (r *mockA2AResult) GetError() string   { return r.errMsg }
-func (r *mockA2AResult) GetTaskID() string  { return r.taskID }
+func (r *mockA2AResult) GetStatus() string { return r.status }
+func (r *mockA2AResult) GetOutput() string { return r.output }
+func (r *mockA2AResult) GetError() string  { return r.errMsg }
+func (r *mockA2AResult) GetTaskID() string { return r.taskID }
 
 // mockA2AClient implements agent.A2AClient.
 type mockA2AClient struct {

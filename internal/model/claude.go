@@ -300,11 +300,11 @@ func claudeImageBlock(img agent.Image) (claudeContentBlock, bool) {
 }
 
 type claudeRequest struct {
-	Model     string           `json:"model"`
-	MaxTokens int              `json:"max_tokens"`
-	System    string           `json:"system,omitempty"`
-	Messages  []claudeMessage  `json:"messages"`
-	Tools     []claudeTool     `json:"tools,omitempty"`
+	Model     string          `json:"model"`
+	MaxTokens int             `json:"max_tokens"`
+	System    string          `json:"system,omitempty"`
+	Messages  []claudeMessage `json:"messages"`
+	Tools     []claudeTool    `json:"tools,omitempty"`
 }
 
 type claudeMessage struct {
@@ -313,14 +313,14 @@ type claudeMessage struct {
 }
 
 type claudeContentBlock struct {
-	Type      string              `json:"type"`
-	Text      string              `json:"text,omitempty"`
-	ID        string              `json:"id,omitempty"`
-	Name      string              `json:"name,omitempty"`
-	Input     json.RawMessage     `json:"input,omitempty"`
-	ToolUseID string              `json:"tool_use_id,omitempty"`
-	Content   string              `json:"content,omitempty"`
-	Source    *claudeImageSource  `json:"source,omitempty"`
+	Type      string             `json:"type"`
+	Text      string             `json:"text,omitempty"`
+	ID        string             `json:"id,omitempty"`
+	Name      string             `json:"name,omitempty"`
+	Input     json.RawMessage    `json:"input,omitempty"`
+	ToolUseID string             `json:"tool_use_id,omitempty"`
+	Content   string             `json:"content,omitempty"`
+	Source    *claudeImageSource `json:"source,omitempty"`
 }
 
 // claudeImageSource is the Anthropic image-source shape. For base64

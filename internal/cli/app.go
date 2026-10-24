@@ -241,13 +241,13 @@ type App struct {
 	MCPServerV2      *mcpserverv2.Server
 	// MCPAgentAdapter is exported so cmd_run can inject the agent factory
 	// after it's constructed (the factory doesn't exist at app.New time).
-	MCPAgentAdapter   *mcpV2AgentAdapter
+	MCPAgentAdapter *mcpV2AgentAdapter
 	// VSCodeRunnerSetter is set by Bootstrap so cmd_run can inject the
 	// agent factory into the /api/vscode/ handler once the model resolves.
 	VSCodeRunnerSetter interface{ SetRunner(webchat.AgentRunner) }
-	SubprocessBridges map[string]*subprocpkg.Adapter
-	Marketplace       *marketplacepkg.Registry
-	BatchExecutor     *model.BatchExecutor
+	SubprocessBridges  map[string]*subprocpkg.Adapter
+	Marketplace        *marketplacepkg.Registry
+	BatchExecutor      *model.BatchExecutor
 
 	configPath     string
 	dataDir        string
