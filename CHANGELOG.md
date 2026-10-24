@@ -371,7 +371,7 @@ Changes in `main` that haven't been released yet will be tracked here.
 
 ### Fixed
 
-- **`aibutler mode` now actually persists the switch.** It previously printed "Agent mode switched to: …" and changed only the in-memory config; the next command read the old value. Every accepted mode now writes `config.yaml` before reporting success.
+- **`aibutler mode` now actually persists the switch.** It previously printed "Agent mode switched to: …" and changed only the in-memory config; the next command read the old value. Every accepted mode now writes `config.yaml` before reporting success — and the edit is surgical: comments, ordering, and unknown keys in the file are preserved (a whole-file rewrite would silently drop them).
 - **`aibutler mode multi` is available.** `auto` has resolved to multi (parallel tool execution) at runtime for several releases, but the CLI still claimed multi was unavailable and downgraded it to single. Multi is now accepted explicitly; `swarm` and `custom` still downgrade (runtime wiring unfinished) with an honest "not available yet" message instead of "not available in v0.1".
 - **Docs truth pass:** `docs/agents/AGENT-MODES.md`, `docs/cli/CLI-REFERENCE.md`, and `docs/ROADMAP.md` now match shipped behavior — auto→multi, multi available, current v0.7.0 status, and shipped/outstanding gaps corrected (browser automation, Tier 3, and Tier 4 are done).
 

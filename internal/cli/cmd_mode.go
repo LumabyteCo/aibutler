@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/LumabyteCo/aibutler/internal/config"
 )
 
 // CmdMode handles the "mode" command for switching agent modes.
@@ -30,7 +32,7 @@ func CmdMode(app *App, args []string, w io.Writer) error {
 	switch newMode {
 	case "auto", "single", "multi", "mission":
 		app.Config.Settings.AgentMode = newMode
-		if err := app.SaveConfig(); err != nil {
+		if err := config.UpdateAgentMode(app.configPath, newMode); err != nil {
 			return fmt.Errorf("mode: save config: %w", err)
 		}
 		fmt.Fprintf(w, "Agent mode switched to: %s\n", newMode)
@@ -49,7 +51,7 @@ func CmdMode(app *App, args []string, w io.Writer) error {
 		// wiring isn't finished. Keep the downgrade, but say so honestly.
 		fmt.Fprintf(w, "Mode %q is not available yet, using single mode.\n", newMode)
 		app.Config.Settings.AgentMode = "single"
-		if err := app.SaveConfig(); err != nil {
+		if err := config.UpdateAgentMode(app.configPath, "single"); err != nil {
 			return fmt.Errorf("mode: save config: %w", err)
 		}
 		return nil
