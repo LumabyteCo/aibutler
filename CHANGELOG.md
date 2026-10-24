@@ -359,6 +359,8 @@ Changes in `main` that haven't been released yet will be tracked here.
 
 ### Added
 
+- **Scheduled runs deliver their outcome.** Briefings and routines used to execute and record history but never send the result anywhere. A scheduler notifier now delivers the run's output (or failure) to the schedule's channel; webchat broadcasts to open tabs because its account IDs are connection-scoped.
+- **Scheduled safety policy: notify-with-skip.** Unattended routines never store or replay a PIN. Comfort steps complete, safety steps are skipped, and the delivered summary names the steps that need the user's PIN — instead of failing silently or persisting a credential that a database leak would turn into door access. Documented in `docs/smart-home/OVERVIEW.md`.
 - **Tag-driven release workflow.** Pushing a `v*` tag now runs goreleaser v2 with syft SBOM generation on GitHub Actions (`.github/workflows/release.yml`). Releases are created as drafts for review, matching the existing process; `workflow_dispatch` can re-run an existing tag.
 
 ### Changed
@@ -368,6 +370,7 @@ Changes in `main` that haven't been released yet will be tracked here.
 ### Fixed
 
 - **Scheduled runs persist agent state.** The scheduler passed the schedule ID as the session ID without creating the `sessions` row, so every state checkpoint failed with `FOREIGN KEY constraint failed` and runs were missing from history. The row is now created (scope `schedule`) before dispatch.
+- **A run is never stuck in "running".** If the agent row is missing, `schedule_runs.agent_id`'s foreign key rejected the completion update and the run stayed `running` forever. Recording now drops the agent link (with a log line) and keeps the real outcome.
 - **A single NULL `skills` row no longer stops the scheduler.** The scan converted NULL to string, which failed the whole tick — one migrated/edited row blocked every schedule. Both scan paths now tolerate NULL (live-verified: the recovered tick ran the affected job and persisted its agent state).
 
 ---

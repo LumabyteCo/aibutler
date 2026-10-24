@@ -186,6 +186,18 @@ func (s *Store) RecordRun(ctx context.Context, run *Run) error {
 		s := run.CompletedAt.Format(time.RFC3339)
 		completedStr = &s
 	}
+	// schedule_runs.agent_id is a foreign key. The agent row is normally
+	// persisted by the runner, but if that write failed the run would be
+	// stuck in "running" forever because the FK rejects the completion.
+	// The outcome matters more than the link: drop the link, keep the run.
+	if run.AgentID != "" {
+		var ok int
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT 1 FROM agents WHERE id = ?`, run.AgentID).Scan(&ok); err != nil {
+			log.Printf("schedule.recordRun: agent %q not persisted; recording run without agent link", run.AgentID)
+			run.AgentID = ""
+		}
+	}
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE schedule_runs SET status = ?, completed_at = ?, agent_id = ?, error = ? WHERE id = ?`,
 		run.Status, completedStr, nullString(run.AgentID), nullString(run.Error), run.ID)

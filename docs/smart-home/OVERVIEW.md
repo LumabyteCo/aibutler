@@ -175,6 +175,27 @@ Details:
   cycle can later offer to automate them ("you usually run goodnight at
   23:10 — schedule it?").
 
+### Scheduled routines — notify-with-skip
+
+Schedules can run routines unattended (for example, *"every night at 11pm
+run the goodnight routine"*). The policy is deliberate:
+
+- **Safety steps are never authorized from storage.** No PIN — and no
+  derived unlock token — is stored on a schedule. An unattended routine
+  completes its comfort steps and **skips every PIN-gated step**.
+- **The outcome is delivered.** When the run finishes, Butler sends the
+  summary to the schedule's channel (an open webchat tab, Telegram, etc.),
+  naming exactly which steps need your PIN. Failed runs are delivered too,
+  so a broken briefing is never silent.
+- **You finish the job manually.** Reply with the PIN when you see the
+  notification; the scheduled run itself never holds a credential.
+
+This is safer than storing a PIN for later use: a database or config leak
+would otherwise become door access. The trade-off is that an unattended
+routine cannot lock a door without you — it tells you instead of skipping
+silently. Webchat delivery requires an open chat tab; messaging channels
+deliver even when the chat UI is closed.
+
 ## Source Files
 
 - `internal/iot/iot.go` -- Controller, ReadSensor, ExecuteCommand, Sync, checkSafetyBounds

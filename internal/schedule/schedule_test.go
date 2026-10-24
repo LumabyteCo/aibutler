@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -404,6 +405,7 @@ type fakeRunner struct {
 	mu      sync.Mutex
 	called  bool
 	result  *agent.Result
+	err     error
 	taskGot string
 }
 
@@ -412,7 +414,7 @@ func (f *fakeRunner) Run(_ context.Context, sessionID, task, channel string) (*a
 	defer f.mu.Unlock()
 	f.called = true
 	f.taskGot = task
-	return f.result, nil
+	return f.result, f.err
 }
 
 func (f *fakeRunner) wasCalled() (bool, string) {
@@ -548,6 +550,127 @@ func TestSchedulerToleratesNullSkills(t *testing.T) {
 
 	if called, _ := runner.wasCalled(); !called {
 		t.Error("schedule with NULL skills did not run")
+	}
+}
+
+// TestSchedulerNotifiesRunOutput guards the notify-with-skip policy's
+// delivery half: a scheduled briefing/routine result must reach the
+// schedule's channel, not just the run history table.
+func TestSchedulerNotifiesRunOutput(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	sched := &schedule.Schedule{
+		ID: "s-notify", Name: "NotifyTest", CronExpr: "*/5 * * * *",
+		Task: "send briefing", Channel: "telegram", AccountID: "u1", Enabled: true,
+	}
+	if err := env.store.Create(ctx, sched); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, _ = env.conn.ExecContext(ctx,
+		`UPDATE schedules SET created_at = datetime('now', '-10 minutes') WHERE id = ?`, sched.ID)
+
+	runner := &fakeRunner{result: &agent.Result{
+		ID: "agent-notify", Status: agent.StateCompleted, Output: "Briefing: all clear.",
+	}}
+	scheduler := schedule.NewScheduler(env.store, runner, time.Second)
+
+	type delivery struct{ channel, account, text string }
+	delivered := make(chan delivery, 1)
+	scheduler.SetNotifier(func(_ context.Context, ch, account, text string) error {
+		delivered <- delivery{channel: ch, account: account, text: text}
+		return nil
+	})
+
+	if err := scheduler.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	select {
+	case got := <-delivered:
+		if got.text != "Briefing: all clear." {
+			t.Errorf("delivered text = %q, want the run output", got.text)
+		}
+		if got.channel != "telegram" || got.account != "u1" {
+			t.Errorf("delivered to %s/%s, want telegram/u1", got.channel, got.account)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no notification delivered")
+	}
+}
+
+// TestSchedulerNotifiesFailure: a failed scheduled run must not be silent.
+func TestSchedulerNotifiesFailure(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	sched := &schedule.Schedule{
+		ID: "s-notify-fail", Name: "FailingJob", CronExpr: "*/5 * * * *",
+		Task: "do work", Channel: "webchat", AccountID: "u1", Enabled: true,
+	}
+	if err := env.store.Create(ctx, sched); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, _ = env.conn.ExecContext(ctx,
+		`UPDATE schedules SET created_at = datetime('now', '-10 minutes') WHERE id = ?`, sched.ID)
+
+	runner := &fakeRunner{err: errors.New("model unavailable")}
+	scheduler := schedule.NewScheduler(env.store, runner, time.Second)
+	texts := make(chan string, 1)
+	scheduler.SetNotifier(func(_ context.Context, _, _, body string) error {
+		texts <- body
+		return nil
+	})
+
+	if err := scheduler.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	select {
+	case text := <-texts:
+		if !strings.Contains(text, "failed") || !strings.Contains(text, "model unavailable") {
+			t.Errorf("failure notification = %q, want the failure cause", text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no failure notification delivered")
+	}
+}
+
+// TestSchedulerNotifierErrorKeepsRunCompleted: delivery is best-effort.
+// A dead channel must not rewrite a successful run as failed.
+func TestSchedulerNotifierErrorKeepsRunCompleted(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	sched := &schedule.Schedule{
+		ID: "s-notify-err", Name: "DeliveryDown", CronExpr: "*/5 * * * *",
+		Task: "do work", Channel: "telegram", AccountID: "u1", Enabled: true,
+	}
+	if err := env.store.Create(ctx, sched); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, _ = env.conn.ExecContext(ctx,
+		`UPDATE schedules SET created_at = datetime('now', '-10 minutes') WHERE id = ?`, sched.ID)
+
+	runner := &fakeRunner{result: &agent.Result{
+		ID: "agent-err", Status: agent.StateCompleted, Output: "done",
+	}}
+	scheduler := schedule.NewScheduler(env.store, runner, time.Second)
+	scheduler.SetNotifier(func(context.Context, string, string, string) error {
+		return errors.New("channel offline")
+	})
+
+	if err := scheduler.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	run, err := env.store.LastRun(ctx, sched.ID)
+	if err != nil || run == nil {
+		t.Fatalf("LastRun: %v (run=%v)", err, run)
+	}
+	if run.Status != "completed" {
+		t.Errorf("run status = %q, want completed despite delivery failure", run.Status)
 	}
 }
 

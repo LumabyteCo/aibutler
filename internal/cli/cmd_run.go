@@ -445,6 +445,25 @@ func resolveHandler(app *App, w io.Writer) channel.MessageHandler {
 	if app.Scheduler != nil {
 		app.Scheduler.SetRunner(factory)
 
+		// Deliver scheduled outcomes to the schedule's channel. Without
+		// this, briefings and partially completed routines ran silently.
+		// Webchat accounts are connection-scoped, so it broadcasts to the
+		// local tabs instead of targeting a stale remote-address key.
+		app.Scheduler.SetNotifier(func(ctx context.Context, chName, accountID, text string) error {
+			ch, ok := app.Channels.Get(chName)
+			if !ok {
+				return fmt.Errorf("channel %q is not registered", chName)
+			}
+			sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			if broadcaster, ok := ch.(interface {
+				Broadcast(context.Context, channel.OutgoingMessage) error
+			}); ok {
+				return broadcaster.Broadcast(sendCtx, channel.OutgoingMessage{Text: text})
+			}
+			return ch.Send(sendCtx, accountID, channel.OutgoingMessage{Text: text})
+		})
+
 		// Idle-time reflection (opt-in): a scheduled, deterministic
 		// maintenance pass — no model, no tools — that surfaces
 		// contradictions for review, flags stale high-importance facts,

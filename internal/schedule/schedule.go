@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,12 @@ type CapabilityRunner interface {
 	RunWithCapabilities(ctx context.Context, sessionID, task, channel string, capResources []string) (*agent.Result, error)
 }
 
+// Notifier delivers a scheduled run's outcome to its configured channel.
+// The scheduler never stores or supplies a safety PIN: routines that hit a
+// PIN-gated step skip it, and the delivered summary tells the user which
+// step needs their PIN. This is the "notify-with-skip" policy.
+type Notifier func(ctx context.Context, channel, accountID, text string) error
+
 // BuiltinTask is deterministic maintenance code dispatched by the scheduler
 // instead of the agent loop. Builtins get cron scheduling, persistence,
 // run history, and downtime recovery without involving a model.
@@ -43,6 +50,8 @@ type Scheduler struct {
 
 	builtinMu sync.RWMutex
 	builtins  map[string]BuiltinTask
+
+	notifier Notifier
 }
 
 // NewScheduler creates a new scheduler.
@@ -55,6 +64,14 @@ func NewScheduler(store *Store, runner AgentRunner, tickInterval time.Duration) 
 		runner:   runner,
 		interval: tickInterval,
 	}
+}
+
+// SetNotifier wires outcome delivery for scheduled runs. Without a
+// notifier, runs execute and record history but the user never sees the
+// result — scheduled briefings and partially completed routines would be
+// silent.
+func (s *Scheduler) SetNotifier(n Notifier) {
+	s.notifier = n
 }
 
 // SetRunner sets the agent runner for executing scheduled tasks.
@@ -230,6 +247,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 // identically, and the log states what actually happens on the chosen path.
 func (s *Scheduler) executeAndRecord(ctx context.Context, sched Schedule, run *Run) {
 	var agentID string
+	var output string
 	var runErr error
 
 	// The agent row has a foreign key to sessions. Chat channels create
@@ -260,6 +278,7 @@ func (s *Scheduler) executeAndRecord(ctx context.Context, sched Schedule, run *R
 			result, runErr = cr.RunWithCapabilities(ctx, sched.ID, sched.Task, sched.Channel, sched.Capabilities)
 			if result != nil {
 				agentID = result.ID
+				output = result.Output
 			}
 		} else {
 			runErr = fmt.Errorf("schedule declares capabilities but the runner cannot scope them — refusing to run with the full default set")
@@ -270,6 +289,7 @@ func (s *Scheduler) executeAndRecord(ctx context.Context, sched Schedule, run *R
 		result, runErr = s.runner.Run(ctx, sched.ID, sched.Task, sched.Channel)
 		if result != nil {
 			agentID = result.ID
+			output = result.Output
 		}
 	default:
 		runErr = fmt.Errorf("no runner configured")
@@ -284,5 +304,22 @@ func (s *Scheduler) executeAndRecord(ctx context.Context, sched Schedule, run *R
 		run.Status = "completed"
 		run.AgentID = agentID
 	}
-	s.store.RecordRun(ctx, run)
+	if err := s.store.RecordRun(ctx, run); err != nil {
+		log.Printf("scheduler: record run %q: %v", security.SanitizeLogValue(sched.Name), err)
+	}
+
+	// Deliver the outcome. Delivery failures are logged, never allowed to
+	// change the run's status — the work already happened.
+	if s.notifier == nil {
+		return
+	}
+	text := strings.TrimSpace(output)
+	if runErr != nil {
+		text = fmt.Sprintf("Scheduled task %q failed: %v", sched.Name, runErr)
+	} else if text == "" || hasBuiltinPrefix(sched.Task) {
+		return
+	}
+	if err := s.notifier(ctx, sched.Channel, sched.AccountID, text); err != nil {
+		log.Printf("scheduler: notify %q: %v", security.SanitizeLogValue(sched.Name), err)
+	}
 }

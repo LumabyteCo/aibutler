@@ -156,6 +156,32 @@ func (a *Adapter) Send(ctx context.Context, accountID string, msg channel.Outgoi
 }
 
 // SendTyping sends a typing indicator to the client.
+// Broadcast sends a message to every connected webchat client. Scheduled
+// runs use this because a webchat account ID is derived from the
+// connection's remote address and changes on every reconnect — targeting
+// one account would silently drop the notification.
+func (a *Adapter) Broadcast(ctx context.Context, msg channel.OutgoingMessage) error {
+	a.mu.RLock()
+	conns := make([]*wsConn, 0, len(a.conns))
+	for _, wc := range a.conns {
+		conns = append(conns, wc)
+	}
+	a.mu.RUnlock()
+	if len(conns) == 0 {
+		return fmt.Errorf("webchat: no connected clients")
+	}
+
+	frame := wsFrame{Type: "message", Text: msg.Text}
+	data, _ := json.Marshal(frame)
+	var firstErr error
+	for _, wc := range conns {
+		if err := wc.conn.Write(ctx, websocket.MessageText, data); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func (a *Adapter) SendTyping(ctx context.Context, accountID string) error {
 	a.mu.RLock()
 	wc, ok := a.conns[accountID]
