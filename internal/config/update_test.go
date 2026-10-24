@@ -97,6 +97,25 @@ func TestUpdateAgentModeAddsSettings(t *testing.T) {
 	}
 }
 
+// TestUpdateAgentModeNullSettings handles a bare "settings:" line, which
+// parses as a null scalar.
+func TestUpdateAgentModeNullSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("settings:\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.UpdateAgentMode(path, "multi"); err != nil {
+		t.Fatalf("UpdateAgentMode: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Settings.AgentMode != "multi" {
+		t.Errorf("mode = %q, want multi", cfg.Settings.AgentMode)
+	}
+}
+
 // TestUpdateAgentModeRejectsBrokenYAML refuses to clobber a file it can't
 // parse — silently replacing it would destroy the user's config.
 func TestUpdateAgentModeRejectsBrokenYAML(t *testing.T) {

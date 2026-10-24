@@ -51,6 +51,12 @@ func UpdateAgentMode(path, mode string) error {
 		doc.Content = append(doc.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "settings"},
 			settings)
+	} else if settings.Kind == yaml.ScalarNode && settings.Tag == "!!null" {
+		// A bare "settings:" line parses as a null scalar. Turn it into a
+		// mapping in place rather than refusing to save.
+		settings.Kind = yaml.MappingNode
+		settings.Tag = "!!map"
+		settings.Value = ""
 	}
 	if settings.Kind != yaml.MappingNode {
 		return fmt.Errorf("config: settings in %s is not a mapping", filepath.Base(path))

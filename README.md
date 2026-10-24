@@ -27,12 +27,12 @@
 
 ---
 
-> **🚀 v0.7.0 — Fast Intents & Routines.** AI Butler is an ambitious project — **147 packages, 2,219 passing tests, 59 internal security review passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready; several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release) · [Releases →](https://github.com/LumabyteCo/aibutler/releases)
+> **🚀 v0.7.1 — Fast Intents & Routines (security patch).** AI Butler is an ambitious project — **147 packages, 2,225 passing tests, 59 internal security review passes.** The core (memory, webchat, scheduler, agent loop, MCP integration) is production-ready; several advanced features are in beta and labeled clearly below. We built this in the open and we'd love your help finishing it. [See what's ready →](#whats-in-this-release) · [Releases →](https://github.com/LumabyteCo/aibutler/releases)
 
 > **✨ New in v0.6.0:**
 > **A real Home Assistant adapter** — natural-language device control with a three-tier safety model (*"unlock the front door" demands a confirmation + PIN, by default*). Plus **chat history that survives reloads**, honest cost tracking for Ollama Cloud, provider failures that explain themselves in chat, a security fix that keeps PINs out of model context, editor-extension API endpoints, and a truth pass over every number in this README. [Jump to smart home →](#connect-your-smart-home-optional--beta)
 
-> **✨ New in v0.7.0 (this release):** **routines + the hybrid local/cloud router** — say *"Goodnight"* and the house responds (lights → locks → thermostat, with PIN gates intact per step) — answered by a tiny local model in seconds *and it keeps working with the internet down*. One `configurations.models.local` setting. [How it works →](docs/smart-home/OVERVIEW.md)
+> **✨ New in v0.7.0 (last feature release):** **routines + the hybrid local/cloud router** — say *"Goodnight"* and the house responds (lights → locks → thermostat, with PIN gates intact per step) — answered by a tiny local model in seconds *and it keeps working with the internet down*. One `configurations.models.local` setting. [How it works →](docs/smart-home/OVERVIEW.md)
 
 ---
 
@@ -52,7 +52,7 @@ Your AI should work wherever you are — your phone, your terminal, your smart h
 | 🛡️ **Security-first** | Capability-gated tools with a full audit trail, RBAC, FIDO2/WebAuthn, OIDC SSO, WASM plugin sandbox, SSRF protection, shell allowlisting. Verified by repeated internal security review passes (an external audit is planned for v1.0). |
 | 🖥️ **Clean built-in web UI** | 7-panel sidebar dashboard — chat, home, memories browser, connected apps, missions, spending, settings. No framework, no build step, embedded in the binary. |
 | 💾 **Self-hosted & private** | Single Go binary. Your data stays on your machine. Runs from Raspberry Pi to cloud. Zero telemetry unless you explicitly opt in. |
-| 🌍 **Open source** | Apache 2.0 licensed (patent grant included). 2,219 tests. 147 packages. Zero CVEs (`govulncheck` verified). |
+| 🌍 **Open source** | Apache 2.0 licensed (patent grant included). 2,225 tests. 147 packages. Zero CVEs (`govulncheck` verified). |
 
 ---
 
@@ -285,7 +285,7 @@ aibutler vault set whatsapp_phone_number_id YOUR_PHONE_ID
 
 | Metric | Value |
 |--------|-------|
-| Tests (passing, race-free) | **2,219** |
+| Tests (passing, race-free) | **2,225** |
 | Go packages | **147** |
 | SQLite tables | **77** |
 | Database migrations | **22** |
