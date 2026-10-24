@@ -78,3 +78,20 @@ func (p *Pipeline) GenerateVoiceResponse(ctx context.Context, text, lang string)
 func (p *Pipeline) Mode() string {
 	return p.mode
 }
+
+// STT returns the configured transcriber (used by the wake-word loop and
+// CLI diagnostics).
+func (p *Pipeline) STT() STTProvider { return p.stt }
+
+// TTS returns the configured synthesizer.
+func (p *Pipeline) TTS() TTSProvider { return p.tts }
+
+// Synthesize renders speech unconditionally, ignoring the response mode.
+// The voice CLI and the voice channel need audio even when the chat
+// response mode is "text".
+func (p *Pipeline) Synthesize(ctx context.Context, text, lang string) (*SynthesizeResult, error) {
+	if p == nil || p.tts == nil {
+		return nil, fmt.Errorf("voice: no TTS provider configured")
+	}
+	return p.tts.Synthesize(ctx, text, lang)
+}

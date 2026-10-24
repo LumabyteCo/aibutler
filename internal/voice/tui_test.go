@@ -25,7 +25,7 @@ func TestTUIMode_Unavailable(t *testing.T) {
 	}
 }
 
-func TestWakeWordDetector_Stub(t *testing.T) {
+func TestWakeWordDetector_RequiresConfiguration(t *testing.T) {
 	detector := voice.NewWakeWordDetector("hey butler")
 
 	if detector.Keyword() != "hey butler" {
@@ -36,11 +36,11 @@ func TestWakeWordDetector_Stub(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from wake word Start, got nil")
 	}
-	if !strings.Contains(err.Error(), "not available") {
-		t.Errorf("expected not-available error, got: %v", err)
+	if !strings.Contains(err.Error(), "required") {
+		t.Errorf("expected a configuration error, got: %v", err)
 	}
 
-	// Detected channel should exist but never fire.
+	// The Detected channel exists for Start-based callers.
 	ch := detector.Detected()
 	if ch == nil {
 		t.Fatal("expected non-nil Detected channel")

@@ -213,8 +213,44 @@ type EmbeddingConfig struct {
 
 // VoiceConfig holds voice pipeline settings.
 type VoiceConfig struct {
+	// STTProvider selects speech-to-text: "whisper" (OpenAI cloud),
+	// "local" (OpenAI-compatible endpoint such as whisper.cpp server),
+	// "command" (a local binary, e.g. whisper.cpp or Python whisper),
+	// "deepgram", or "stub".
 	STTProvider string `yaml:"stt_provider"` // "whisper" (default)
+	// TTSProvider selects text-to-speech: "system" (macOS say, Linux
+	// espeak-ng, Windows SAPI — fully offline), "edge", "piper",
+	// "elevenlabs", or "stub".
 	TTSProvider string `yaml:"tts_provider"` // "stub" (default)
+
+	// STTBaseURL is the OpenAI-compatible transcription endpoint for
+	// stt_provider=local. A bare host is normalized to
+	// <host>/v1/audio/transcriptions.
+	STTBaseURL string `yaml:"stt_base_url"`
+	// STTModel is the model name sent to a local endpoint (default
+	// "whisper-1"; whisper.cpp server ignores it).
+	STTModel string `yaml:"stt_model"`
+	// STTCommand runs a local transcriber for stt_provider=command. The
+	// placeholders {audio} (input WAV) and {dir} (temp output directory)
+	// are substituted. The command must write exactly one .txt transcript
+	// into {dir}. Example:
+	//   ["whisper", "{audio}", "--model", "base", "--output_format", "txt",
+	//    "--output_dir", "{dir}", "--language", "en", "--fp16", "False"]
+	STTCommand []string `yaml:"stt_command"`
+	// STTEnv adds environment variables for stt_command (for example
+	// PYTHONPATH for a Python whisper install, or a model cache path).
+	STTEnv map[string]string `yaml:"stt_env"`
+
+	// TTSVoice is the system voice name (macOS: "Samantha"; Linux:
+	// espeak voice/language such as "en"). Empty uses the OS default.
+	TTSVoice string `yaml:"tts_voice"`
+
+	// WakeEnabled starts continuous wake-word listening for the voice
+	// channel. Requires a local STT provider and a microphone recorder
+	// (sox or arecord).
+	WakeEnabled bool `yaml:"wake_enabled"`
+	// WakeWord is the spoken phrase that activates command capture.
+	WakeWord string `yaml:"wake_word"`
 }
 
 // TypingOptions holds typing indicator tuning.
@@ -586,6 +622,8 @@ func Default() *Config {
 			Voice: VoiceConfig{
 				STTProvider: "whisper",
 				TTSProvider: "stub",
+				STTModel:    "whisper-1",
+				WakeWord:    "hey butler",
 			},
 			Plugins: PluginConfig{
 				AutoEnable: false,

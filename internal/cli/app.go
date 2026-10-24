@@ -43,6 +43,7 @@ import (
 	linepkg "github.com/LumabyteCo/aibutler/internal/channel/line"
 	nostrpkg "github.com/LumabyteCo/aibutler/internal/channel/nostr"
 	teamspkg "github.com/LumabyteCo/aibutler/internal/channel/teams"
+	voicechannel "github.com/LumabyteCo/aibutler/internal/channel/voice"
 	webhookpkg "github.com/LumabyteCo/aibutler/internal/channel/webhook"
 	wapkg "github.com/LumabyteCo/aibutler/internal/channel/whatsapp"
 	checkpointpkg "github.com/LumabyteCo/aibutler/internal/checkpoint"
@@ -1231,15 +1232,48 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 	sttProvider = &voice.StubSTTProvider{}
 	ttsProvider = &voice.StubTTSProvider{}
 
-	if cfg.Configurations.Voice.STTProvider == "whisper" {
+	switch cfg.Configurations.Voice.STTProvider {
+	case "whisper":
 		if cred, err := v.Get(ctx, "openai_api_key"); err == nil && len(cred.Value) > 0 {
 			sttProvider = voice.NewWhisperProvider(string(cred.Value), guardedClient)
 			log.Println("voice: Whisper STT provider configured")
 		}
+	case "local", "openai_compat":
+		apiKey := ""
+		if cred, err := v.Get(ctx, "stt_api_key"); err == nil {
+			apiKey = string(cred.Value)
+		}
+		sttProvider = voice.NewLocalSTTProvider(
+			cfg.Configurations.Voice.STTBaseURL, apiKey,
+			cfg.Configurations.Voice.STTModel, guardedClient)
+		if cfg.Configurations.Voice.STTBaseURL == "" {
+			log.Println("voice: local STT selected but voice.stt_base_url is empty")
+		} else {
+			log.Printf("voice: local STT configured (%s)", cfg.Configurations.Voice.STTBaseURL)
+		}
+	case "command":
+		if len(cfg.Configurations.Voice.STTCommand) > 0 {
+			cmdSTT := voice.NewCommandSTTProvider(cfg.Configurations.Voice.STTCommand)
+			cmdSTT.SetEnv(cfg.Configurations.Voice.STTEnv)
+			sttProvider = cmdSTT
+			log.Printf("voice: local STT command configured (%s)", cfg.Configurations.Voice.STTCommand[0])
+		} else {
+			log.Println("voice: stt_provider=command but voice.stt_command is empty")
+		}
 	}
-	if cfg.Configurations.Voice.TTSProvider == "edge" {
+
+	switch cfg.Configurations.Voice.TTSProvider {
+	case "edge":
 		ttsProvider = voice.NewEdgeTTSProvider(guardedClient, "")
 		log.Println("voice: Edge TTS provider configured")
+	case "system":
+		sysTTS := voice.NewSystemTTSProvider(cfg.Configurations.Voice.TTSVoice)
+		ttsProvider = sysTTS
+		if sysTTS.Available() {
+			log.Println("voice: system TTS configured (offline)")
+		} else {
+			log.Println("voice: system TTS selected but no OS speech engine was found")
+		}
 	}
 
 	voiceMode := "text"
@@ -1250,6 +1284,37 @@ func Bootstrap(dataDir, dbPath string) (*App, error) {
 
 	// 13b. Register voice tools (voice.transcribe, voice.speak) — available to agents.
 	voice.RegisterVoiceTools(app.Tools, app.Voice)
+
+	// 13c. Offline voice channel: wake word + local STT + system TTS.
+	// Opt-in via active_channels: [voice] (or channels.voice.enabled) and
+	// voice.wake_enabled. Ambient audio is never sent to a cloud provider:
+	// the wake detector requires a local/command STT implementation.
+	if voiceChannelRequested(cfg) {
+		switch {
+		case !cfg.Configurations.Voice.WakeEnabled:
+			log.Println("voice: channel requested but voice.wake_enabled is false — not starting")
+		case !isLocalSTTProvider(sttProvider):
+			log.Println("voice: wake word requires stt_provider local or command — refusing to stream ambient audio to a cloud provider")
+		case isStubTTSProvider(ttsProvider):
+			log.Println("voice: channel requires a real TTS provider (set voice.tts_provider: system)")
+		default:
+			recorder := voice.NewSystemRecorder()
+			player := voice.NewSystemPlayer()
+			detector := voice.NewWakeWordDetector(cfg.Configurations.Voice.WakeWord)
+			detector.Configure(sttProvider, &voice.RecorderSource{Recorder: recorder, Segment: 2 * time.Second})
+			loop := &voice.Loop{
+				Wake:          detector,
+				Recorder:      recorder,
+				STT:           sttProvider,
+				TTS:           ttsProvider,
+				Player:        player,
+				CommandWindow: 8 * time.Second,
+				Ack:           true,
+			}
+			app.Channels.Register(voicechannel.New(loop, ttsProvider, player))
+			log.Printf("voice: offline voice channel registered (wake word %q)", detector.Keyword())
+		}
+	}
 
 	// 14. Platform, UX & Swarm Dashboard.
 
@@ -1942,4 +2007,33 @@ func (a *pluginRescanAdapter) ListManifests(ctx context.Context) ([]scanner.Mani
 		}
 	}
 	return manifests, nil
+}
+
+// voiceChannelRequested reports whether the operator asked for the voice
+// channel, either through active_channels or the per-channel config.
+func voiceChannelRequested(cfg *config.Config) bool {
+	if ch, ok := cfg.Configurations.Channels["voice"]; ok && ch != nil && ch.Enabled {
+		return true
+	}
+	for _, name := range cfg.Settings.ActiveChannels {
+		if name == "voice" {
+			return true
+		}
+	}
+	return false
+}
+
+// isLocalSTTProvider guards the privacy invariant: wake-word listening must
+// never ship ambient audio to a cloud API.
+func isLocalSTTProvider(p voice.STTProvider) bool {
+	switch p.(type) {
+	case *voice.LocalSTTProvider, *voice.CommandSTTProvider:
+		return true
+	}
+	return false
+}
+
+func isStubTTSProvider(p voice.TTSProvider) bool {
+	_, stub := p.(*voice.StubTTSProvider)
+	return stub
 }
