@@ -3,39 +3,35 @@ module github.com/LumabyteCo/aibutler
 go 1.27.3
 
 require (
-	filippo.io/age v1.3.1
-	github.com/chromedp/chromedp v0.15.1
+	filippo.io/age v1.3.2
+	github.com/chromedp/chromedp v0.21.0
 	github.com/extism/go-sdk v1.7.1
-	github.com/godbus/dbus/v5 v5.2.2
-	github.com/ncruces/go-sqlite3 v0.35.1
-	github.com/pelletier/go-toml/v2 v2.4.0
+	github.com/godbus/dbus/v5 v5.2.4
+	github.com/ncruces/go-sqlite3 v0.35.6
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/crypto v0.53.0
-	golang.org/x/text v0.39.0
+	golang.org/x/crypto v0.57.0
+	golang.org/x/text v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
-	mvdan.cc/sh/v3 v3.13.1
+	mvdan.cc/sh/v3 v3.14.1
 	nhooyr.io/websocket v1.8.17
 )
 
 require (
 	filippo.io/hpke v0.4.0 // indirect
-	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc // indirect
-	github.com/chromedp/sysutil v1.1.0 // indirect
+	github.com/chromedp/cdproto v0.157.8 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240819160327-2d926c5d788a // indirect
 	github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
-	github.com/gobwas/httphead v0.1.0 // indirect
-	github.com/gobwas/pool v0.2.1 // indirect
-	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/ianlancetaylor/demangle v0.0.0-20240805132620-81f5be970eca // indirect
-	github.com/ncruces/go-sqlite3-wasm/v3 v3.1.35302 // indirect
+	github.com/ncruces/go-sqlite3-wasm/v6 v6.3.35304 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/tetratelabs/wabin v0.0.0-20230304001439-f6f874872834 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/term v0.44.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 	lukechampine.com/adiantum v1.1.1 // indirect
 )
